@@ -80,7 +80,8 @@ export class BackupEngine extends EventEmitter {
       skippedBytes: 0,
       priority: config.priority ?? false,
       duplicateStrategy: config.duplicateStrategy ?? 'skip',
-      generateThumbnails: config.generateThumbnails ?? false
+      generateThumbnails: config.generateThumbnails ?? false,
+      fx3Rename: config.fx3Rename ?? false
     }
     this.tasks.set(task.id, task)
     return task
@@ -107,6 +108,49 @@ export class BackupEngine extends EventEmitter {
     this.cancelFlags.delete(taskId)
   }
 
+  private async runFx3Rename(sourcePath: string, task: BackupTask): Promise<void> {
+    const VIDEO_EXTS = new Set(['.mp4', '.mov', '.mxf'])
+    let entries: fs.Dirent[]
+    try {
+      entries = await fs.promises.readdir(sourcePath, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory() || entry.name !== 'Untitled') continue
+      const untitledPath = path.join(sourcePath, entry.name)
+      let clips: string[]
+      try {
+        clips = await fs.promises.readdir(untitledPath)
+      } catch {
+        continue
+      }
+      const videoFile = clips.find((f) => VIDEO_EXTS.has(path.extname(f).toLowerCase()))
+      if (!videoFile) continue
+      const prefix = path.basename(videoFile, path.extname(videoFile)).slice(0, 4)
+      if (!prefix) continue
+      let targetName = prefix
+      let targetPath = path.join(sourcePath, targetName)
+      let suffix = 1
+      while (true) {
+        try {
+          await fs.promises.access(targetPath)
+          targetName = `${prefix}_${suffix}`
+          targetPath = path.join(sourcePath, targetName)
+          suffix++
+        } catch {
+          break
+        }
+      }
+      try {
+        await fs.promises.rename(untitledPath, targetPath)
+        task.verifyLog.push(`FX3重命名: Untitled → ${targetName}`)
+      } catch (e) {
+        task.verifyLog.push(`FX3重命名失败: ${(e as Error).message}`)
+      }
+    }
+  }
+
   async startTask(taskId: string): Promise<void> {
     const task = this.tasks.get(taskId)
     if (!task) throw new Error(`Task ${taskId} not found`)
@@ -115,6 +159,10 @@ export class BackupEngine extends EventEmitter {
     task.status = 'running'
     task.startedAt = Date.now()
     task.verifyLog = []
+
+    if (task.fx3Rename) {
+      await this.runFx3Rename(task.sourcePath, task)
+    }
 
     const volumeName = task.namingTemplate
 
@@ -588,7 +636,7 @@ export class BackupEngine extends EventEmitter {
         if (err.code === 'EACCES') {
           task.thumbnailError = 'ffmpeg 没有执行权限。请前往「系统偏好设置 → 安全性与隐私」允许运行，或重新安装应用。'
         } else if (err.code === 'ENOENT') {
-          task.thumbnailError = '找不到 ffmpeg，请重新安装 KocardPro。'
+          task.thumbnailError = '找不到 ffmpeg，请重新安装 Kocpy。'
         } else {
           task.thumbnailError = `ffmpeg 无法运行（${err.message ?? err.code}），请重新安装应用。`
         }

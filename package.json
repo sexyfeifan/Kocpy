@@ -1,9 +1,9 @@
 {
-  "name": "kocard-pro",
-  "version": "1.8.1",
+  "name": "kocpy",
+  "version": "1.9.2",
   "description": "Professional DIT media backup software",
   "main": "out/main/index.js",
-  "productName": "KocardPro",
+  "productName": "Kocpy",
   "author": "KocardPro",
   "license": "MIT",
   "scripts": {
@@ -15,8 +15,8 @@
     "dist": "npm run build && electron-builder --mac --arm64 --x64"
   },
   "build": {
-    "appId": "com.kocard.pro",
-    "productName": "KocardPro",
+    "appId": "com.kocpy.app",
+    "productName": "Kocpy",
     "directories": {
       "output": "release"
     },

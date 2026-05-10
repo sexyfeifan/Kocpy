@@ -9,6 +9,8 @@ interface AppSettings {
   isUnlocked: boolean
   defaultDuplicateStrategy?: 'skip' | 'suffix'
   defaultGenerateThumbnails?: boolean
+  webhookUrl?: string
+  webhookEnabled?: boolean
 }
 
 contextBridge.exposeInMainWorld('api', {
@@ -98,6 +100,9 @@ contextBridge.exposeInMainWorld('api', {
 
   unlock: (): Promise<boolean> =>
     ipcRenderer.invoke('settings:unlock'),
+
+  testWebhook: (url: string): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('webhook:test', url),
 
   onProgress: (callback: (payload: ProgressPayload) => void) => {
     const handler = (_: Electron.IpcRendererEvent, payload: ProgressPayload) => callback(payload)

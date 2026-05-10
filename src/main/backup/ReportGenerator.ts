@@ -77,7 +77,7 @@ export async function generateReport(task: BackupTask, options: { includeThumbna
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>KocardPro 备份报告 — ${esc(task.name)}</title>
+<title>Kocpy 备份报告 — ${esc(task.name)}</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
@@ -145,7 +145,7 @@ export async function generateReport(task: BackupTask, options: { includeThumbna
 
 <div class="header">
   <div>
-    <h1>KocardPro</h1>
+    <h1>Kocpy</h1>
     <p>专业素材备份报告</p>
     <p style="margin-top:8px;font-size:12px;color:#aaa">生成时间：${new Date().toLocaleString('zh-CN')}</p>
   </div>
@@ -183,7 +183,7 @@ export async function generateReport(task: BackupTask, options: { includeThumbna
   </table>
 </div>
 
-<div class="footer">KocardPro 专业素材备份 · 共 ${task.totalFiles} 个文件 · ${formatBytes(task.totalBytes)}</div>
+<div class="footer">Kocpy 专业素材备份 · 共 ${task.totalFiles} 个文件 · ${formatBytes(task.totalBytes)}</div>
 
 </body>
 </html>`

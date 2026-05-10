@@ -20,7 +20,9 @@ export function Header(): JSX.Element {
       <div className="flex items-center gap-3 no-drag">
         {/* macOS traffic lights spacer */}
         <div className="w-16" />
-        <h1 className="text-sm font-semibold text-gray-200">{PAGE_TITLES[activePage]}</h1>
+        <span className="text-sm font-bold text-gray-100 tracking-tight">Kocpy</span>
+        <span className="text-[#2a2a2a]">|</span>
+        <h1 className="text-sm text-gray-500">{PAGE_TITLES[activePage]}</h1>
       </div>
 
       <div className="flex items-center gap-3 no-drag text-xs text-gray-500">
@@ -34,7 +36,7 @@ export function Header(): JSX.Element {
           <span className="text-green-500">{completed} 个已完成</span>
         )}
         <span className="text-[#333]">|</span>
-        <span>KocardPro {appVersion ? `v${appVersion}` : 'v1.4.4'}</span>
+        <span>Kocpy {appVersion ? `v${appVersion}` : 'v1.8.1'}</span>
       </div>
     </header>
   )

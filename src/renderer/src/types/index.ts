@@ -68,6 +68,7 @@ export interface TaskConfig {
   shootingDate: string
   projectName?: string
   copyMode?: CopyMode
+  fx3Rename?: boolean
 }
 
 export interface ProgressPayload {
@@ -91,6 +92,8 @@ export interface AppSettings {
   devices: string[]
   backupCount: number
   isUnlocked: boolean
+  webhookUrl?: string
+  webhookEnabled?: boolean
 }
 
 export interface ProjectConfig {
@@ -150,6 +153,7 @@ declare global {
       getAppVersion: () => Promise<string>
       checkAndIncrementBackupCount: () => Promise<{ allowed: boolean; remaining: number }>
       unlock: () => Promise<boolean>
+      testWebhook: (url: string) => Promise<{ ok: boolean; error?: string }>
     }
   }
 }

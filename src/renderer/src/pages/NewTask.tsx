@@ -44,8 +44,8 @@ export function NewTask(): JSX.Element {
   const [isStarting, setIsStarting] = useState(false)
   const [duplicateStrategy, setDuplicateStrategy] = useState<'skip' | 'suffix'>('skip')
   const [generateThumbnails, setGenerateThumbnails] = useState(false)
-  const [taskPriority, setTaskPriority] = useState(false)
-  const [saveAsDefault, setSaveAsDefault] = useState(false)
+  const [taskPriority] = useState(false)
+  const [fx3Rename, setFx3Rename] = useState(false)
 
   const [selectedProjectId, setSelectedProjectId] = useState<string>('')
   const [showAllProjects, setShowAllProjects] = useState(false)
@@ -271,16 +271,6 @@ export function NewTask(): JSX.Element {
         return
       }
 
-      if (saveAsDefault) {
-        const currentSettings = await window.api.getSettings()
-        await window.api.saveSettings({
-          ...currentSettings,
-          defaultHash,
-          defaultDuplicateStrategy: duplicateStrategy,
-          defaultGenerateThumbnails: generateThumbnails
-        })
-      }
-
       const task = await window.api.createTask({
         name: '',
         sourcePath,
@@ -298,7 +288,8 @@ export function NewTask(): JSX.Element {
         copyMode: mode === 'mirror' ? 'mirror' : 'normal',
         duplicateStrategy,
         generateThumbnails,
-        priority: taskPriority
+        priority: taskPriority,
+        fx3Rename
       })
       addTask(task)
       const result = await window.api.startTask(task.id)
@@ -461,6 +452,22 @@ export function NewTask(): JSX.Element {
             <p className="text-xs text-gray-600 mt-1.5 font-mono break-all">{sourcePath}</p>
           )}
         </div>
+      )}
+
+      {/* FX3 备份重命名 — only in card mode */}
+      {mode === 'card' && (
+        <label className="flex items-center justify-between cursor-pointer mt-3 pt-3 border-t border-[#1e1e1e]">
+          <div>
+            <p className="text-xs text-gray-300">FX3 备份重命名</p>
+            <p className="text-[11px] text-gray-600 mt-0.5">备份前将 Untitled 文件夹按视频前缀重命名</p>
+          </div>
+          <div
+            onClick={() => setFx3Rename((v) => !v)}
+            className={`relative w-9 h-5 rounded-full transition-colors shrink-0 ${fx3Rename ? 'bg-blue-600' : 'bg-[#2a2a2a]'}`}
+          >
+            <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${fx3Rename ? 'left-4' : 'left-0.5'}`} />
+          </div>
+        </label>
       )}
     </div>
   )
@@ -1007,53 +1014,6 @@ export function NewTask(): JSX.Element {
         <div className="glass-card p-5 flex flex-col gap-4">
           <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider">高级选项</label>
 
-          {/* Hash algorithm */}
-          <div>
-            <p className="text-xs text-gray-500 mb-2">哈希算法</p>
-            <div className="flex gap-2">
-              {(['md5', 'sha1', 'sha256'] as const).map((algo) => (
-                <button
-                  key={algo}
-                  onClick={() => setDefaultHash(algo)}
-                  className={`px-3 py-1.5 rounded-lg border text-xs font-mono transition-all ${
-                    defaultHash === algo
-                      ? 'bg-blue-600/15 border-blue-500/40 text-blue-300'
-                      : 'bg-[#111] border-[#2a2a2a] text-gray-500 hover:border-[#3a3a3a]'
-                  }`}
-                >
-                  {algo.toUpperCase()}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Duplicate strategy */}
-          <div>
-            <p className="text-xs text-gray-500 mb-2">重复文件处理</p>
-            <div className="flex gap-2">
-              <button
-                onClick={() => setDuplicateStrategy('skip')}
-                className={`px-3 py-1.5 rounded-lg border text-xs transition-all ${
-                  duplicateStrategy === 'skip'
-                    ? 'bg-blue-600/15 border-blue-500/40 text-blue-300'
-                    : 'bg-[#111] border-[#2a2a2a] text-gray-500 hover:border-[#3a3a3a]'
-                }`}
-              >
-                跳过
-              </button>
-              <button
-                onClick={() => setDuplicateStrategy('suffix')}
-                className={`px-3 py-1.5 rounded-lg border text-xs transition-all ${
-                  duplicateStrategy === 'suffix'
-                    ? 'bg-blue-600/15 border-blue-500/40 text-blue-300'
-                    : 'bg-[#111] border-[#2a2a2a] text-gray-500 hover:border-[#3a3a3a]'
-                }`}
-              >
-                重命名（_copy_N）
-              </button>
-            </div>
-          </div>
-
           {/* Toggles row */}
           <div className="flex flex-col gap-3">
             {/* Generate thumbnails */}
@@ -1072,40 +1032,6 @@ export function NewTask(): JSX.Element {
                   generateThumbnails ? 'left-4' : 'left-0.5'
                 }`} />
               </div>
-            </label>
-
-            {/* Task priority */}
-            <label className="flex items-center justify-between cursor-pointer">
-              <div>
-                <p className="text-xs text-gray-300 flex items-center gap-1.5">
-                  <Zap size={11} className="text-amber-400" />
-                  优先执行
-                </p>
-                <p className="text-[11px] text-gray-600 mt-0.5">此任务将优先于其他等待中的任务执行</p>
-              </div>
-              <div
-                onClick={() => setTaskPriority((v) => !v)}
-                className={`relative w-9 h-5 rounded-full transition-colors shrink-0 ${
-                  taskPriority ? 'bg-amber-500' : 'bg-[#2a2a2a]'
-                }`}
-              >
-                <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${
-                  taskPriority ? 'left-4' : 'left-0.5'
-                }`} />
-              </div>
-            </label>
-
-            {/* Save as default */}
-            <label className="flex items-center gap-3 cursor-pointer">
-              <div
-                onClick={() => setSaveAsDefault((v) => !v)}
-                className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-colors ${
-                  saveAsDefault ? 'bg-blue-600 border-blue-500' : 'bg-[#111] border-[#3a3a3a]'
-                }`}
-              >
-                {saveAsDefault && <CheckCircle size={10} className="text-white" />}
-              </div>
-              <p className="text-xs text-gray-400">保存为默认设置（哈希算法 · 重复策略 · 缩略图）</p>
             </label>
           </div>
         </div>

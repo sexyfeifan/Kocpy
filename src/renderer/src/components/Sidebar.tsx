@@ -16,7 +16,7 @@ export function Sidebar(): JSX.Element {
   return (
     <aside className="flex flex-col w-[68px] bg-[#0f0f0f] border-r border-[#1e1e1e] h-full py-2 items-center">
       {/* App icon */}
-      <div className="drag-region w-full flex justify-center pt-8 pb-6">
+      <div className="drag-region w-full flex justify-center pt-11 pb-6">
         <div className="w-9 h-9 rounded-xl bg-blue-600 flex items-center justify-center shadow-lg shadow-blue-600/30">
           <HardDrive size={18} className="text-white" />
         </div>

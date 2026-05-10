@@ -1,6 +1,12 @@
-# KocardPro
+# Kocpy
 
-**KocardPro** 是一款专为影视制作现场 DIT（Digital Imaging Technician）设计的专业媒体备份软件。支持摄影机卡到多目的地的高速备份、哈希校验、PDF 报告生成，以及基于项目管理的智能化工作流。
+**Kocpy**（原名 KocardPro）是一款专为影视制作现场 DIT（Digital Imaging Technician）设计的专业媒体备份软件。支持摄影机卡到多目的地的高速备份、哈希校验、PDF 报告生成，以及基于项目管理的智能化工作流。
+
+<p align="center">
+  <a href="https://github.com/sexyfeifan/KocardPro/releases/latest"><img alt="Latest Release" src="https://img.shields.io/github/v/release/sexyfeifan/KocardPro?style=flat-square&color=1c1c1e"></a>
+  <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/sexyfeifan/KocardPro?style=flat-square&color=1c1c1e&cacheSeconds=1"></a>
+  <img alt="Platform" src="https://img.shields.io/badge/platform-macOS-333?style=flat-square">
+</p>
 
 ---
 
@@ -17,6 +23,7 @@
 - **任务持久化**：应用重启后自动恢复任务状态，异常退出自动标记中断任务
 - **优先执行**：可为单个任务设置优先级，优先任务排在其他等待任务之前启动，支持在待机任务卡片上实时切换
 - **保存为默认设置**：哈希算法、重复策略、缩略图开关可一键持久化，下次新建任务时自动加载
+- **Webhook 推送**：备份完成后可自动推送通知到钉钉/飞书/企业微信
 
 ### 智能设备识别
 
@@ -31,6 +38,7 @@
 - **文件目录预创建**：按拍摄计划自动批量创建 `项目名/日期/机器/机位` 层级目录结构
 - **智能路径解析**：新建任务时自动关联项目，根据选定的日期、机器、机位自动解析完整目的地路径
 - **项目归档**：支持将已完成项目归档，与活跃项目区分管理
+- **备份热力图**：可视化展示项目备份活动分布
 
 ### 报告与缩略图
 
@@ -48,16 +56,16 @@
 
 ### 下载安装
 
-前往 [Releases](https://github.com/sexyfeifan/KocardPro/releases) 页面下载最新版本：
+前往 [Releases](https://github.com/sexyfeifan/KocardPro/releases/latest) 页面下载最新版本：
 
 | 架构 | 安装包 |
 |------|--------|
-| Apple Silicon（M1/M2/M3/M4） | `KocardPro-1.8.1-arm64.dmg` |
-| Intel | `KocardPro-1.8.1-x64.dmg` |
+| Apple Silicon（M1/M2/M3/M4） | `Kocpy-1.9.2-arm64.dmg` |
+| Intel | `Kocpy-1.9.2-x64.dmg` |
 
-下载 `.dmg` 后，双击打开，将 KocardPro 拖入 Applications 文件夹即可。
+下载 `.dmg` 后，双击打开，将 Kocpy 拖入 Applications 文件夹即可。
 
-> **首次启动提示**：macOS 可能提示「无法打开，因为开发者未验证」。请打开「系统设置 → 隐私与安全性」，点击「仍然打开」，或运行 DMG 内附带的 `安装 KocardPro.command` 脚本自动完成授权。
+> **首次启动提示**：macOS 可能提示「无法打开，因为开发者未验证」。请打开「系统设置 → 隐私与安全性」，点击「仍然打开」，或运行 DMG 内附带的 `安装 Kocpy.command` 脚本自动完成授权。
 
 ---
 
@@ -99,23 +107,24 @@
 
 ## 更新日志
 
+### v1.9.2（2026-05）
+
+- 项目正式更名为 **Kocpy**（原 KocardPro）
+- 新增 Webhook 推送功能（钉钉/飞书/企业微信通知）
+- 新增备份热力图可视化
+- 其他稳定性改进
+
 ### v1.8.1（2026-04）
 
-**修复**
-
-- **项目模式机位子位置校验**：当项目中某机器配置了子位置（如 A、B）时，新建任务必须选择子位置才能开始备份，防止因路径不完整导致文件归档错误；同时在子位置选择区新增提示文字，底部禁用按钮也会显示对应说明
-
----
+- 项目模式机位子位置校验：当项目中某机器配置了子位置时，新建任务必须选择子位置才能开始备份
 
 ### v1.8.0（2026-04）
 
-**备份功能全面升级**
-
-- **跳过文件统计展示**：备份完成横幅新增「跳过 N 个系统隐藏文件，共 X MB」说明，透明呈现实际备份范围
-- **重复文件处理策略**：新建任务支持选择「跳过」（默认）或「重命名（_copy_N）」两种处理方式，避免目的地文件被意外覆盖
-- **保存为默认设置**：勾选「保存为默认设置」后，哈希算法、重复策略、缩略图开关将持久化至设置文件，下次新建任务时自动加载
-- **优先执行**：新建任务支持设置「优先执行」，优先任务排在其他等待任务之前启动；任务卡片支持为待机任务实时切换优先级
-- **视频首帧缩略图**：备份完成后可一键提取 MXF / MOV / MP4 / R3D / BRAW 视频文件的首帧缩略图，并在导出的 PDF 报告中内嵌展示（ffmpeg 已内置，无需额外安装）
+- 跳过文件统计展示
+- 重复文件处理策略（跳过 / 重命名）
+- 保存为默认设置
+- 优先执行
+- 视频首帧缩略图
 
 ---
 

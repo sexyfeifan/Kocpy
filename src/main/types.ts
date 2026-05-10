@@ -57,6 +57,7 @@ export interface BackupTask {
   priority?: boolean
   duplicateStrategy?: DuplicateStrategy
   generateThumbnails?: boolean
+  fx3Rename?: boolean
   thumbnailError?: string
 }
 
@@ -73,6 +74,7 @@ export interface TaskConfig {
   duplicateStrategy?: DuplicateStrategy
   generateThumbnails?: boolean
   priority?: boolean
+  fx3Rename?: boolean
 }
 
 export interface ProgressPayload {

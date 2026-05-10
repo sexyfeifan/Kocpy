@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef } from 'react'
-import { Shield, Info } from 'lucide-react'
+import { Shield, Info, Webhook } from 'lucide-react'
 import type { HashAlgorithm } from '../types'
+
+type DuplicateStrategy = 'skip' | 'suffix'
 
 const HASH_OPTIONS: { value: HashAlgorithm; label: string; desc: string }[] = [
   { value: 'md5',    label: 'MD5',    desc: '快速，广泛支持' },
@@ -13,11 +15,16 @@ const FREE_LIMIT = 10
 export function Settings(): JSX.Element {
   const [defaultHash, setDefaultHash] = useState<HashAlgorithm>('md5')
   const [verifyAfterCopy, setVerifyAfterCopy] = useState(true)
+  const [defaultDuplicateStrategy, setDefaultDuplicateStrategy] = useState<DuplicateStrategy>('skip')
   const [saved, setSaved] = useState(false)
   const [appVersion, setAppVersion] = useState('')
   const [backupCount, setBackupCount] = useState(0)
   const [isUnlocked, setIsUnlocked] = useState(false)
   const [showUnlockModal, setShowUnlockModal] = useState(false)
+  const [webhookUrl, setWebhookUrl] = useState('')
+  const [webhookEnabled, setWebhookEnabled] = useState(false)
+  const [webhookTestState, setWebhookTestState] = useState<'idle' | 'loading' | 'ok' | 'error'>('idle')
+  const [webhookTestMsg, setWebhookTestMsg] = useState('')
   const loaded = useRef(false)
   const tapCount = useRef(0)
   const tapTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -28,6 +35,9 @@ export function Settings(): JSX.Element {
       setVerifyAfterCopy(s.verifyAfterCopy)
       setBackupCount(s.backupCount ?? 0)
       setIsUnlocked(s.isUnlocked ?? false)
+      setWebhookUrl(s.webhookUrl ?? '')
+      setWebhookEnabled(s.webhookEnabled ?? false)
+      if (s.defaultDuplicateStrategy) setDefaultDuplicateStrategy(s.defaultDuplicateStrategy)
       loaded.current = true
     })
     window.api.getAppVersion().then((v) => setAppVersion(v))
@@ -52,6 +62,55 @@ export function Settings(): JSX.Element {
     window.api.saveSettings({ ...current, defaultHash: hash, verifyAfterCopy: verify })
     setSaved(true)
     setTimeout(() => setSaved(false), 1500)
+  }
+
+  const persistDuplicate = async (strategy: DuplicateStrategy) => {
+    if (!loaded.current) return
+    const current = await window.api.getSettings()
+    window.api.saveSettings({ ...current, defaultDuplicateStrategy: strategy })
+    setSaved(true)
+    setTimeout(() => setSaved(false), 1500)
+  }
+
+  const persistWebhook = async (url: string, enabled: boolean) => {
+    if (!loaded.current) return
+    const current = await window.api.getSettings()
+    window.api.saveSettings({ ...current, webhookUrl: url, webhookEnabled: enabled })
+  }
+
+  const handleWebhookUrlChange = (url: string) => {
+    setWebhookUrl(url)
+    setWebhookTestState('idle')
+    persistWebhook(url, webhookEnabled)
+  }
+
+  const handleWebhookEnabledToggle = () => {
+    const next = !webhookEnabled
+    setWebhookEnabled(next)
+    persistWebhook(webhookUrl, next)
+  }
+
+  const handleWebhookTest = async () => {
+    if (!webhookUrl) return
+    setWebhookTestState('loading')
+    setWebhookTestMsg('')
+    const result = await window.api.testWebhook(webhookUrl)
+    if (result.ok) {
+      setWebhookTestState('ok')
+      setWebhookTestMsg('发送成功')
+    } else {
+      setWebhookTestState('error')
+      setWebhookTestMsg(result.error ?? '未知错误')
+    }
+  }
+
+  const detectPlatformLabel = (url: string): string => {
+    if (url.includes('open.feishu.cn')) return '飞书'
+    if (url.includes('oapi.dingtalk.com')) return '钉钉'
+    if (url.includes('qyapi.weixin.qq.com')) return '企业微信'
+    if (url.includes('discord.com/api/webhooks')) return 'Discord'
+    if (url) return 'Slack / 其他'
+    return ''
   }
 
   const handleHashChange = (v: HashAlgorithm) => {
@@ -123,16 +182,87 @@ export function Settings(): JSX.Element {
               <p className="text-sm text-gray-200">拷贝后自动校验</p>
               <p className="text-xs text-gray-500 mt-0.5">完成拷贝后对每个文件进行哈希校验</p>
             </div>
-            <button
+            <div
               onClick={handleVerifyToggle}
-              className={`relative w-10 h-6 rounded-full transition-colors overflow-hidden focus:outline-none ${verifyAfterCopy ? 'bg-blue-600' : 'bg-[#333]'}`}
+              className={`relative w-9 h-5 rounded-full transition-colors shrink-0 cursor-pointer ${verifyAfterCopy ? 'bg-blue-600' : 'bg-[#2a2a2a]'}`}
             >
-              <span
-                className={`absolute top-1 w-4 h-4 bg-white rounded-full shadow transition-transform ${
-                  verifyAfterCopy ? 'translate-x-5' : 'translate-x-1'
+              <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${verifyAfterCopy ? 'left-4' : 'left-0.5'}`} />
+            </div>
+          </div>
+          <div className="pt-3">
+            <p className="text-xs text-gray-500 mb-2">重复文件处理</p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => { setDefaultDuplicateStrategy('skip'); persistDuplicate('skip') }}
+                className={`px-3 py-1.5 rounded-lg border text-xs transition-all ${
+                  defaultDuplicateStrategy === 'skip'
+                    ? 'bg-blue-600/15 border-blue-500/40 text-blue-300'
+                    : 'bg-[#111] border-[#2a2a2a] text-gray-500 hover:border-[#3a3a3a]'
                 }`}
+              >
+                跳过
+              </button>
+              <button
+                onClick={() => { setDefaultDuplicateStrategy('suffix'); persistDuplicate('suffix') }}
+                className={`px-3 py-1.5 rounded-lg border text-xs transition-all ${
+                  defaultDuplicateStrategy === 'suffix'
+                    ? 'bg-blue-600/15 border-blue-500/40 text-blue-300'
+                    : 'bg-[#111] border-[#2a2a2a] text-gray-500 hover:border-[#3a3a3a]'
+                }`}
+              >
+                重命名（_copy_N）
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Webhook */}
+        <div className="glass-card p-5">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <Webhook size={14} className="text-gray-400" />
+              <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
+                Webhook 通知
+              </label>
+            </div>
+            <div
+              onClick={handleWebhookEnabledToggle}
+              className={`relative w-9 h-5 rounded-full transition-colors shrink-0 cursor-pointer ${webhookEnabled ? 'bg-blue-600' : 'bg-[#2a2a2a]'}`}
+            >
+              <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${webhookEnabled ? 'left-4' : 'left-0.5'}`} />
+            </div>
+          </div>
+          <div className="space-y-3">
+            <div className="relative">
+              <input
+                type="url"
+                value={webhookUrl}
+                onChange={(e) => handleWebhookUrlChange(e.target.value)}
+                placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/..."
+                className="w-full bg-[#111] border border-[#2a2a2a] rounded-xl px-3 py-2.5 text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-blue-500/50 pr-16"
               />
-            </button>
+              {webhookUrl && (
+                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-blue-400 font-medium pointer-events-none">
+                  {detectPlatformLabel(webhookUrl)}
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={handleWebhookTest}
+                disabled={!webhookUrl || webhookTestState === 'loading'}
+                className="px-4 py-1.5 bg-[#1a1a1a] border border-[#2a2a2a] hover:border-[#3a3a3a] disabled:opacity-40 disabled:cursor-not-allowed text-gray-300 text-xs rounded-lg transition-colors"
+              >
+                {webhookTestState === 'loading' ? '发送中...' : '测试'}
+              </button>
+              {webhookTestState === 'ok' && (
+                <span className="text-xs text-green-400">{webhookTestMsg}</span>
+              )}
+              {webhookTestState === 'error' && (
+                <span className="text-xs text-red-400 truncate max-w-[200px]">{webhookTestMsg}</span>
+              )}
+            </div>
+            <p className="text-xs text-gray-600">备份完成后自动推送通知，支持飞书 / 钉钉 / 企业微信 / Discord / Slack</p>
           </div>
         </div>
 
