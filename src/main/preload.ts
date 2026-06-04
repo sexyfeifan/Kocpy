@@ -95,6 +95,17 @@ contextBridge.exposeInMainWorld('api', {
   getAppVersion: (): Promise<string> =>
     ipcRenderer.invoke('app:getVersion'),
 
+  checkForUpdates: (): Promise<{
+    hasUpdate: boolean
+    currentVersion?: string
+    latestVersion?: string
+    releaseUrl?: string
+    releaseNotes?: string
+    publishedAt?: string
+    assets?: { name: string; url: string; size: number }[]
+    error?: string
+  }> => ipcRenderer.invoke('app:checkForUpdates'),
+
   checkAndIncrementBackupCount: (): Promise<{ allowed: boolean; remaining: number }> =>
     ipcRenderer.invoke('settings:checkAndIncrementBackupCount'),
 

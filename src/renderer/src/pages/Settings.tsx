@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { Shield, Info, Webhook } from 'lucide-react'
+import { Shield, Info, Webhook, Download, Loader2, CheckCircle, ExternalLink } from 'lucide-react'
 import type { HashAlgorithm } from '../types'
 
 type DuplicateStrategy = 'skip' | 'suffix'
@@ -25,6 +25,14 @@ export function Settings(): JSX.Element {
   const [webhookEnabled, setWebhookEnabled] = useState(false)
   const [webhookTestState, setWebhookTestState] = useState<'idle' | 'loading' | 'ok' | 'error'>('idle')
   const [webhookTestMsg, setWebhookTestMsg] = useState('')
+  const [updateStatus, setUpdateStatus] = useState<'idle' | 'checking' | 'available' | 'latest' | 'error'>('idle')
+  const [updateInfo, setUpdateInfo] = useState<{
+    latestVersion?: string
+    releaseUrl?: string
+    releaseNotes?: string
+    publishedAt?: string
+    assets?: { name: string; url: string; size: number }[]
+  }>({})
   const loaded = useRef(false)
   const tapCount = useRef(0)
   const tapTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -101,6 +109,29 @@ export function Settings(): JSX.Element {
     } else {
       setWebhookTestState('error')
       setWebhookTestMsg(result.error ?? '未知错误')
+    }
+  }
+
+  async function checkForUpdates() {
+    setUpdateStatus('checking')
+    try {
+      const result = await window.api.checkForUpdates()
+      if (result.hasUpdate) {
+        setUpdateStatus('available')
+        setUpdateInfo({
+          latestVersion: result.latestVersion,
+          releaseUrl: result.releaseUrl,
+          releaseNotes: result.releaseNotes,
+          publishedAt: result.publishedAt,
+          assets: result.assets,
+        })
+      } else {
+        setUpdateStatus('latest')
+        setTimeout(() => setUpdateStatus('idle'), 3000)
+      }
+    } catch {
+      setUpdateStatus('error')
+      setTimeout(() => setUpdateStatus('idle'), 3000)
     }
   }
 
@@ -263,6 +294,93 @@ export function Settings(): JSX.Element {
               )}
             </div>
             <p className="text-xs text-gray-600">备份完成后自动推送通知，支持飞书 / 钉钉 / 企业微信 / Discord / Slack</p>
+          </div>
+        </div>
+
+        {/* Update */}
+        <div className="glass-card p-5">
+          <div className="flex items-center gap-2 mb-4">
+            <Download size={14} className="text-gray-400" />
+            <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
+              检查更新
+            </label>
+          </div>
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-gray-300">当前版本</span>
+                <span className="text-xs text-gray-500 font-mono">{appVersion ? `v${appVersion}` : '…'}</span>
+              </div>
+              <button
+                onClick={checkForUpdates}
+                disabled={updateStatus === 'checking'}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors bg-[#1a1a1a] border border-[#2a2a2a] text-gray-300 hover:text-gray-100 hover:border-gray-500 disabled:opacity-50"
+              >
+                {updateStatus === 'checking' ? (
+                  <><Loader2 size={12} className="animate-spin" /> 检查中…</>
+                ) : (
+                  <><Download size={12} /> 检查更新</>
+                )}
+              </button>
+            </div>
+
+            {updateStatus === 'latest' && (
+              <div className="flex items-center gap-2 text-xs text-green-400">
+                <CheckCircle size={14} /> 已是最新版本
+              </div>
+            )}
+
+            {updateStatus === 'error' && (
+              <div className="text-xs text-red-400">检查更新失败，请检查网络连接</div>
+            )}
+
+            {updateStatus === 'available' && updateInfo.latestVersion && (
+              <div className="space-y-2 pt-1">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs px-2 py-0.5 rounded bg-blue-600/20 text-blue-400 border border-blue-600/30 font-medium">
+                    发现新版本
+                  </span>
+                  <span className="text-xs text-gray-400 font-mono">v{updateInfo.latestVersion}</span>
+                </div>
+
+                {updateInfo.publishedAt && (
+                  <div className="text-[11px] text-gray-500">
+                    发布时间: {new Date(updateInfo.publishedAt).toLocaleDateString()}
+                  </div>
+                )}
+
+                {updateInfo.releaseNotes && (
+                  <details className="group">
+                    <summary className="text-xs text-gray-400 cursor-pointer hover:text-gray-300 transition-colors">
+                      更新日志
+                    </summary>
+                    <div className="mt-1.5 text-xs text-gray-400 whitespace-pre-wrap leading-relaxed max-h-40 overflow-y-auto bg-[#111] rounded-lg p-2.5">
+                      {updateInfo.releaseNotes}
+                    </div>
+                  </details>
+                )}
+
+                <div className="flex flex-wrap gap-1.5">
+                  {updateInfo.assets?.filter(a => a.name.endsWith('.dmg')).map(asset => (
+                    <button
+                      key={asset.name}
+                      onClick={() => window.open(asset.url)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-blue-600 hover:bg-blue-500 text-white transition-colors"
+                    >
+                      <Download size={12} /> {asset.name.replace('.dmg', '').split('-').pop()}
+                    </button>
+                  ))}
+                  {updateInfo.releaseUrl && (
+                    <button
+                      onClick={() => window.open(updateInfo.releaseUrl!)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-gray-400 hover:text-gray-200 border border-[#2a2a2a] hover:border-gray-500 transition-colors"
+                    >
+                      <ExternalLink size={12} /> GitHub
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         </div>
 

@@ -513,6 +513,48 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle('app:getVersion', async () => app.getVersion())
 
+  function compareVersions(a: string, b: string): number {
+    const pa = a.replace(/^v/, '').split('.').map(Number)
+    const pb = b.replace(/^v/, '').split('.').map(Number)
+    for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+      const na = pa[i] || 0
+      const nb = pb[i] || 0
+      if (na > nb) return 1
+      if (na < nb) return -1
+    }
+    return 0
+  }
+
+  ipcMain.handle('app:checkForUpdates', async () => {
+    const currentVersion = app.getVersion()
+    const GITHUB_REPO = 'sexyfeifan/Kocpy'
+    try {
+      const res = await fetch(`https://api.github.com/repos/${GITHUB_REPO}/releases/latest`, {
+        headers: { 'Accept': 'application/vnd.github.v3+json', 'User-Agent': `Kocpy/${currentVersion}` }
+      })
+      if (!res.ok) return { hasUpdate: false, error: `HTTP ${res.status}` }
+      const data = await res.json() as any
+      const latestVersion = (data.tag_name as string).replace(/^v/, '')
+      const hasUpdate = compareVersions(latestVersion, currentVersion) > 0
+      const assets = (data.assets ?? []).map((a: any) => ({
+        name: a.name as string,
+        url: a.browser_download_url as string,
+        size: a.size as number,
+      }))
+      return {
+        hasUpdate,
+        currentVersion,
+        latestVersion,
+        releaseUrl: data.html_url as string,
+        releaseNotes: (data.body as string) ?? '',
+        publishedAt: data.published_at as string,
+        assets,
+      }
+    } catch (err) {
+      return { hasUpdate: false, error: String(err) }
+    }
+  })
+
   ipcMain.handle('settings:save', async (_, settings: AppSettings) => {
     saveSettings(settings)
     return true
