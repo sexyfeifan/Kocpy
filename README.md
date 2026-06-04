@@ -3,8 +3,8 @@
 **Kocpy**（原名 KocardPro）是一款专为影视制作现场 DIT（Digital Imaging Technician）设计的专业媒体备份软件。支持摄影机卡到多目的地的高速备份、哈希校验、PDF 报告生成，以及基于项目管理的智能化工作流。
 
 <p align="center">
-  <a href="https://github.com/sexyfeifan/KocardPro/releases/latest"><img alt="Latest Release" src="https://img.shields.io/github/v/release/sexyfeifan/KocardPro?style=flat-square&color=1c1c1e"></a>
-  <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/sexyfeifan/KocardPro?style=flat-square&color=1c1c1e&cacheSeconds=1"></a>
+  <a href="https://github.com/sexyfeifan/Kocpy/releases/latest"><img alt="Latest Release" src="https://img.shields.io/github/v/release/sexyfeifan/Kocpy?style=flat-square&color=1c1c1e"></a>
+  <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/sexyfeifan/Kocpy?style=flat-square&color=1c1c1e&cacheSeconds=1"></a>
   <img alt="Platform" src="https://img.shields.io/badge/platform-macOS-333?style=flat-square">
 </p>
 
@@ -56,12 +56,12 @@
 
 ### 下载安装
 
-前往 [Releases](https://github.com/sexyfeifan/KocardPro/releases/latest) 页面下载最新版本：
+前往 [Releases](https://github.com/sexyfeifan/Kocpy/releases/latest) 页面下载最新版本：
 
 | 架构 | 安装包 |
 |------|--------|
-| Apple Silicon（M1/M2/M3/M4） | `Kocpy-1.9.2-arm64.dmg` |
-| Intel | `Kocpy-1.9.2-x64.dmg` |
+| Apple Silicon（M1/M2/M3/M4） | `Kocpy-1.10.1-arm64.dmg` |
+| Intel | `Kocpy-1.10.1-x64.dmg` |
 
 下载 `.dmg` 后，双击打开，将 Kocpy 拖入 Applications 文件夹即可。
 
@@ -106,6 +106,24 @@
 ---
 
 ## 更新日志
+
+### v1.10.1（2026-06）
+
+- **检查更新** — 设置页面新增「检查更新」按钮，通过 GitHub API 检测最新版本，显示更新日志并提供直接下载链接
+
+### v1.10.0（2026-06）
+
+- **并行拷贝死锁修复** — 用 Deferred Promise 替换忙等待循环，首个目标失败时不再挂起
+- **双重 Promise 解析修复** — copyFileAndHash / copyFile 添加 settled 标志，确保只 resolve 一次
+- **skip 策略校验误报修复** — 跳过的文件标记为 verified + skipped，不再显示校验失败
+- **verifyAfterCopy 设置生效** — startTask 现在接受 options 参数
+- **resolveBackupPath 修复** — 改为返回所有目标路径数组
+- **Header/Settings 版本号修复** — 移除硬编码过期 fallback
+- **共享 utils.ts** — 消除 formatBytes 等重复代码
+- **React ErrorBoundary** — 防止渲染错误导致白屏
+- **Webhook 重试** — 推送增加 3 次指数退避重试
+- **Renderer 类型同步** — TaskConfig / ProgressPayload 补充缺失字段
+- **项目名称统一** — 所有产物名称统一为 Kocpy
 
 ### v1.9.2（2026-05）
 
