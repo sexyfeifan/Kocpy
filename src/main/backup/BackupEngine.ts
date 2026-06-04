@@ -80,7 +80,8 @@ export class BackupEngine extends EventEmitter {
       skippedBytes: 0,
       priority: config.priority ?? false,
       duplicateStrategy: config.duplicateStrategy ?? 'skip',
-      generateThumbnails: config.generateThumbnails ?? false
+      generateThumbnails: config.generateThumbnails ?? false,
+      fx3Rename: config.fx3Rename ?? false
     }
     this.tasks.set(task.id, task)
     return task
@@ -107,7 +108,50 @@ export class BackupEngine extends EventEmitter {
     this.cancelFlags.delete(taskId)
   }
 
-  async startTask(taskId: string): Promise<void> {
+  private async runFx3Rename(sourcePath: string, task: BackupTask): Promise<void> {
+    const VIDEO_EXTS = new Set(['.mp4', '.mov', '.mxf'])
+    let entries: fs.Dirent[]
+    try {
+      entries = await fs.promises.readdir(sourcePath, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory() || entry.name !== 'Untitled') continue
+      const untitledPath = path.join(sourcePath, entry.name)
+      let clips: string[]
+      try {
+        clips = await fs.promises.readdir(untitledPath)
+      } catch {
+        continue
+      }
+      const videoFile = clips.find((f) => VIDEO_EXTS.has(path.extname(f).toLowerCase()))
+      if (!videoFile) continue
+      const prefix = path.basename(videoFile, path.extname(videoFile)).slice(0, 4)
+      if (!prefix) continue
+      let targetName = prefix
+      let targetPath = path.join(sourcePath, targetName)
+      let suffix = 1
+      while (true) {
+        try {
+          await fs.promises.access(targetPath)
+          targetName = `${prefix}_${suffix}`
+          targetPath = path.join(sourcePath, targetName)
+          suffix++
+        } catch {
+          break
+        }
+      }
+      try {
+        await fs.promises.rename(untitledPath, targetPath)
+        task.verifyLog.push(`FX3重命名: Untitled → ${targetName}`)
+      } catch (e) {
+        task.verifyLog.push(`FX3重命名失败: ${(e as Error).message}`)
+      }
+    }
+  }
+
+  async startTask(taskId: string, options?: { verifyAfterCopy?: boolean }): Promise<void> {
     const task = this.tasks.get(taskId)
     if (!task) throw new Error(`Task ${taskId} not found`)
 
@@ -115,6 +159,10 @@ export class BackupEngine extends EventEmitter {
     task.status = 'running'
     task.startedAt = Date.now()
     task.verifyLog = []
+
+    if (task.fx3Rename) {
+      await this.runFx3Rename(task.sourcePath, task)
+    }
 
     const volumeName = task.namingTemplate
 
@@ -194,9 +242,11 @@ export class BackupEngine extends EventEmitter {
         this.emitProgress(task)
       }
 
-      task.status = 'verifying'
-      this.emitProgress(task)
-      await this.verifyAllDestinations(task)
+      if (options?.verifyAfterCopy !== false) {
+        task.status = 'verifying'
+        this.emitProgress(task)
+        await this.verifyAllDestinations(task)
+      }
 
       task.status = 'completed'
       task.completedAt = Date.now()
@@ -255,10 +305,14 @@ export class BackupEngine extends EventEmitter {
     const volumeName = task.namingTemplate
     const deviceSubfolders = task.devices.length > 0 ? task.devices : ['']
 
-    // Bug 1 fix: isolate per-destination errors so one failure doesn't cancel others
-    // Bug 3 fix: compute srcChecksum during the pipe stream of the first destination,
-    //            then reuse that checksum for remaining destinations (no pre-read pass)
+    // Deferred pattern: subsequent destinations await this instead of busy-waiting
     let srcChecksum: string | null = null
+    let resolveSrcChecksum: (checksum: string) => void
+    let rejectSrcChecksum: (err: Error) => void
+    const srcChecksumReady = new Promise<string>((resolve, reject) => {
+      resolveSrcChecksum = resolve
+      rejectSrcChecksum = reject
+    })
 
     const destResults = await Promise.all(
       task.destinations.map(async (dest, destIdx) => {
@@ -278,7 +332,7 @@ export class BackupEngine extends EventEmitter {
           const fileExists = await fs.promises.access(destFilePath).then(() => true).catch(() => false)
           if (fileExists) {
             if (task.duplicateStrategy === 'skip') {
-              return { path: destFilePath, checksum: '', verified: false }
+              return { path: destFilePath, checksum: '', verified: true, skipped: true }
             } else {
               const ext = path.extname(destFilePath)
               const stem = destFilePath.slice(0, destFilePath.length - ext.length)
@@ -293,31 +347,37 @@ export class BackupEngine extends EventEmitter {
           }
 
           if (destIdx === 0) {
-            // First destination: compute src hash during the copy stream (Bug 3 fix)
-            const { checksum: computedSrcChecksum } = await this.copyFileAndHash(
-              file.absolutePath,
-              destFilePath,
-              task.hashAlgorithm,
-              (bytes) => {
-                dest.bytesWritten += bytes
-                onProgress(bytes / task.destinations.length)
-              },
-              task.id
-            )
-            srcChecksum = computedSrcChecksum
+            // First destination: compute src hash during the copy stream
+            let computedSrcChecksum: string
+            try {
+              const result = await this.copyFileAndHash(
+                file.absolutePath,
+                destFilePath,
+                task.hashAlgorithm,
+                (bytes) => {
+                  dest.bytesWritten += bytes
+                  onProgress(bytes / task.destinations.length)
+                },
+                task.id
+              )
+              computedSrcChecksum = result.checksum
+              srcChecksum = computedSrcChecksum
+              resolveSrcChecksum(computedSrcChecksum)
+            } catch (err) {
+              rejectSrcChecksum(err as Error)
+              throw err
+            }
 
             // Verify destination
             const destChecksum = await this.hashFile(destFilePath, task.hashAlgorithm)
-            const verified = destChecksum === srcChecksum
+            const verified = destChecksum === computedSrcChecksum
             if (!verified) {
               dest.error = `校验失败: ${file.relativePath}`
             }
             return { path: destFilePath, checksum: destChecksum, verified }
           } else {
-            // Subsequent destinations: wait for srcChecksum from first dest
-            while (srcChecksum === null) {
-              await new Promise<void>((r) => setTimeout(r, 10))
-            }
+            // Subsequent destinations: await the shared Promise (no busy-wait)
+            const srcHash = await srcChecksumReady
 
             await this.copyFile(
               file.absolutePath,
@@ -330,14 +390,14 @@ export class BackupEngine extends EventEmitter {
             )
 
             const destChecksum = await this.hashFile(destFilePath, task.hashAlgorithm)
-            const verified = destChecksum === srcChecksum
+            const verified = destChecksum === srcHash
             if (!verified) {
               dest.error = `校验失败: ${file.relativePath}`
             }
             return { path: destFilePath, checksum: destChecksum, verified }
           }
         } catch (err) {
-          // Bug 1 fix: mark this destination as failed, don't propagate to Promise.all
+          // Mark this destination as failed, don't propagate to Promise.all
           const msg = (err as Error).message
           dest.error = `拷贝失败: ${file.relativePath} — ${msg}`
           dest.verified = false
@@ -359,6 +419,7 @@ export class BackupEngine extends EventEmitter {
   }
 
   // Bug 3 fix: computes src hash during copy stream — one read pass instead of two
+  // Bug fix: single resolution guarantee — only finish OR close resolves, never both
   private copyFileAndHash(
     src: string,
     dest: string,
@@ -367,6 +428,9 @@ export class BackupEngine extends EventEmitter {
     taskId?: string
   ): Promise<{ checksum: string }> {
     return new Promise((resolve, reject) => {
+      let settled = false
+      const settle = (fn: () => void) => { if (!settled) { settled = true; fn() } }
+
       const hash = crypto.createHash(algorithm)
       const readStream = fs.createReadStream(src, { highWaterMark: 2 * 1024 * 1024 })
       const writeStream = fs.createWriteStream(dest)
@@ -384,12 +448,17 @@ export class BackupEngine extends EventEmitter {
 
       readStream.on('error', (err) => {
         writeStream.destroy()
-        reject(err)
+        settle(() => reject(err))
       })
-      writeStream.on('error', reject)
-      writeStream.on('finish', () => resolve({ checksum: hash.digest('hex') }))
+      writeStream.on('error', (err) => {
+        readStream.destroy()
+        settle(() => reject(err))
+      })
+      writeStream.on('finish', () => settle(() => resolve({ checksum: hash.digest('hex') })))
       readStream.on('close', () => {
-        if (taskId && this.cancelFlags.get(taskId)) resolve({ checksum: hash.digest('hex') })
+        if (taskId && this.cancelFlags.get(taskId)) {
+          settle(() => resolve({ checksum: hash.digest('hex') }))
+        }
       })
 
       readStream.pipe(writeStream)
@@ -397,6 +466,7 @@ export class BackupEngine extends EventEmitter {
   }
 
   // #5 fix: accepts taskId to check cancel flag and destroy streams on cancel
+  // Bug fix: single resolution guarantee
   private copyFile(
     src: string,
     dest: string,
@@ -404,6 +474,9 @@ export class BackupEngine extends EventEmitter {
     taskId?: string
   ): Promise<void> {
     return new Promise((resolve, reject) => {
+      let settled = false
+      const settle = (fn: () => void) => { if (!settled) { settled = true; fn() } }
+
       const readStream = fs.createReadStream(src, { highWaterMark: 2 * 1024 * 1024 })
       const writeStream = fs.createWriteStream(dest)
 
@@ -418,13 +491,15 @@ export class BackupEngine extends EventEmitter {
 
       readStream.on('error', (err) => {
         writeStream.destroy()
-        reject(err)
+        settle(() => reject(err))
       })
-      writeStream.on('error', reject)
-      writeStream.on('finish', resolve)
+      writeStream.on('error', (err) => {
+        readStream.destroy()
+        settle(() => reject(err))
+      })
+      writeStream.on('finish', () => settle(() => resolve()))
       readStream.on('close', () => {
-        // stream was destroyed (cancelled) — resolve cleanly so the outer cancel check handles it
-        if (taskId && this.cancelFlags.get(taskId)) resolve()
+        if (taskId && this.cancelFlags.get(taskId)) settle(() => resolve())
       })
 
       readStream.pipe(writeStream)
@@ -588,7 +663,7 @@ export class BackupEngine extends EventEmitter {
         if (err.code === 'EACCES') {
           task.thumbnailError = 'ffmpeg 没有执行权限。请前往「系统偏好设置 → 安全性与隐私」允许运行，或重新安装应用。'
         } else if (err.code === 'ENOENT') {
-          task.thumbnailError = '找不到 ffmpeg，请重新安装 KocardPro。'
+          task.thumbnailError = '找不到 ffmpeg，请重新安装 Kocpy。'
         } else {
           task.thumbnailError = `ffmpeg 无法运行（${err.message ?? err.code}），请重新安装应用。`
         }

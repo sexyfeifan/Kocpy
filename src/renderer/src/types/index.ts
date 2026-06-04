@@ -68,6 +68,10 @@ export interface TaskConfig {
   shootingDate: string
   projectName?: string
   copyMode?: CopyMode
+  fx3Rename?: boolean
+  duplicateStrategy?: 'skip' | 'suffix'
+  generateThumbnails?: boolean
+  priority?: boolean
 }
 
 export interface ProgressPayload {
@@ -83,6 +87,12 @@ export interface ProgressPayload {
   verifyLog: string[]
   destinations: Destination[]
   errorMessage?: string
+  startedAt?: number
+  completedAt?: number
+  verifyCompletedFiles?: number
+  verifyTotalFiles?: number
+  skippedFiles?: number
+  skippedBytes?: number
 }
 
 export interface AppSettings {
@@ -91,6 +101,8 @@ export interface AppSettings {
   devices: string[]
   backupCount: number
   isUnlocked: boolean
+  webhookUrl?: string
+  webhookEnabled?: boolean
 }
 
 export interface ProjectConfig {
@@ -150,6 +162,7 @@ declare global {
       getAppVersion: () => Promise<string>
       checkAndIncrementBackupCount: () => Promise<{ allowed: boolean; remaining: number }>
       unlock: () => Promise<boolean>
+      testWebhook: (url: string) => Promise<{ ok: boolean; error?: string }>
     }
   }
 }

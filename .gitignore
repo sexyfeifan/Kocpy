@@ -1,6 +1,8 @@
 node_modules/
 out/
 release/
+dmg/
+legacy/
 *.tsbuildinfo
 *.blockmap
 .DS_Store

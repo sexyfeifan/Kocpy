@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { Sidebar } from './components/Sidebar'
 import { Header } from './components/Header'
+import { ErrorBoundary } from './components/ErrorBoundary'
 import { Dashboard } from './pages/Dashboard'
 import { NewTask } from './pages/NewTask'
 import { History } from './pages/History'
@@ -33,7 +34,9 @@ export function App(): JSX.Element {
       <Sidebar />
       <div className="flex flex-col flex-1 min-w-0">
         <Header />
-        {page}
+        <ErrorBoundary>
+          {page}
+        </ErrorBoundary>
       </div>
     </div>
   )
