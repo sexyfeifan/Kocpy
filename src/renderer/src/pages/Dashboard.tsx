@@ -3,13 +3,7 @@ import { TaskCard } from '../components/TaskCard'
 import { HardDrive, Plus, LogOut, ChevronDown, CreditCard, Database, Monitor, RefreshCw } from 'lucide-react'
 import { useEffect, useState, useCallback, useRef } from 'react'
 import type { VolumeInfo, AppSettings } from '../types'
-
-function formatBytes(b: number): string {
-  if (b === 0) return '0 B'
-  const k = 1024, s = ['B', 'KB', 'MB', 'GB', 'TB']
-  const i = Math.floor(Math.log(b) / Math.log(k))
-  return `${(b / Math.pow(k, i)).toFixed(1)} ${s[i]}`
-}
+import { formatBytes } from '../utils'
 
 const DEVICE_TYPE_CONFIG = {
   system: { label: '系统盘', color: 'text-gray-400', bg: 'bg-gray-500/10 border-gray-500/20', Icon: Monitor },

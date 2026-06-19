@@ -5,19 +5,7 @@ import {
 } from 'lucide-react'
 import { v4 as uuidv4 } from 'uuid'
 import type { ProjectConfig } from '../types'
-
-function formatBytes(b: number): string {
-  if (b === 0) return '0 B'
-  const k = 1024, s = ['B', 'KB', 'MB', 'GB', 'TB']
-  const i = Math.floor(Math.log(b) / Math.log(k))
-  return `${(b / Math.pow(k, i)).toFixed(1)} ${s[i]}`
-}
-
-function todayLocal(): string {
-  const d = new Date()
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
-}
+import { formatBytes, todayLocal } from '../utils'
 
 interface DriveInfo { total: number; free: number; used: number }
 interface DestRow { id: string; path: string; driveInfo: DriveInfo | null }

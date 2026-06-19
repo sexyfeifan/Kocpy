@@ -3,12 +3,7 @@ import { useTaskStore } from '../store/taskStore'
 import { TaskCard } from '../components/TaskCard'
 import { BackupHeatmap } from '../components/BackupHeatmap'
 import { Clock } from 'lucide-react'
-
-function toDateKey(ts: number): string {
-  const d = new Date(ts)
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
-}
+import { toDateKey } from '../utils'
 
 export function History(): JSX.Element {
   const { tasks } = useTaskStore()

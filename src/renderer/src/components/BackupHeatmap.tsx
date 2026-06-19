@@ -1,18 +1,6 @@
 import { useMemo, useState } from 'react'
 import type { BackupTask } from '../types'
-
-function formatBytes(b: number): string {
-  if (b === 0) return '0 B'
-  const k = 1024, s = ['B', 'KB', 'MB', 'GB', 'TB']
-  const i = Math.floor(Math.log(b) / Math.log(k))
-  return `${(b / Math.pow(k, i)).toFixed(1)} ${s[i]}`
-}
-
-function toDateKey(ts: number): string {
-  const d = new Date(ts)
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
-}
+import { formatBytes, toDateKey } from '../utils'
 
 interface DayData {
   date: string

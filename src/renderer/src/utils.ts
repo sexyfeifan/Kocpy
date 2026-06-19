@@ -3,7 +3,7 @@ export function formatBytes(bytes: number): string {
   const k = 1024
   const sizes = ['B', 'KB', 'MB', 'GB', 'TB']
   const i = Math.floor(Math.log(bytes) / Math.log(k))
-  return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`
+  return `${(bytes / Math.pow(k, i)).toFixed(1)} ${sizes[i]}`
 }
 
 export function formatSpeed(bps: number): string {
@@ -13,21 +13,39 @@ export function formatSpeed(bps: number): string {
   return `${(bps / 1024 ** 3).toFixed(2)} GB/s`
 }
 
-export function formatEta(sec: number): string {
-  if (sec < 60) return `${Math.round(sec)}s`
-  if (sec < 3600) return `${Math.floor(sec / 60)}m ${Math.round(sec % 60)}s`
-  return `${Math.floor(sec / 3600)}h ${Math.floor((sec % 3600) / 60)}m`
+export function formatEta(seconds: number): string {
+  if (!seconds || seconds === Infinity) return '--'
+  if (seconds < 60) return `${Math.ceil(seconds)}秒`
+  if (seconds < 3600) return `${Math.ceil(seconds / 60)}分钟`
+  return `${(seconds / 3600).toFixed(1)}小时`
 }
 
-export function formatDuration(startedAt?: number, completedAt?: number): string {
-  if (!startedAt || !completedAt) return '-'
-  const sec = Math.round((completedAt - startedAt) / 1000)
-  if (sec < 60) return `${sec}s`
-  const min = Math.floor(sec / 60)
-  return `${min}m ${sec % 60}s`
+export function formatDuration(startMs: number, endMs: number): string {
+  const sec = Math.round((endMs - startMs) / 1000)
+  if (sec < 60) return `${sec}秒`
+  if (sec < 3600) return `${Math.floor(sec / 60)}分${sec % 60}秒`
+  return `${Math.floor(sec / 3600)}时${Math.floor((sec % 3600) / 60)}分`
+}
+
+export function formatTime(ts: number): string {
+  const d = new Date(ts)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
 }
 
 export function formatDate(ts?: number): string {
   if (!ts) return '-'
   return new Date(ts).toLocaleString('zh-CN', { hour12: false })
+}
+
+export function toDateKey(ts: number): string {
+  const d = new Date(ts)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+}
+
+export function todayLocal(): string {
+  const d = new Date()
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 }

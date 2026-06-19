@@ -2,33 +2,7 @@ import { CheckCircle2, XCircle, Clock, Loader2, FileDown, StopCircle, Trash2, Za
 import type { BackupTask } from '../types'
 import { useTaskStore } from '../store/taskStore'
 import { useState } from 'react'
-
-function formatBytes(b: number): string {
-  if (b === 0) return '0 B'
-  const k = 1024, s = ['B', 'KB', 'MB', 'GB', 'TB']
-  const i = Math.floor(Math.log(b) / Math.log(k))
-  return `${(b / Math.pow(k, i)).toFixed(1)} ${s[i]}`
-}
-
-function formatEta(seconds: number): string {
-  if (!seconds || seconds === Infinity) return '--'
-  if (seconds < 60) return `${Math.ceil(seconds)}秒`
-  if (seconds < 3600) return `${Math.ceil(seconds / 60)}分钟`
-  return `${(seconds / 3600).toFixed(1)}小时`
-}
-
-function formatDuration(startMs: number, endMs: number): string {
-  const sec = Math.round((endMs - startMs) / 1000)
-  if (sec < 60) return `${sec}秒`
-  if (sec < 3600) return `${Math.floor(sec / 60)}分${sec % 60}秒`
-  return `${Math.floor(sec / 3600)}时${Math.floor((sec % 3600) / 60)}分`
-}
-
-function formatTime(ts: number): string {
-  const d = new Date(ts)
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
-}
+import { formatBytes, formatEta, formatDuration, formatTime } from '../utils'
 
 const STATUS_CONFIG = {
   pending:   { color: 'text-gray-400', bg: 'bg-gray-400', label: '等待中', Icon: Clock },
