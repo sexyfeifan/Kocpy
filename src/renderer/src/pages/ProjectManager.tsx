@@ -420,7 +420,7 @@ function ProjectEditPanel({
       {/* Structure creation result */}
       {structureResult && (
         <div className={`glass-card p-4 border ${structureResult.errors.length > 0 ? 'border-red-500/30' : 'border-green-500/30'}`}>
-          <p className="text-xs font-semibold mb-1 ${structureResult.errors.length > 0 ? 'text-red-400' : 'text-green-400'}">
+          <p className={`text-xs font-semibold mb-1 ${structureResult.errors.length > 0 ? 'text-red-400' : 'text-green-400'}`}>
             {structureResult.errors.length > 0 ? '创建完成（有错误）' : '文件结构创建成功'}
           </p>
           <p className="text-xs text-gray-400">新建 {structureResult.created} 个目录，跳过 {structureResult.skipped} 个已存在</p>

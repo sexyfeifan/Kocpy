@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { useTaskStore } from '../store/taskStore'
 
 const PAGE_TITLES: Record<string, string> = {
-  dashboard: '任务总览', new: '新建备份任务', history: '历史记录', settings: '设置'
+  dashboard: '任务总览', new: '新建备份任务', history: '历史记录', settings: '设置', projects: '项目管理'
 }
 
 export function Header(): JSX.Element {

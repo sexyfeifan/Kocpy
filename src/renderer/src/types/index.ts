@@ -101,7 +101,8 @@ export interface AppSettings {
   verifyAfterCopy: boolean
   devices: string[]
   backupCount: number
-  isUnlocked: boolean
+  defaultDuplicateStrategy?: 'skip' | 'suffix'
+  defaultGenerateThumbnails?: boolean
   webhookUrl?: string
   webhookEnabled?: boolean
 }
@@ -162,8 +163,6 @@ declare global {
       createFileStructure: (projectId: string) => Promise<{ created: string[]; skipped: string[]; errors: string[] }>
       resolveBackupPath: (params: { projectId: string; shootingDate: string; deviceName: string; positionLabel: string }) => Promise<string | null>
       getAppVersion: () => Promise<string>
-      checkAndIncrementBackupCount: () => Promise<{ allowed: boolean; remaining: number }>
-      unlock: () => Promise<boolean>
       testWebhook: (url: string) => Promise<{ ok: boolean; error?: string }>
     }
   }
