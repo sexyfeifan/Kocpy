@@ -111,6 +111,14 @@ export class BackupEngine extends EventEmitter {
   deleteTask(taskId: string): void {
     this.tasks.delete(taskId)
     this.cancelFlags.delete(taskId)
+    this.completedFileSets.delete(taskId)
+  }
+
+  setPriority(taskId: string, priority: boolean): void {
+    const task = this.tasks.get(taskId)
+    if (task) {
+      task.priority = priority
+    }
   }
 
   private async runFx3Rename(sourcePath: string, task: BackupTask): Promise<void> {
@@ -263,6 +271,8 @@ export class BackupEngine extends EventEmitter {
         if (this.cancelFlags.get(taskId)) {
           task.status = 'cancelled'
           logInfo(`Task cancelled: ${task.name} (id=${task.id})`)
+          this.completedFileSets.delete(taskId)
+          this.cancelFlags.delete(taskId)
           this.emitProgress(task)
           return
         }
@@ -318,6 +328,8 @@ export class BackupEngine extends EventEmitter {
       task.currentFile = ''
       task.speedBps = 0
       task.eta = 0
+      this.completedFileSets.delete(taskId)
+      this.cancelFlags.delete(taskId)
       this.emitProgress(task)
 
       if (task.generateThumbnails) {
@@ -333,6 +345,8 @@ export class BackupEngine extends EventEmitter {
       task.status = 'failed'
       task.errorMessage = (err as Error).message
       logError(`Task failed: ${task.name} (id=${task.id})`, err)
+      this.completedFileSets.delete(taskId)
+      this.cancelFlags.delete(taskId)
       this.emitProgress(task)
       throw err
     }
