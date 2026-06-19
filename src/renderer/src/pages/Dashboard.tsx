@@ -2,7 +2,7 @@ import { useTaskStore } from '../store/taskStore'
 import { TaskCard } from '../components/TaskCard'
 import { HardDrive, Plus, LogOut, ChevronDown, CreditCard, Database, Monitor, RefreshCw } from 'lucide-react'
 import { useEffect, useState, useCallback, useRef } from 'react'
-import type { VolumeInfo, AppSettings } from '../types'
+import type { VolumeInfo } from '../types'
 import { formatBytes } from '../utils'
 
 const DEVICE_TYPE_CONFIG = {
@@ -148,11 +148,6 @@ function ConnectedDrives(): JSX.Element {
 
 export function Dashboard(): JSX.Element {
   const { tasks, setActivePage } = useTaskStore()
-  const [settings, setSettings] = useState<AppSettings | null>(null)
-
-  useEffect(() => {
-    window.api.getSettings().then(setSettings)
-  }, [])
 
   const running = tasks.filter((t) => t.status === 'running' || t.status === 'verifying')
   const completed = tasks.filter((t) => t.status === 'completed')

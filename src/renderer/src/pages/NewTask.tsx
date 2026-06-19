@@ -75,11 +75,6 @@ export function NewTask(): JSX.Element {
     return () => clearInterval(id)
   }, [scanSources])
 
-  // In project mode, reset detectedSources on mode exit (keep for card/mirror too now)
-  useEffect(() => {
-    if (mode !== 'project') return
-  }, [mode])
-
   // Auto-fill source when exactly 1 source detected and none selected yet
   useEffect(() => {
     if (sourcePath !== '' || autoDetectedRef.current) return
