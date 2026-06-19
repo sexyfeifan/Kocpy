@@ -3,14 +3,14 @@ import { join } from 'path'
 import * as path from 'path'
 import * as fs from 'fs'
 import * as os from 'os'
-import { exec } from 'child_process'
+import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { BackupEngine } from './backup/BackupEngine'
 import { generateReport } from './backup/ReportGenerator'
 import { sendWebhook, detectPlatform } from './webhook'
 import type { BackupTask, TaskConfig, ProjectConfig } from './types'
 
-const execAsync = promisify(exec)
+const execFileAsync = promisify(execFile)
 
 function formatBytes(bytes: number): string {
   if (bytes === 0) return '0 B'
@@ -166,6 +166,17 @@ function loadSettings(): AppSettings {
   }
 }
 
+// 【Fix 4】配置备份：写入前备份为 .bak 文件（保留最近1个备份）
+function backupBeforeWrite(filePath: string): void {
+  try {
+    if (fs.existsSync(filePath)) {
+      fs.copyFileSync(filePath, filePath + '.bak')
+    }
+  } catch (e) {
+    console.error(`Failed to backup ${filePath}:`, e)
+  }
+}
+
 function atomicWrite(filePath: string, data: string): void {
   const tmp = filePath + '.tmp'
   fs.writeFileSync(tmp, data, 'utf-8')
@@ -173,6 +184,7 @@ function atomicWrite(filePath: string, data: string): void {
 }
 
 function saveSettings(settings: AppSettings): void {
+  backupBeforeWrite(getSettingsPath())
   atomicWrite(getSettingsPath(), JSON.stringify(settings, null, 2))
 }
 
@@ -187,6 +199,7 @@ function loadPersistedTasks(): BackupTask[] {
 
 function persistTasks(tasks: BackupTask[]): void {
   try {
+    backupBeforeWrite(getTasksPath())
     atomicWrite(getTasksPath(), JSON.stringify(tasks, null, 2))
   } catch (e) {
     console.error('Failed to persist tasks:', e)
@@ -234,11 +247,30 @@ function createWindow(): void {
     return { action: 'deny' }
   })
 
+  // 【Fix 3】进度持久化优化：计数器，每 10 个文件才持久化一次
+  let persistFileCounter = 0
+  let lastPersistedStatus: string | null = null
+
   // #4 fix: remove any existing listener before adding new one to prevent accumulation on createWindow() calls
   backupEngine.removeAllListeners('progress')
   backupEngine.on('progress', (payload) => {
     win.webContents.send('backup:progress', payload)
-    persistTasks(backupEngine.getAllTasks())
+
+    // 【Fix 3】只在任务状态变更时全量持久化，运行中每 10 个文件增量写入一次
+    const statusChanged = payload.status !== lastPersistedStatus
+    if (statusChanged) {
+      // 状态变更（开始/完成/失败/取消/校验中）→ 立即全量持久化
+      persistTasks(backupEngine.getAllTasks())
+      lastPersistedStatus = payload.status
+      persistFileCounter = 0
+    } else if (payload.status === 'running') {
+      // 运行中：每 10 个文件才持久化一次（减少磁盘 I/O）
+      persistFileCounter++
+      if (persistFileCounter >= 10) {
+        persistTasks(backupEngine.getAllTasks())
+        persistFileCounter = 0
+      }
+    }
 
     if (payload.status === 'completed' || payload.status === 'failed') {
       const s = loadSettings()
@@ -397,7 +429,8 @@ function registerIpcHandlers(): void {
           .map(async (e) => {
             const volPath = `/Volumes/${e.name}`
             try {
-              const { stdout } = await execAsync(`diskutil info "${volPath}" 2>/dev/null || true`)
+              // P0-3: 使用 execFile 避免命令注入
+              const { stdout } = await execFileAsync('diskutil', ['info', volPath]).catch(() => ({ stdout: '' }))
               const isExternalSignal =
                 /Device Location:\s+External/i.test(stdout) ||
                 /Protocol:\s+(USB|Thunderbolt|SD Card)/i.test(stdout)
@@ -502,7 +535,8 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle('system:ejectVolume', async (_, volumePath: string) => {
     try {
-      await execAsync(`diskutil eject "${volumePath}"`)
+      // P0-3: 使用 execFile 避免命令注入
+      await execFileAsync('diskutil', ['eject', volumePath])
       return true
     } catch {
       return false

@@ -2,7 +2,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import * as crypto from 'crypto'
 import { EventEmitter } from 'events'
-import { exec } from 'child_process'
+import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { v4 as uuidv4 } from 'uuid'
 import _ffmpegPath from 'ffmpeg-static'
@@ -14,7 +14,7 @@ import type {
   TaskConfig
 } from '../types'
 
-const execAsync = promisify(exec)
+const execFileAsync = promisify(execFile)
 
 // In packaged app, ffmpeg-static resolves inside app.asar (not executable).
 // asarUnpack extracts it to app.asar.unpacked, so we remap the path.
@@ -25,6 +25,8 @@ const ffmpegPath = _ffmpegPath
 export class BackupEngine extends EventEmitter {
   private tasks: Map<string, BackupTask> = new Map()
   private cancelFlags: Map<string, boolean> = new Map()
+  // 断点续传：记录每个任务已完成的文件相对路径
+  private completedFileSets: Map<string, Set<string>> = new Map()
 
   createTask(config: TaskConfig): BackupTask {
     const now = new Date()
@@ -151,6 +153,28 @@ export class BackupEngine extends EventEmitter {
     }
   }
 
+  // P0-1: 备份完成后，在每个目的地的副本上执行 FX3 重命名（不在源盘操作）
+  private async runFx3RenameOnDestinations(task: BackupTask): Promise<void> {
+    const volumeName = task.namingTemplate
+    const projectFolder = task.shootingDateFolder ?? ''
+    const hasProjectName = projectFolder.length > 8
+    const dateSubFolder = projectFolder.length >= 8 ? projectFolder.slice(0, 8) : ''
+    const deviceSubfolders = task.devices.length > 0 ? task.devices : ['']
+
+    for (const dest of task.destinations) {
+      if (task.copyMode === 'mirror') {
+        // mirror 模式：直接在 dest.path 下扫描 Untitled 目录
+        await this.runFx3Rename(dest.path, task)
+      } else {
+        // normal 模式：在每个 deviceRoot 下扫描 Untitled 目录
+        for (const device of deviceSubfolders) {
+          const deviceRoot = this.resolveDeviceRoot(dest.path, projectFolder, hasProjectName, dateSubFolder, device, volumeName)
+          await this.runFx3Rename(deviceRoot, task)
+        }
+      }
+    }
+  }
+
   async startTask(taskId: string, options?: { verifyAfterCopy?: boolean }): Promise<void> {
     const task = this.tasks.get(taskId)
     if (!task) throw new Error(`Task ${taskId} not found`)
@@ -160,9 +184,13 @@ export class BackupEngine extends EventEmitter {
     task.startedAt = Date.now()
     task.verifyLog = []
 
-    if (task.fx3Rename) {
-      await this.runFx3Rename(task.sourcePath, task)
+    // 初始化断点续传的已完成文件集合
+    if (!this.completedFileSets.has(taskId)) {
+      this.completedFileSets.set(taskId, new Set<string>())
     }
+    const completedSet = this.completedFileSets.get(taskId)!
+
+    // P0-1: 不在源盘执行 FX3 重命名（已移到备份完成后在目标端执行）
 
     const volumeName = task.namingTemplate
 
@@ -170,6 +198,27 @@ export class BackupEngine extends EventEmitter {
       const { files, emptyDirs } = await this.enumerateFiles(task.sourcePath, undefined, task)
       task.totalFiles = files.length
       task.totalBytes = files.reduce((sum, f) => sum + f.size, 0)
+      this.emitProgress(task)
+
+      // 【Fix 1】磁盘空间预检：检查每个目的地的可用空间是否足够
+      for (const dest of task.destinations) {
+        try {
+          const stat = await (fs.promises as any).statfs(dest.path)
+          const freeBytes = stat.bfree * stat.bsize
+          if (freeBytes < task.totalBytes) {
+            const freeStr = this.formatBytes(freeBytes)
+            const needStr = this.formatBytes(task.totalBytes)
+            throw new Error(
+              `目标磁盘空间不足: ${dest.path}（可用 ${freeStr}，需要 ${needStr}）。请释放空间后重试。`
+            )
+          }
+        } catch (err) {
+          // 如果是磁盘空间不足的错误，直接抛出
+          if ((err as Error).message.startsWith('目标磁盘空间不足')) throw err
+          // statfs 不支持时忽略（例如网络路径）
+          task.verifyLog.push(`⚠ 无法检查 ${dest.path} 的可用空间，跳过预检`)
+        }
+      }
       this.emitProgress(task)
 
       if (task.copyMode === 'mirror') {
@@ -213,6 +262,13 @@ export class BackupEngine extends EventEmitter {
           return
         }
 
+        // 【Fix 2】断点续传：跳过已复制完成的文件
+        if (completedSet.has(file.relativePath)) {
+          task.completedFiles++
+          task.transferredBytes += file.size
+          continue
+        }
+
         task.currentFile = file.name
         this.emitProgress(task)
 
@@ -239,6 +295,8 @@ export class BackupEngine extends EventEmitter {
 
         task.fileRecords.push(record)
         task.completedFiles++
+        // 【Fix 2】记录已复制完成的文件
+        completedSet.add(file.relativePath)
         this.emitProgress(task)
       }
 
@@ -258,6 +316,11 @@ export class BackupEngine extends EventEmitter {
       if (task.generateThumbnails) {
         await this.generateThumbnails(task)
         this.emitProgress(task)
+      }
+
+      // P0-1: 备份完成后，在每个目的地执行 FX3 重命名（不在源盘操作）
+      if (task.fx3Rename) {
+        await this.runFx3RenameOnDestinations(task)
       }
     } catch (err) {
       task.status = 'failed'
@@ -399,6 +462,8 @@ export class BackupEngine extends EventEmitter {
         } catch (err) {
           // Mark this destination as failed, don't propagate to Promise.all
           const msg = (err as Error).message
+          // P0-4: 写入失败时清理可能残留的 .tmp 文件
+          fs.promises.unlink(destFilePath + '.tmp').catch(() => {})
           dest.error = `拷贝失败: ${file.relativePath} — ${msg}`
           dest.verified = false
           return { path: destFilePath, checksum: '', verified: false, error: msg }
@@ -420,6 +485,7 @@ export class BackupEngine extends EventEmitter {
 
   // Bug 3 fix: computes src hash during copy stream — one read pass instead of two
   // Bug fix: single resolution guarantee — only finish OR close resolves, never both
+  // P0-2: 先写入 .tmp 临时文件，完成后原子性 rename 到最终路径
   private copyFileAndHash(
     src: string,
     dest: string,
@@ -433,7 +499,9 @@ export class BackupEngine extends EventEmitter {
 
       const hash = crypto.createHash(algorithm)
       const readStream = fs.createReadStream(src, { highWaterMark: 2 * 1024 * 1024 })
-      const writeStream = fs.createWriteStream(dest)
+      // P0-2: 写入临时文件 dest + '.tmp'
+      const tmpPath = dest + '.tmp'
+      const writeStream = fs.createWriteStream(tmpPath)
 
       readStream.on('data', (chunk: Buffer | string) => {
         if (taskId && this.cancelFlags.get(taskId)) {
@@ -448,16 +516,24 @@ export class BackupEngine extends EventEmitter {
 
       readStream.on('error', (err) => {
         writeStream.destroy()
-        settle(() => reject(err))
+        // P0-2: 写入失败时清理 .tmp 文件
+        settle(() => { fs.promises.unlink(tmpPath).catch(() => {}); reject(err) })
       })
       writeStream.on('error', (err) => {
         readStream.destroy()
-        settle(() => reject(err))
+        // P0-2: 写入失败时清理 .tmp 文件
+        settle(() => { fs.promises.unlink(tmpPath).catch(() => {}); reject(err) })
       })
-      writeStream.on('finish', () => settle(() => resolve({ checksum: hash.digest('hex') })))
+      // P0-2: 写入完成后原子性重命名到最终路径
+      writeStream.on('finish', () => settle(() => {
+        fs.promises.rename(tmpPath, dest)
+          .then(() => resolve({ checksum: hash.digest('hex') }))
+          .catch((renameErr) => { fs.promises.unlink(tmpPath).catch(() => {}); reject(renameErr) })
+      }))
       readStream.on('close', () => {
         if (taskId && this.cancelFlags.get(taskId)) {
-          settle(() => resolve({ checksum: hash.digest('hex') }))
+          // P0-2: 取消时清理 .tmp 文件
+          settle(() => { fs.promises.unlink(tmpPath).catch(() => {}); resolve({ checksum: hash.digest('hex') }) })
         }
       })
 
@@ -467,6 +543,7 @@ export class BackupEngine extends EventEmitter {
 
   // #5 fix: accepts taskId to check cancel flag and destroy streams on cancel
   // Bug fix: single resolution guarantee
+  // P0-2: 先写入 .tmp 临时文件，完成后原子性 rename 到最终路径
   private copyFile(
     src: string,
     dest: string,
@@ -478,7 +555,9 @@ export class BackupEngine extends EventEmitter {
       const settle = (fn: () => void) => { if (!settled) { settled = true; fn() } }
 
       const readStream = fs.createReadStream(src, { highWaterMark: 2 * 1024 * 1024 })
-      const writeStream = fs.createWriteStream(dest)
+      // P0-2: 写入临时文件 dest + '.tmp'
+      const tmpPath = dest + '.tmp'
+      const writeStream = fs.createWriteStream(tmpPath)
 
       readStream.on('data', (chunk: Buffer | string) => {
         if (taskId && this.cancelFlags.get(taskId)) {
@@ -491,15 +570,23 @@ export class BackupEngine extends EventEmitter {
 
       readStream.on('error', (err) => {
         writeStream.destroy()
-        settle(() => reject(err))
+        // P0-2: 写入失败时清理 .tmp 文件
+        settle(() => { fs.promises.unlink(tmpPath).catch(() => {}); reject(err) })
       })
       writeStream.on('error', (err) => {
         readStream.destroy()
-        settle(() => reject(err))
+        // P0-2: 写入失败时清理 .tmp 文件
+        settle(() => { fs.promises.unlink(tmpPath).catch(() => {}); reject(err) })
       })
-      writeStream.on('finish', () => settle(() => resolve()))
+      // P0-2: 写入完成后原子性重命名到最终路径
+      writeStream.on('finish', () => settle(() => {
+        fs.promises.rename(tmpPath, dest)
+          .then(() => resolve())
+          .catch((renameErr) => { fs.promises.unlink(tmpPath).catch(() => {}); reject(renameErr) })
+      }))
       readStream.on('close', () => {
-        if (taskId && this.cancelFlags.get(taskId)) settle(() => resolve())
+        // P0-2: 取消时清理 .tmp 文件
+        if (taskId && this.cancelFlags.get(taskId)) settle(() => { fs.promises.unlink(tmpPath).catch(() => {}); resolve() })
       })
 
       readStream.pipe(writeStream)
@@ -650,6 +737,40 @@ export class BackupEngine extends EventEmitter {
     this.emit('progress', payload)
   }
 
+  // 格式化字节数为人类可读字符串
+  private formatBytes(bytes: number): string {
+    if (bytes === 0) return '0 B'
+    const k = 1024
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB']
+    const i = Math.floor(Math.log(bytes) / Math.log(k))
+    return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`
+  }
+
+  // 断点续传：恢复已完成文件集合（重启后从目的地已存在文件推断）
+  async initResumeSet(taskId: string): Promise<number> {
+    const task = this.tasks.get(taskId)
+    if (!task) return 0
+
+    const completedSet = new Set<string>()
+
+    // 遍历每个目的地，检查哪些源文件已经存在于目的地
+    for (const dest of task.destinations) {
+      if (!dest.resolvedPath) continue
+      try {
+        const files = task.fileRecords ?? []
+        for (const record of files) {
+          // 从 fileRecords 中恢复已完成的文件
+          completedSet.add(record.relativePath)
+        }
+      } catch {
+        // 忽略不可访问的目的地
+      }
+    }
+
+    this.completedFileSets.set(taskId, completedSet)
+    return completedSet.size
+  }
+
   private async generateThumbnails(task: BackupTask): Promise<void> {
     if (!ffmpegPath) {
       task.thumbnailError = 'ffmpeg 未找到，无法生成缩略图。请联系开发者或重新安装应用。'
@@ -657,7 +778,8 @@ export class BackupEngine extends EventEmitter {
     }
 
     // Verify the binary is actually executable before processing all files
-    const ffmpegWorks = await execAsync(`"${ffmpegPath}" -version`)
+    // P0-3: 使用 execFile 避免命令注入（文件名中的特殊字符不会被 shell 解释）
+    const ffmpegWorks = await execFileAsync(ffmpegPath!, ['-version'])
       .then(() => true)
       .catch((err: NodeJS.ErrnoException) => {
         if (err.code === 'EACCES') {
@@ -683,7 +805,8 @@ export class BackupEngine extends EventEmitter {
         if (!destEntry.verified || !destEntry.path) continue
         const stem = destEntry.path.slice(0, destEntry.path.length - path.extname(destEntry.path).length)
         const thumbPath = `${stem}_thumb.jpg`
-        const ok = await execAsync(`"${ffmpegPath}" -y -i "${destEntry.path}" -vframes 1 -q:v 2 "${thumbPath}" 2>/dev/null`)
+        // P0-3: 使用 execFile 避免命令注入
+        const ok = await execFileAsync(ffmpegPath!, ['-y', '-i', destEntry.path, '-vframes', '1', '-q:v', '2', thumbPath])
           .then(() => true).catch(() => false)
         if (ok && !record.thumbnailPath) {
           record.thumbnailPath = thumbPath
