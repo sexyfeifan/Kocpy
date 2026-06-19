@@ -72,6 +72,7 @@ export interface TaskConfig {
   duplicateStrategy?: 'skip' | 'suffix'
   generateThumbnails?: boolean
   priority?: boolean
+  includeHidden?: boolean
 }
 
 export interface ProgressPayload {
@@ -145,6 +146,7 @@ declare global {
       getDriveInfo: (dirPath: string) => Promise<{ total: number; free: number; used: number } | null>
       getSystemInfo: () => Promise<{ platform: string; arch: string; hostname: string }>
       revealInFinder: (filePath: string) => Promise<void>
+      openLogsFolder: () => Promise<void>
       getSettings: () => Promise<AppSettings>
       saveSettings: (settings: AppSettings) => Promise<boolean>
       getDevices: () => Promise<string[]>

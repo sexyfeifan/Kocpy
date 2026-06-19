@@ -46,6 +46,7 @@ export function NewTask(): JSX.Element {
   const [generateThumbnails, setGenerateThumbnails] = useState(false)
   const [taskPriority] = useState(false)
   const [fx3Rename, setFx3Rename] = useState(false)
+  const [includeHidden, setIncludeHidden] = useState(true)
 
   const [selectedProjectId, setSelectedProjectId] = useState<string>('')
   const [showAllProjects, setShowAllProjects] = useState(false)
@@ -289,15 +290,11 @@ export function NewTask(): JSX.Element {
         duplicateStrategy,
         generateThumbnails,
         priority: taskPriority,
-        fx3Rename
+        fx3Rename,
+        includeHidden
       })
       addTask(task)
-      const result = await window.api.startTask(task.id)
-      if (result && result.allowed === false) {
-        alert('已达到免费备份上限（10次）。请前往设置页面解锁无限使用。')
-        setIsStarting(false)
-        return
-      }
+      await window.api.startTask(task.id)
       setActivePage('dashboard')
     } finally {
       setIsStarting(false)
@@ -1030,6 +1027,23 @@ export function NewTask(): JSX.Element {
               >
                 <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${
                   generateThumbnails ? 'left-4' : 'left-0.5'
+                }`} />
+              </div>
+            </label>
+            {/* Include hidden files */}
+            <label className="flex items-center justify-between cursor-pointer">
+              <div>
+                <p className="text-xs text-gray-300">包含隐藏文件</p>
+                <p className="text-[11px] text-gray-600 mt-0.5">备份以 . 开头的文件（如 ._ 元数据、.RDC 文件夹等）</p>
+              </div>
+              <div
+                onClick={() => setIncludeHidden((v) => !v)}
+                className={`relative w-9 h-5 rounded-full transition-colors shrink-0 ${
+                  includeHidden ? 'bg-blue-600' : 'bg-[#2a2a2a]'
+                }`}
+              >
+                <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${
+                  includeHidden ? 'left-4' : 'left-0.5'
                 }`} />
               </div>
             </label>

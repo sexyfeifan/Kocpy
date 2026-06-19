@@ -1,6 +1,6 @@
 import { useTaskStore } from '../store/taskStore'
 import { TaskCard } from '../components/TaskCard'
-import { HardDrive, Plus, LogOut, ChevronDown, CreditCard, Database, Monitor, RefreshCw, AlertTriangle } from 'lucide-react'
+import { HardDrive, Plus, LogOut, ChevronDown, CreditCard, Database, Monitor, RefreshCw } from 'lucide-react'
 import { useEffect, useState, useCallback, useRef } from 'react'
 import type { VolumeInfo, AppSettings } from '../types'
 
@@ -165,32 +165,8 @@ export function Dashboard(): JSX.Element {
   const failed = tasks.filter((t) => t.status === 'failed')
   const totalBytes = tasks.filter((t) => t.status === 'completed').reduce((s, t) => s + t.totalBytes, 0)
 
-  const FREE_LIMIT = 10
-  const showWarning = settings && !settings.isUnlocked && settings.backupCount >= FREE_LIMIT - 3
-
   return (
     <div className="flex-1 overflow-y-auto p-6">
-      {/* Trial warning banner */}
-      {showWarning && (
-        <div className={`mb-4 px-4 py-3 rounded-xl border flex items-center gap-3 ${
-          settings.backupCount >= FREE_LIMIT
-            ? 'bg-red-500/10 border-red-500/25 text-red-400'
-            : 'bg-amber-500/10 border-amber-500/25 text-amber-400'
-        }`}>
-          <AlertTriangle size={16} className="shrink-0" />
-          <span className="text-sm flex-1">
-            {settings.backupCount >= FREE_LIMIT
-              ? `免费试用次数已用完（${settings.backupCount}/${FREE_LIMIT}），无法开始新任务。`
-              : `免费试用剩余 ${FREE_LIMIT - settings.backupCount} 次备份机会。`}
-          </span>
-          <button
-            onClick={() => setActivePage('settings')}
-            className="text-xs font-medium underline hover:no-underline shrink-0"
-          >
-            前往设置解锁
-          </button>
-        </div>
-      )}
       {/* Stats */}
       <div className="grid grid-cols-4 gap-3 mb-4">
         {[

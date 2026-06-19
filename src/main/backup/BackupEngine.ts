@@ -6,6 +6,7 @@ import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { v4 as uuidv4 } from 'uuid'
 import _ffmpegPath from 'ffmpeg-static'
+import { logInfo, logWarn, logError } from '../logger'
 import type {
   BackupTask,
   FileRecord,
@@ -83,9 +84,11 @@ export class BackupEngine extends EventEmitter {
       priority: config.priority ?? false,
       duplicateStrategy: config.duplicateStrategy ?? 'skip',
       generateThumbnails: config.generateThumbnails ?? false,
-      fx3Rename: config.fx3Rename ?? false
+      fx3Rename: config.fx3Rename ?? false,
+      includeHidden: config.includeHidden ?? true
     }
     this.tasks.set(task.id, task)
+    logInfo(`Task created: ${task.name} (id=${task.id}) source=${config.sourcePath} dests=[${config.destinationPaths.join(', ')}] hash=${config.hashAlgorithm}`)
     return task
   }
 
@@ -183,6 +186,7 @@ export class BackupEngine extends EventEmitter {
     task.status = 'running'
     task.startedAt = Date.now()
     task.verifyLog = []
+    logInfo(`Task started: ${task.name} (id=${task.id}) source=${task.sourcePath} files=${task.totalFiles} bytes=${task.totalBytes}`)
 
     // 初始化断点续传的已完成文件集合
     if (!this.completedFileSets.has(taskId)) {
@@ -195,7 +199,7 @@ export class BackupEngine extends EventEmitter {
     const volumeName = task.namingTemplate
 
     try {
-      const { files, emptyDirs } = await this.enumerateFiles(task.sourcePath, undefined, task)
+      const { files, emptyDirs } = await this.enumerateFiles(task.sourcePath, undefined, task, task.includeHidden ?? true)
       task.totalFiles = files.length
       task.totalBytes = files.reduce((sum, f) => sum + f.size, 0)
       this.emitProgress(task)
@@ -258,6 +262,7 @@ export class BackupEngine extends EventEmitter {
       for (const file of files) {
         if (this.cancelFlags.get(taskId)) {
           task.status = 'cancelled'
+          logInfo(`Task cancelled: ${task.name} (id=${task.id})`)
           this.emitProgress(task)
           return
         }
@@ -308,6 +313,8 @@ export class BackupEngine extends EventEmitter {
 
       task.status = 'completed'
       task.completedAt = Date.now()
+      const duration = Math.round((task.completedAt - task.startedAt!) / 1000)
+      logInfo(`Task completed: ${task.name} (id=${task.id}) files=${task.completedFiles} duration=${duration}s`)
       task.currentFile = ''
       task.speedBps = 0
       task.eta = 0
@@ -325,6 +332,7 @@ export class BackupEngine extends EventEmitter {
     } catch (err) {
       task.status = 'failed'
       task.errorMessage = (err as Error).message
+      logError(`Task failed: ${task.name} (id=${task.id})`, err)
       this.emitProgress(task)
       throw err
     }
@@ -462,6 +470,7 @@ export class BackupEngine extends EventEmitter {
         } catch (err) {
           // Mark this destination as failed, don't propagate to Promise.all
           const msg = (err as Error).message
+          logError(`File copy failed: ${file.relativePath} → ${dest.path}`, err)
           // P0-4: 写入失败时清理可能残留的 .tmp 文件
           fs.promises.unlink(destFilePath + '.tmp').catch(() => {})
           dest.error = `拷贝失败: ${file.relativePath} — ${msg}`
@@ -608,6 +617,7 @@ export class BackupEngine extends EventEmitter {
     task.verifyLog = []
     task.verifyCompletedFiles = 0
     task.verifyTotalFiles = task.fileRecords.length * task.destinations.length
+    logInfo(`Verification started: ${task.name} (${task.verifyTotalFiles} checks)`)
 
     for (let dIdx = 0; dIdx < task.destinations.length; dIdx++) {
       const dest = task.destinations[dIdx]
@@ -644,6 +654,7 @@ export class BackupEngine extends EventEmitter {
       }
 
       dest.verified = allVerified
+      logInfo(`Verification ${allVerified ? 'PASSED' : 'FAILED'} for dest: ${dest.path}`)
     }
   }
 
@@ -651,7 +662,8 @@ export class BackupEngine extends EventEmitter {
   private async enumerateFiles(
     dirPath: string,
     baseDir?: string,
-    task?: BackupTask
+    task?: BackupTask,
+    includeHidden?: boolean
   ): Promise<{
     files: Array<{ name: string; relativePath: string; size: number; absolutePath: string }>
     emptyDirs: string[]
@@ -669,7 +681,7 @@ export class BackupEngine extends EventEmitter {
     let hasNonHiddenContent = false
 
     for (const entry of entries) {
-      if (entry.name.startsWith('.')) {
+      if (entry.name.startsWith('.') && !includeHidden) {
         if (task) {
           if (entry.isFile()) {
             const hiddenStat = await fs.promises.stat(path.join(dirPath, entry.name)).catch(() => null)
@@ -686,7 +698,7 @@ export class BackupEngine extends EventEmitter {
       hasNonHiddenContent = true
       const fullPath = path.join(dirPath, entry.name)
       if (entry.isDirectory()) {
-        const nested = await this.enumerateFiles(fullPath, base, task)
+        const nested = await this.enumerateFiles(fullPath, base, task, includeHidden)
         files.push(...nested.files)
         emptyDirs.push(...nested.emptyDirs)
         // If nested returned no files and no emptyDirs of its own, this sub-dir is empty
@@ -706,7 +718,8 @@ export class BackupEngine extends EventEmitter {
 
     // If the directory itself is empty (or only had hidden entries), record it
     // but only if it's not the root (baseDir is set, meaning we're in a subdirectory)
-    if (!hasNonHiddenContent && baseDir !== undefined) {
+    // When includeHidden is true, hidden entries count as content so directory is not "empty"
+    if (!hasNonHiddenContent && baseDir !== undefined && !includeHidden) {
       emptyDirs.push(path.relative(base, dirPath))
     }
 

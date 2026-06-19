@@ -1,23 +1,4 @@
-export function formatBytes(bytes: number): string {
-  if (bytes === 0) return '0 B'
-  const k = 1024
-  const sizes = ['B', 'KB', 'MB', 'GB', 'TB']
-  const i = Math.floor(Math.log(bytes) / Math.log(k))
-  return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`
-}
-
-export function formatDate(ts?: number): string {
-  if (!ts) return '-'
-  return new Date(ts).toLocaleString('zh-CN', { hour12: false })
-}
-
-export function formatDuration(startedAt?: number, completedAt?: number): string {
-  if (!startedAt || !completedAt) return '-'
-  const sec = Math.round((completedAt - startedAt) / 1000)
-  if (sec < 60) return `${sec}s`
-  const min = Math.floor(sec / 60)
-  return `${min}m ${sec % 60}s`
-}
+export { formatBytes, formatDate, formatDuration } from './report-builder'
 
 export function formatSpeed(bps: number): string {
   if (bps < 1024) return `${bps.toFixed(0)} B/s`

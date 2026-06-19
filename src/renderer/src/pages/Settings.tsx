@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { Shield, Info, Webhook, Download, Loader2, CheckCircle, ExternalLink } from 'lucide-react'
+import { Shield, Info, Webhook, Download, Loader2, CheckCircle, ExternalLink, FolderOpen } from 'lucide-react'
 import type { HashAlgorithm } from '../types'
 
 type DuplicateStrategy = 'skip' | 'suffix'
@@ -9,8 +9,6 @@ const HASH_OPTIONS: { value: HashAlgorithm; label: string; desc: string }[] = [
   { value: 'sha1',   label: 'SHA1',   desc: '更安全，稍慢' },
   { value: 'sha256', label: 'SHA256', desc: '最安全，推荐' }
 ]
-
-const FREE_LIMIT = 10
 
 export function Settings(): JSX.Element {
   const [defaultHash, setDefaultHash] = useState<HashAlgorithm>('md5')
@@ -384,6 +382,25 @@ export function Settings(): JSX.Element {
           </div>
         </div>
 
+        {/* Logs */}
+        <div className="glass-card p-5">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <FolderOpen size={14} className="text-gray-400" />
+              <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
+                日志
+              </label>
+            </div>
+            <button
+              onClick={() => window.api.openLogsFolder()}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-[#1a1a1a] border border-[#2a2a2a] text-gray-300 hover:text-gray-100 hover:border-gray-500 transition-colors"
+            >
+              <FolderOpen size={12} /> 打开日志文件夹
+            </button>
+          </div>
+          <p className="text-xs text-gray-600 mt-2">备份操作日志，自动保留最近 7 天，用于排查备份问题。</p>
+        </div>
+
         {/* About */}
         <div className="glass-card p-5">
           <div className="flex items-center gap-2 mb-4">
@@ -418,14 +435,7 @@ export function Settings(): JSX.Element {
             </div>
             <div className="flex justify-between text-sm mt-1">
               <span className="text-gray-500">备份次数</span>
-              {isUnlocked ? (
-                <span className="text-green-400 text-xs font-mono">已解锁 · 无限使用</span>
-              ) : (
-                <span className={`text-xs font-mono ${backupCount >= FREE_LIMIT ? 'text-red-400' : backupCount >= FREE_LIMIT - 3 ? 'text-yellow-400' : 'text-gray-400'}`}>
-                  {backupCount} / {FREE_LIMIT}
-                  {backupCount >= FREE_LIMIT && '  · 已达上限'}
-                </span>
-              )}
+              <span className="text-gray-400 text-xs font-mono">{backupCount}</span>
             </div>
           </div>
         </div>

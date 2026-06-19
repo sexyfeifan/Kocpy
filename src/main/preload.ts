@@ -53,6 +53,9 @@ contextBridge.exposeInMainWorld('api', {
   revealInFinder: (filePath: string) =>
     ipcRenderer.invoke('system:revealInFinder', filePath),
 
+  openLogsFolder: (): Promise<void> =>
+    ipcRenderer.invoke('system:openLogs'),
+
   listVolumes: () =>
     ipcRenderer.invoke('system:listVolumes'),
 
