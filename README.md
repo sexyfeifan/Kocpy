@@ -105,11 +105,59 @@
 
 ---
 
+## 项目架构
+
+```
+src/
+├── main/                          # Electron 主进程
+│   ├── index.ts                   # 应用入口、窗口创建、备份进度监听与 Webhook 触发
+│   ├── ipc-handlers.ts            # 所有 IPC 通信处理器（对话框、备份、设置、项目、系统）
+│   ├── backup/
+│   │   ├── BackupEngine.ts        # 核心备份引擎：文件枚举、并行拷贝、哈希校验、缩略图生成
+│   │   └── ReportGenerator.ts     # HTML 报告生成器（用于 PDF 导出）
+│   ├── webhook.ts                 # Webhook 推送：平台检测（飞书/钉钉/企微/Discord/Slack）、payload 构建、重试逻辑
+│   ├── report-builder.ts          # Webhook 纯文本报告构建器（任务摘要、路径、校验结果、目录树）
+│   ├── storage.ts                 # 数据持久化：原子写入（atomicWrite）+ 写前备份（.bak）
+│   ├── types.ts                   # 主进程类型定义（BackupTask、FileRecord、TaskConfig 等）
+│   ├── utils.ts                   # 工具函数（formatSpeed、formatEta）+ 从 report-builder 重导出
+│   ├── logger.ts                  # 文件日志系统（按日滚动，自动保留 7 天）
+│   └── preload.ts                 # contextBridge API 暴露层
+├── renderer/
+│   └── src/
+│       ├── App.tsx                # 根组件：路由分发、进度事件监听
+│       ├── main.tsx               # React 入口
+│       ├── store/
+│       │   └── taskStore.ts       # Zustand 全局状态（任务列表、项目、设备、页面路由）
+│       ├── pages/
+│       │   ├── Dashboard.tsx      # 任务总览：统计卡片、已连接设备面板、任务列表
+│       │   ├── NewTask.tsx        # 新建任务：备卡/镜像/项目三种模式、素材卡自动识别
+│       │   ├── History.tsx        # 历史记录：热力图 + 按日期筛选
+│       │   ├── Settings.tsx       # 设置：哈希算法、校验开关、Webhook 配置、检查更新
+│       │   └── ProjectManager.tsx # 项目管理：创建/编辑/归档项目、目录结构预创建
+│       ├── components/
+│       │   ├── TaskCard.tsx       # 任务卡片：进度条、校验日志、操作按钮
+│       │   ├── Header.tsx         # 顶部栏：页面标题、运行状态、版本号
+│       │   ├── Sidebar.tsx        # 侧边导航栏
+│       │   ├── BackupHeatmap.tsx  # GitHub 风格备份热力图（52 周）
+│       │   └── ErrorBoundary.tsx  # React 错误边界
+│       ├── types/
+│       │   └── index.ts           # 渲染进程类型定义 + Window.api 全局类型声明
+│       └── utils.ts               # 渲染进程工具函数（formatBytes、formatEta、formatDuration 等）
+```
+
+---
+
 ## 更新日志
 
 ### v1.10.1（2026-06）
 
 - **检查更新** — 设置页面新增「检查更新」按钮，通过 GitHub API 检测最新版本，显示更新日志并提供直接下载链接
+- **代码质量改进** — 消除 formatBytes 等 6 处重复，统一从 utils.ts 导入
+- **类型安全修复** — 补充 renderer 类型缺失字段、修复模板字符串 bug、Header 补充 projects 页面标题
+- **代码重构** — 拆分 index.ts（IPC 处理移至独立模块）、持久化日志系统、移除免费限制残留代码
+- **数据安全加固** — .tmp 临时文件写入后原子性 rename、写前 .bak 备份、磁盘空间预检、断点续传支持
+- **安全加固** — execFile 替代 exec 防止命令注入、.tmp 文件清理
+- **UI 清理** — 删除 Dashboard 无用 settings 状态、NewTask 空 useEffect
 
 ### v1.10.0（2026-06）
 
@@ -148,11 +196,18 @@
 
 ## 技术栈
 
-- **框架**：Electron 28 + electron-vite
-- **前端**：React 18 + TypeScript + Tailwind CSS
-- **状态管理**：Zustand
-- **构建**：electron-builder（生成 DMG + ZIP，支持 arm64 / x64）
-- **报告**：HTML → PDF（Electron printToPDF）
+| 层级 | 技术 |
+|------|------|
+| 桌面框架 | Electron 28 + electron-vite |
+| 前端 | React 18 + TypeScript 5 + Tailwind CSS 3 |
+| 状态管理 | Zustand 4 |
+| 图标 | Lucide React |
+| 视频处理 | ffmpeg-static（内置，用于首帧缩略图提取） |
+| 构建打包 | electron-builder（DMG + ZIP，支持 arm64 / x64） |
+| 报告导出 | HTML 模板 → Electron printToPDF |
+| 数据持久化 | JSON 文件（atomicWrite + .bak 写前备份） |
+| 日志 | 按日文件日志，自动滚动保留 7 天 |
+| 通信 | Electron IPC（contextBridge + ipcMain.handle） |
 
 ---
 
@@ -162,7 +217,7 @@
 # 安装依赖
 npm install
 
-# 开发模式
+# 开发模式（热重载）
 npm run dev
 
 # 构建
@@ -171,6 +226,20 @@ npm run build
 # 打包发布（macOS arm64 + x64）
 npm run dist
 ```
+
+### 开发环境要求
+
+- Node.js 18+
+- npm 9+
+- macOS（其他平台未测试，部分功能如 diskutil / volume 检测仅限 macOS）
+
+### 项目结构说明
+
+- `src/main/` — Electron 主进程，负责文件系统操作、备份引擎、Webhook 推送、数据持久化
+- `src/renderer/` — React 渲染进程，负责 UI 展示和用户交互
+- `src/main/preload.ts` — 安全桥接层，通过 `contextBridge.exposeInMainWorld` 暴露 API
+- 主进程与渲染进程通过 `ipcMain.handle` / `ipcRenderer.invoke` 通信
+- 所有备份操作在主进程执行，渲染进程通过 `onProgress` 事件监听实时进度
 
 ---
 
