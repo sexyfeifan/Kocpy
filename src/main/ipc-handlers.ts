@@ -362,7 +362,7 @@ export function registerIpcHandlers(backupEngine: BackupEngine): void {
     return s.devices
   })
 
-  ipcMain.handle('projects:getAll', async () => loadProjects())
+  ipcMain.handle('projects:getAll', async () => await loadProjects())
 
   ipcMain.handle('projects:save', async (_, project: ProjectConfig) => {
     const projects = await loadProjects()
@@ -377,13 +377,13 @@ export function registerIpcHandlers(backupEngine: BackupEngine): void {
   })
 
   ipcMain.handle('projects:delete', async (_, projectId: string) => {
-    const projects = await loadProjects().filter((p) => p.id !== projectId)
+    const projects = (await loadProjects()).filter((p) => p.id !== projectId)
     await saveProjects(projects)
     return projects
   })
 
   ipcMain.handle('projects:createFileStructure', async (_, projectId: string) => {
-    const project = loadProjects().find((p) => p.id === projectId)
+    const project = (await loadProjects()).find((p) => p.id === projectId)
     if (!project || !project.destinationPaths?.length) {
       return { created: [], skipped: [], errors: ['项目不存在或未设置目的地'] }
     }
@@ -450,7 +450,7 @@ export function registerIpcHandlers(backupEngine: BackupEngine): void {
     positionLabel: string
   }) => {
     const { projectId, shootingDate, deviceName, positionLabel } = params
-    const project = loadProjects().find((p) => p.id === projectId)
+    const project = (await loadProjects()).find((p) => p.id === projectId)
     if (!project || !project.destinationPaths?.length) return null
 
     const dateStr = shootingDate.replace(/-/g, '')
