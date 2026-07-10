@@ -65,7 +65,7 @@ function createWindow(): void {
       if (s.webhookEnabled && s.webhookUrl) {
         const task = backupEngine.getTask(payload.taskId)
         if (task) {
-          sendWebhook(s.webhookUrl, buildBackupReport(task)).catch((e) => console.error('Webhook failed:', e))
+          sendWebhook(s.webhookUrl, buildBackupReport(task)).catch((e) => logError('Webhook failed', e))
         }
       }
     }

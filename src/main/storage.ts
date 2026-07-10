@@ -1,6 +1,7 @@
 import { app } from 'electron'
 import { join } from 'path'
 import * as fs from 'fs'
+import { logError, logWarn } from './logger'
 import type { BackupTask, ProjectConfig } from './types'
 
 export interface AppSettings {
@@ -37,7 +38,7 @@ export async function loadSettings(): Promise<AppSettings> {
     return { ...DEFAULT_SETTINGS, ...JSON.parse(raw) }
   } catch (err) {
     // Settings file may not exist on first launch, use defaults
-    console.warn('Failed to load settings, using defaults:', err)
+    logWarn('Failed to load settings, using defaults: ' + String(err))
     return { ...DEFAULT_SETTINGS }
   }
 }
@@ -49,7 +50,7 @@ export async function backupBeforeWrite(filePath: string): Promise<void> {
       await fs.promises.copyFile(filePath, filePath + '.bak')
     }
   } catch (e) {
-    console.error(`Failed to backup ${filePath}:`, e)
+    logError(`Failed to backup ${filePath}`, e)
   }
 }
 
@@ -70,7 +71,7 @@ export async function loadPersistedTasks(): Promise<BackupTask[]> {
     return JSON.parse(raw) as BackupTask[]
   } catch (err) {
     // Tasks file may not exist on first launch
-    console.warn('Failed to load tasks, returning empty array:', err)
+    logWarn('Failed to load tasks, returning empty array: ' + String(err))
     return []
   }
 }
@@ -80,7 +81,7 @@ export async function persistTasks(tasks: BackupTask[]): Promise<void> {
     await backupBeforeWrite(getTasksPath())
     await atomicWrite(getTasksPath(), JSON.stringify(tasks, null, 2))
   } catch (e) {
-    console.error('Failed to persist tasks:', e)
+    logError('Failed to persist tasks', e)
   }
 }
 
@@ -90,7 +91,7 @@ export async function loadProjects(): Promise<ProjectConfig[]> {
     return JSON.parse(raw) as ProjectConfig[]
   } catch (err) {
     // Projects file may not exist on first launch
-    console.warn('Failed to load projects, returning empty array:', err)
+    logWarn('Failed to load projects, returning empty array: ' + String(err))
     return []
   }
 }

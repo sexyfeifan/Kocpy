@@ -119,7 +119,7 @@ export function registerIpcHandlers(backupEngine: BackupEngine): void {
         used: (stat.blocks - stat.bfree) * stat.bsize
       }
     } catch (err) {
-      console.warn(`Failed to get drive info for ${dirPath}:`, err)
+      logWarn(`Failed to get drive info for ${dirPath}: ` + String(err))
       return null
     }
   })
@@ -246,14 +246,14 @@ export function registerIpcHandlers(backupEngine: BackupEngine): void {
 
               return { name: e.name, path: volPath, total, free, used, deviceType, canEject: true, _fsType: fsType }
             } catch (err) {
-              console.warn(`Failed to process volume ${e.name}:`, err)
+              logWarn(`Failed to process volume ${e.name}: ` + String(err))
               return null
             }
           })
       )
       return volumes.filter(Boolean).map(({ _fsType: _, ...v }) => v)
     } catch (err) {
-      console.error('Failed to list volumes:', err)
+      logError('Failed to list volumes', err)
       return []
     }
   })
@@ -264,7 +264,7 @@ export function registerIpcHandlers(backupEngine: BackupEngine): void {
       await execFileAsync('diskutil', ['eject', volumePath])
       return true
     } catch (err) {
-      console.error(`Failed to eject volume ${volumePath}:`, err)
+      logError(`Failed to eject volume ${volumePath}`, err)
       return false
     }
   })
