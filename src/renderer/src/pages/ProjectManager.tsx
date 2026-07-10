@@ -152,12 +152,27 @@ function ProjectEditPanel({
 
   useEffect(() => {
     if (!project?.destinationPaths?.length) { setDestinations([]); return }
-    Promise.all(
-      project.destinationPaths.map(async (p) => {
-        const info = await window.api.getDriveInfo(p).catch(() => null)
-        return { id: uuidv4(), path: p, driveInfo: info }
-      })
-    ).then(setDestinations)
+
+    const loadDestinations = async () => {
+      try {
+        const results = await Promise.all(
+          project.destinationPaths.map(async (p) => {
+            try {
+              const info = await window.api.getDriveInfo(p)
+              return { id: uuidv4(), path: p, driveInfo: info }
+            } catch {
+              return { id: uuidv4(), path: p, driveInfo: null }
+            }
+          })
+        )
+        setDestinations(results)
+      } catch (err) {
+        console.error('Failed to load destinations:', err)
+        setDestinations([])
+      }
+    }
+
+    loadDestinations()
   }, [])
 
   const toggleDevice = (d: string) =>
