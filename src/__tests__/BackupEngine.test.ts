@@ -41,6 +41,9 @@ vi.mock('../main/logger', () => ({
 
 vi.mock('../main/utils', () => ({
   formatBytes: vi.fn((bytes) => `${bytes} bytes`),
+  isValidPath: vi.fn(() => true),  // 默认所有路径都有效
+  validateTaskName: vi.fn((name) => name || 'Untitled'),
+  sanitizeFilename: vi.fn((name) => name || 'untitled'),
 }))
 
 describe('BackupEngine', () => {

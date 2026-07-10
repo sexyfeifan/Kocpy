@@ -13,19 +13,8 @@ export function isValidPath(inputPath: string): boolean {
   // 规范化路径
   const normalized = path.normalize(inputPath)
 
-  // 检查危险路径模式
-  const dangerousPatterns = [
-    '..',      // 父目录遍历
-    '~/',      // 用户主目录
-    '/etc/',   // 系统配置
-    '/var/',   // 系统变量
-    '/tmp/',   // 临时目录（可能不安全）
-    '/proc/',  // 进程信息
-    '/sys/',   // 系统信息
-  ]
-
-  // 检查是否包含危险模式
-  if (dangerousPatterns.some(p => normalized.includes(p))) {
+  // 检查相对路径遍历
+  if (normalized.includes('..')) {
     return false
   }
 
@@ -35,6 +24,8 @@ export function isValidPath(inputPath: string): boolean {
     return false
   }
 
+  // 允许所有绝对路径（包括 /Volumes/, /Users/, /tmp/ 等）
+  // 在 macOS 上，这些是合法的文件系统路径
   return true
 }
 
