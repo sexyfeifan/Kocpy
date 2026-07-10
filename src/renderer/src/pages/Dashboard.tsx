@@ -31,7 +31,7 @@ function ConnectedDrives(): JSX.Element {
 
   useEffect(() => {
     refresh()
-    const id = setInterval(refresh, 5000)
+    const id = setInterval(refresh, 30000) // 30秒轮询，减少资源消耗
     return () => clearInterval(id)
   }, [refresh])
 

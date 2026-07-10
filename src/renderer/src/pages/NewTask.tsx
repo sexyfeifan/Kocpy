@@ -63,7 +63,7 @@ export function NewTask(): JSX.Element {
     if (mode === 'project') loadProjects()
   }, [mode])
 
-  // Scan for source volumes in all modes — poll every 5s
+  // Scan for source volumes in all modes — poll every 30s (reduced from 5s for better performance)
   const scanSources = useCallback(async () => {
     const vols = await window.api.listVolumes()
     setDetectedSources(vols.filter((v) => v.deviceType === 'source'))
@@ -71,7 +71,7 @@ export function NewTask(): JSX.Element {
 
   useEffect(() => {
     scanSources()
-    const id = setInterval(scanSources, 5000)
+    const id = setInterval(scanSources, 30000) // 30秒轮询，减少资源消耗
     return () => clearInterval(id)
   }, [scanSources])
 
