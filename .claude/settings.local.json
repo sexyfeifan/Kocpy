@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:astryx.atmeta.com)",
+      "WebFetch(domain:github.com)",
+      "Bash(npm install *)",
+      "Bash(npx vitest *)",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); [print\\(k\\) for k in sorted\\(d.get\\('exports',{}\\).keys\\(\\)\\)]\")",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); exports=d.get\\('exports',{}\\); [print\\(k, '->', v\\) for k,v in exports.items\\(\\) if 'css' in str\\(v\\).lower\\(\\) or k.endswith\\('.css'\\)]\")",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); exports=d.get\\('exports',{}\\); [print\\(k, '->', v\\) for k,v in exports.items\\(\\) if 'reset' in str\\(v\\).lower\\(\\) or 'reset' in k.lower\\(\\)]\")",
+      "Bash(npx electron-vite *)",
+      "Bash(python3 -c ' *)",
+      "Bash(npm run *)",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); exports=d.get\\('exports',{}\\); [print\\(k\\) for k in exports.keys\\(\\) if 'theme' in k.lower\\(\\)]\")",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); exports=d.get\\('exports',{}\\); [print\\(k\\) for k in exports.keys\\(\\) if 'segment' in k.lower\\(\\)]\")",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); exports=d.get\\('exports',{}\\); [print\\(k, '->', v\\) for k,v in exports.items\\(\\)]\")"
+    ]
+  }
+}

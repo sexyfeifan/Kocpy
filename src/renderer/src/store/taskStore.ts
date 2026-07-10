@@ -71,7 +71,9 @@ export const useTaskStore = create<TaskStore>((set) => ({
               ...(payload.verifyCompletedFiles !== undefined && { verifyCompletedFiles: payload.verifyCompletedFiles }),
               ...(payload.verifyTotalFiles !== undefined && { verifyTotalFiles: payload.verifyTotalFiles }),
               ...(payload.skippedFiles !== undefined && { skippedFiles: payload.skippedFiles }),
-              ...(payload.skippedBytes !== undefined && { skippedBytes: payload.skippedBytes })
+              ...(payload.skippedBytes !== undefined && { skippedBytes: payload.skippedBytes }),
+              ...(payload.unchangedFiles !== undefined && { unchangedFiles: payload.unchangedFiles }),
+              ...(payload.unchangedBytes !== undefined && { unchangedBytes: payload.unchangedBytes })
             }
           : t
       )

@@ -7,8 +7,6 @@ export interface AppSettings {
   defaultHash: 'md5' | 'sha1' | 'sha256'
   verifyAfterCopy: boolean
   devices: string[]
-  backupCount: number
-  isUnlocked: boolean
   defaultDuplicateStrategy?: 'skip' | 'suffix'
   defaultGenerateThumbnails?: boolean
   webhookUrl?: string
@@ -18,9 +16,7 @@ export interface AppSettings {
 export const DEFAULT_SETTINGS: AppSettings = {
   defaultHash: 'md5',
   verifyAfterCopy: true,
-  devices: ['A机', 'B机', 'C机', 'DIT'],
-  backupCount: 0,
-  isUnlocked: false
+  devices: ['A机', 'B机', 'C机', 'DIT']
 }
 
 export function getSettingsPath(): string {

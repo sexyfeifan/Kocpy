@@ -23,8 +23,10 @@ export interface FileRecord {
     path: string
     checksum: string
     verified: boolean
+    unchanged?: boolean
   }>
   thumbnailPath?: string
+  skipped?: boolean
 }
 
 export interface BackupTask {
@@ -60,6 +62,9 @@ export interface BackupTask {
   fx3Rename?: boolean
   includeHidden?: boolean
   thumbnailError?: string
+  incremental?: boolean
+  unchangedFiles?: number
+  unchangedBytes?: number
 }
 
 export interface TaskConfig {
@@ -77,6 +82,7 @@ export interface TaskConfig {
   priority?: boolean
   fx3Rename?: boolean
   includeHidden?: boolean
+  incremental?: boolean
 }
 
 export interface ProgressPayload {
@@ -98,9 +104,9 @@ export interface ProgressPayload {
   verifyTotalFiles?: number
   skippedFiles?: number
   skippedBytes?: number
+  unchangedFiles?: number
+  unchangedBytes?: number
 }
-
-export interface DriveInfo {
   path: string
   label: string
   total: number

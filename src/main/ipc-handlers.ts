@@ -47,16 +47,8 @@ export function registerIpcHandlers(backupEngine: BackupEngine): void {
 
   ipcMain.handle('backup:startTask', async (_, taskId: string) => {
     const s = loadSettings()
-    const FREE_LIMIT = 10
-    if (!s.isUnlocked && (s.backupCount ?? 0) >= FREE_LIMIT) {
-      return { allowed: false, remaining: 0 }
-    }
-    if (!s.isUnlocked) {
-      s.backupCount = (s.backupCount ?? 0) + 1
-      saveSettings(s)
-    }
-    backupEngine.startTask(taskId, { verifyAfterCopy: s.verifyAfterCopy }).catch(console.error)
-    return { allowed: true, remaining: s.isUnlocked ? Infinity : FREE_LIMIT - s.backupCount }
+    backupEngine.startTask(taskId, { verifyAfterCopy: s.verifyAfterCopy })
+    return { allowed: true }
   })
 
   ipcMain.handle('backup:cancelTask', async (_, taskId: string) => {
@@ -434,23 +426,6 @@ export function registerIpcHandlers(backupEngine: BackupEngine): void {
         : join(dest, projectNameCompact, dateStr, deviceName)
       return deviceFolder
     })
-  })
-
-  ipcMain.handle('settings:checkAndIncrementBackupCount', async () => {
-    const s = loadSettings()
-    if (s.isUnlocked) return { allowed: true, remaining: Infinity }
-    const FREE_LIMIT = 10
-    if (s.backupCount >= FREE_LIMIT) return { allowed: false, remaining: 0 }
-    s.backupCount = (s.backupCount ?? 0) + 1
-    saveSettings(s)
-    return { allowed: true, remaining: FREE_LIMIT - s.backupCount }
-  })
-
-  ipcMain.handle('settings:unlock', async () => {
-    const s = loadSettings()
-    s.isUnlocked = true
-    saveSettings(s)
-    return true
   })
 
   ipcMain.handle('webhook:test', async (_, url: string) => {

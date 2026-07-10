@@ -5,8 +5,6 @@ interface AppSettings {
   defaultHash: 'md5' | 'sha1' | 'sha256'
   verifyAfterCopy: boolean
   devices: string[]
-  backupCount: number
-  isUnlocked: boolean
   defaultDuplicateStrategy?: 'skip' | 'suffix'
   defaultGenerateThumbnails?: boolean
   webhookUrl?: string
@@ -108,12 +106,6 @@ contextBridge.exposeInMainWorld('api', {
     assets?: { name: string; url: string; size: number }[]
     error?: string
   }> => ipcRenderer.invoke('app:checkForUpdates'),
-
-  checkAndIncrementBackupCount: (): Promise<{ allowed: boolean; remaining: number }> =>
-    ipcRenderer.invoke('settings:checkAndIncrementBackupCount'),
-
-  unlock: (): Promise<boolean> =>
-    ipcRenderer.invoke('settings:unlock'),
 
   testWebhook: (url: string): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('webhook:test', url),

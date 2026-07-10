@@ -1,0 +1,99 @@
+/*
+ * Kocpy Astryx theme overrides
+ *
+ * Dark mode is the DEFAULT and ONLY mode for Kocpy (DIT backup software).
+ * All dark overrides use :root specificity — no attribute selectors needed.
+ * Light mode is opt-in via [data-theme="light"].
+ */
+
+/* ── Dark mode: unconditional default ─────────────────────────────────── */
+
+:root {
+  color-scheme: dark;
+
+  /* Surfaces — deeper than neutral's defaults */
+  --color-background-body: #0A0A0A;
+  --color-background-surface: #111111;
+  --color-background-card: #181818;
+  --color-background-popover: #1E1E1E;
+  --color-background-muted: rgba(255, 255, 255, 0.06);
+
+  /* Text */
+  --color-text-primary: #F3F4F6;
+  --color-text-secondary: #D1D5DB;
+  --color-text-disabled: #6B7280;
+
+  /* Icons */
+  --color-icon-primary: #E5E7EB;
+  --color-icon-secondary: #9CA3AF;
+  --color-icon-disabled: #4B5563;
+
+  /* Borders */
+  --color-border: rgba(255, 255, 255, 0.08);
+  --color-border-emphasized: rgba(255, 255, 255, 0.15);
+
+  /* Accent — blue brand */
+  --color-accent: #E5E7EB;
+  --color-on-accent: #0A0A0A;
+
+  /* Font fallback (Figtree not bundled) */
+  --font-family-body: -apple-system, "PingFang SC", "Helvetica Neue", sans-serif;
+  --font-family-heading: -apple-system, "PingFang SC", "Helvetica Neue", sans-serif;
+  --font-family-code: "SF Mono", "Menlo", monospace;
+}
+
+/* ── Light mode: opt-in override ──────────────────────────────────────── */
+
+[data-theme="light"] {
+  color-scheme: light;
+  --color-background-body: #F8F4ED;
+  --color-background-surface: #FFFFFF;
+  --color-background-card: #FFFFFF;
+  --color-background-popover: #FFFFFF;
+  --color-background-muted: rgba(5, 54, 89, 0.06);
+  --color-text-primary: #15110C;
+  --color-text-secondary: #4E606F;
+  --color-text-disabled: #A4B0BC;
+  --color-icon-primary: #15110C;
+  --color-icon-secondary: #4E606F;
+  --color-icon-disabled: #A4B0BC;
+  --color-border: rgba(5, 54, 89, 0.1);
+  --color-border-emphasized: #CCD3DB;
+  --color-accent: #15110C;
+  --color-on-accent: #FFFFFF;
+}
+
+/* ── Kocpy animations ─────────────────────────────────────────────────── */
+
+@keyframes kocpy-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.kocpy-pulse {
+  animation: kocpy-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes kocpy-slide-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.kocpy-slide-in {
+  animation: kocpy-slide-in var(--duration-medium, 410ms) var(--ease-standard, cubic-bezier(0.24, 1, 0.4, 1)) both;
+}
+
+/* ── Progress bar ─────────────────────────────────────────────────────── */
+
+.kocpy-progress-track {
+  height: 6px;
+  border-radius: var(--radius-full, 9999px);
+  background: var(--color-background-muted, rgba(255,255,255,0.04));
+  overflow: hidden;
+}
+
+.kocpy-progress-fill {
+  height: 100%;
+  border-radius: var(--radius-full, 9999px);
+  transition: width var(--duration-medium, 410ms) var(--ease-standard, cubic-bezier(0.24, 1, 0.4, 1));
+}
