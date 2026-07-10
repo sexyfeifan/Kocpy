@@ -629,8 +629,12 @@ export function ProjectManager(): JSX.Element {
   const [showTutorial, setShowTutorial] = useState(false)
 
   useEffect(() => {
-    window.api.getProjects().then(setProjects)
-    window.api.getDevices().then(setDevices)
+    window.api.getProjects().then(setProjects).catch((err) => {
+      console.error('Failed to load projects:', err)
+    })
+    window.api.getDevices().then(setDevices).catch((err) => {
+      console.error('Failed to load devices:', err)
+    })
   }, [])
 
   const reload = async () => { const updated = await window.api.getProjects(); setProjects(updated) }
