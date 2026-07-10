@@ -54,13 +54,22 @@ export function NewTask(): JSX.Element {
       if (s.defaultDuplicateStrategy) setDuplicateStrategy(s.defaultDuplicateStrategy)
       if (s.defaultGenerateThumbnails != null) setGenerateThumbnails(s.defaultGenerateThumbnails)
     })
-    loadProjects()
-    loadDevices()
+    // 异步调用需要正确处理
+    loadProjects().catch((err) => {
+      console.error('Failed to load projects:', err)
+    })
+    loadDevices().catch((err) => {
+      console.error('Failed to load devices:', err)
+    })
   }, [])
 
   // Reload projects when switching to project mode
   useEffect(() => {
-    if (mode === 'project') loadProjects()
+    if (mode === 'project') {
+      loadProjects().catch((err) => {
+        console.error('Failed to reload projects:', err)
+      })
+    }
   }, [mode])
 
   // Scan for source volumes in all modes — poll every 30s (reduced from 5s for better performance)
