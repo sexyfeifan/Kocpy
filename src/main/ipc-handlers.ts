@@ -20,6 +20,24 @@ import {
 } from './storage'
 import { buildBackupReport } from './report-builder'
 
+// Type definition for statfs
+interface StatFs {
+  type: number
+  bsize: number
+  blocks: number
+  bfree: number
+  bavail: number
+  files: number
+  ffree: number
+}
+
+// Extend fs.promises with statfs type
+declare module 'fs' {
+  namespace promises {
+    function statfs(path: string): Promise<StatFs>
+  }
+}
+
 const execFileAsync = promisify(execFile)
 
 export function registerIpcHandlers(backupEngine: BackupEngine): void {
@@ -93,7 +111,7 @@ export function registerIpcHandlers(backupEngine: BackupEngine): void {
 
   ipcMain.handle('system:getDriveInfo', async (_, dirPath: string) => {
     try {
-      const stat = await (fs.promises as any).statfs(dirPath)
+      const stat = await fs.promises.statfs(dirPath)
       return {
         path: dirPath,
         total: stat.blocks * stat.bsize,
@@ -156,7 +174,7 @@ export function registerIpcHandlers(backupEngine: BackupEngine): void {
 
               // Macintosh HD (the root volume symlink) → return as system disk
               if (isRootLink) {
-                const stat = await (fs.promises as any).statfs('/').catch(() => null)
+                const stat = await fs.promises.statfs('/').catch(() => null)
                 if (!stat) return null
                 return {
                   name: 'Macintosh HD',
@@ -172,7 +190,7 @@ export function registerIpcHandlers(backupEngine: BackupEngine): void {
               // Skip other internal volumes (Recovery, Preboot, etc.)
               if (isInternal) return null
 
-              const stat = await (fs.promises as any).statfs(volPath)
+              const stat = await fs.promises.statfs(volPath)
               const total: number = stat.blocks * stat.bsize
               const free: number = stat.bfree * stat.bsize
               const used: number = (stat.blocks - stat.bfree) * stat.bsize
@@ -266,26 +284,40 @@ export function registerIpcHandlers(backupEngine: BackupEngine): void {
   ipcMain.handle('app:checkForUpdates', async () => {
     const currentVersion = app.getVersion()
     const GITHUB_REPO = 'sexyfeifan/Kocpy'
+
+    // GitHub Release API response type
+    interface GitHubRelease {
+      tag_name: string
+      html_url: string
+      body: string
+      published_at: string
+      assets: Array<{
+        name: string
+        browser_download_url: string
+        size: number
+      }>
+    }
+
     try {
       const res = await fetch(`https://api.github.com/repos/${GITHUB_REPO}/releases/latest`, {
         headers: { 'Accept': 'application/vnd.github.v3+json', 'User-Agent': `Kocpy/${currentVersion}` }
       })
       if (!res.ok) return { hasUpdate: false, error: `HTTP ${res.status}` }
-      const data = await res.json() as any
-      const latestVersion = (data.tag_name as string).replace(/^v/, '')
+      const data = await res.json() as GitHubRelease
+      const latestVersion = data.tag_name.replace(/^v/, '')
       const hasUpdate = compareVersions(latestVersion, currentVersion) > 0
-      const assets = (data.assets ?? []).map((a: any) => ({
-        name: a.name as string,
-        url: a.browser_download_url as string,
-        size: a.size as number,
+      const assets = data.assets.map(a => ({
+        name: a.name,
+        url: a.browser_download_url,
+        size: a.size,
       }))
       return {
         hasUpdate,
         currentVersion,
         latestVersion,
-        releaseUrl: data.html_url as string,
-        releaseNotes: (data.body as string) ?? '',
-        publishedAt: data.published_at as string,
+        releaseUrl: data.html_url,
+        releaseNotes: data.body ?? '',
+        publishedAt: data.published_at,
         assets,
       }
     } catch (err) {

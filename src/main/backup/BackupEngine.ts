@@ -8,6 +8,25 @@ import { v4 as uuidv4 } from 'uuid'
 import _ffmpegPath from 'ffmpeg-static'
 import { logInfo, logWarn, logError } from '../logger'
 import { formatBytes } from '../utils'
+
+// Type definition for statfs
+interface StatFs {
+  type: number
+  bsize: number
+  blocks: number
+  bfree: number
+  bavail: number
+  files: number
+  ffree: number
+}
+
+// Extend fs.promises with statfs type
+declare module 'fs' {
+  namespace promises {
+    function statfs(path: string): Promise<StatFs>
+  }
+}
+
 import type {
   BackupTask,
   FileRecord,
@@ -306,7 +325,7 @@ export class BackupEngine extends EventEmitter {
       // 磁盘空间预检
       for (const dest of task.destinations) {
         try {
-          const stat = await (fs.promises as any).statfs(dest.path)
+          const stat = await fs.promises.statfs(dest.path)
           const freeBytes = stat.bfree * stat.bsize
           if (freeBytes < task.totalBytes) {
             const freeStr = formatBytes(freeBytes)
