@@ -31,9 +31,9 @@ export function getProjectsPath(): string {
   return join(app.getPath('userData'), 'projects.json')
 }
 
-export function loadSettings(): AppSettings {
+export async function loadSettings(): Promise<AppSettings> {
   try {
-    const raw = fs.readFileSync(getSettingsPath(), 'utf-8')
+    const raw = await fs.promises.readFile(getSettingsPath(), 'utf-8')
     return { ...DEFAULT_SETTINGS, ...JSON.parse(raw) }
   } catch (err) {
     // Settings file may not exist on first launch, use defaults
@@ -43,30 +43,30 @@ export function loadSettings(): AppSettings {
 }
 
 // 【Fix 4】配置备份：写入前备份为 .bak 文件（保留最近1个备份）
-export function backupBeforeWrite(filePath: string): void {
+export async function backupBeforeWrite(filePath: string): Promise<void> {
   try {
     if (fs.existsSync(filePath)) {
-      fs.copyFileSync(filePath, filePath + '.bak')
+      await fs.promises.copyFile(filePath, filePath + '.bak')
     }
   } catch (e) {
     console.error(`Failed to backup ${filePath}:`, e)
   }
 }
 
-export function atomicWrite(filePath: string, data: string): void {
+export async function atomicWrite(filePath: string, data: string): Promise<void> {
   const tmp = filePath + '.tmp'
-  fs.writeFileSync(tmp, data, 'utf-8')
-  fs.renameSync(tmp, filePath)
+  await fs.promises.writeFile(tmp, data, 'utf-8')
+  await fs.promises.rename(tmp, filePath)
 }
 
-export function saveSettings(settings: AppSettings): void {
-  backupBeforeWrite(getSettingsPath())
-  atomicWrite(getSettingsPath(), JSON.stringify(settings, null, 2))
+export async function saveSettings(settings: AppSettings): Promise<void> {
+  await backupBeforeWrite(getSettingsPath())
+  await atomicWrite(getSettingsPath(), JSON.stringify(settings, null, 2))
 }
 
-export function loadPersistedTasks(): BackupTask[] {
+export async function loadPersistedTasks(): Promise<BackupTask[]> {
   try {
-    const raw = fs.readFileSync(getTasksPath(), 'utf-8')
+    const raw = await fs.promises.readFile(getTasksPath(), 'utf-8')
     return JSON.parse(raw) as BackupTask[]
   } catch (err) {
     // Tasks file may not exist on first launch
@@ -75,18 +75,18 @@ export function loadPersistedTasks(): BackupTask[] {
   }
 }
 
-export function persistTasks(tasks: BackupTask[]): void {
+export async function persistTasks(tasks: BackupTask[]): Promise<void> {
   try {
-    backupBeforeWrite(getTasksPath())
-    atomicWrite(getTasksPath(), JSON.stringify(tasks, null, 2))
+    await backupBeforeWrite(getTasksPath())
+    await atomicWrite(getTasksPath(), JSON.stringify(tasks, null, 2))
   } catch (e) {
     console.error('Failed to persist tasks:', e)
   }
 }
 
-export function loadProjects(): ProjectConfig[] {
+export async function loadProjects(): Promise<ProjectConfig[]> {
   try {
-    const raw = fs.readFileSync(getProjectsPath(), 'utf-8')
+    const raw = await fs.promises.readFile(getProjectsPath(), 'utf-8')
     return JSON.parse(raw) as ProjectConfig[]
   } catch (err) {
     // Projects file may not exist on first launch
@@ -95,6 +95,6 @@ export function loadProjects(): ProjectConfig[] {
   }
 }
 
-export function saveProjects(projects: ProjectConfig[]): void {
-  atomicWrite(getProjectsPath(), JSON.stringify(projects, null, 2))
+export async function saveProjects(projects: ProjectConfig[]): Promise<void> {
+  await atomicWrite(getProjectsPath(), JSON.stringify(projects, null, 2))
 }

@@ -59,12 +59,12 @@ export function registerIpcHandlers(backupEngine: BackupEngine): void {
 
   ipcMain.handle('backup:createTask', async (_, config: TaskConfig) => {
     const task = backupEngine.createTask(config)
-    persistTasks(backupEngine.getAllTasks())
+    await persistTasks(backupEngine.getAllTasks())
     return task
   })
 
   ipcMain.handle('backup:startTask', async (_, taskId: string) => {
-    const s = loadSettings()
+    const s = await loadSettings()
     backupEngine.startTask(taskId, { verifyAfterCopy: s.verifyAfterCopy })
     return { allowed: true }
   })
@@ -76,13 +76,13 @@ export function registerIpcHandlers(backupEngine: BackupEngine): void {
 
   ipcMain.handle('backup:deleteTask', async (_, taskId: string) => {
     backupEngine.deleteTask(taskId)
-    persistTasks(backupEngine.getAllTasks())
+    await persistTasks(backupEngine.getAllTasks())
     return true
   })
 
   ipcMain.handle('backup:setPriority', async (_, taskId: string, priority: boolean) => {
     backupEngine.setPriority(taskId, priority)
-    persistTasks(backupEngine.getAllTasks())
+    await persistTasks(backupEngine.getAllTasks())
     return true
   })
 
@@ -335,50 +335,50 @@ export function registerIpcHandlers(backupEngine: BackupEngine): void {
   })
 
   ipcMain.handle('settings:getDevices', async () => {
-    return loadSettings().devices
+    return await loadSettings().devices
   })
 
   ipcMain.handle('settings:addDevice', async (_, name: string) => {
-    const s = loadSettings()
+    const s = await loadSettings()
     if (!s.devices.includes(name)) {
       s.devices.push(name)
-      saveSettings(s)
+      await saveSettings(s)
     }
     return s.devices
   })
 
   ipcMain.handle('settings:removeDevice', async (_, name: string) => {
-    const s = loadSettings()
+    const s = await loadSettings()
     s.devices = s.devices.filter((d) => d !== name)
-    saveSettings(s)
+    await saveSettings(s)
     return s.devices
   })
 
   ipcMain.handle('settings:renameDevice', async (_, oldName: string, newName: string) => {
-    const s = loadSettings()
+    const s = await loadSettings()
     const idx = s.devices.indexOf(oldName)
     if (idx >= 0) s.devices[idx] = newName
-    saveSettings(s)
+    await saveSettings(s)
     return s.devices
   })
 
   ipcMain.handle('projects:getAll', async () => loadProjects())
 
   ipcMain.handle('projects:save', async (_, project: ProjectConfig) => {
-    const projects = loadProjects()
+    const projects = await loadProjects()
     const idx = projects.findIndex((p) => p.id === project.id)
     if (idx >= 0) {
       projects[idx] = project
     } else {
       projects.push(project)
     }
-    saveProjects(projects)
+    await saveProjects(projects)
     return projects
   })
 
   ipcMain.handle('projects:delete', async (_, projectId: string) => {
-    const projects = loadProjects().filter((p) => p.id !== projectId)
-    saveProjects(projects)
+    const projects = await loadProjects().filter((p) => p.id !== projectId)
+    await saveProjects(projects)
     return projects
   })
 

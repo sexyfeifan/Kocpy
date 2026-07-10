@@ -41,27 +41,27 @@ function createWindow(): void {
 
   // #4 fix: remove any existing listener before adding new one to prevent accumulation on createWindow() calls
   backupEngine.removeAllListeners('progress')
-  backupEngine.on('progress', (payload) => {
+  backupEngine.on('progress', async (payload) => {
     win.webContents.send('backup:progress', payload)
 
     // 【Fix 3】只在任务状态变更时全量持久化，运行中每 10 个文件增量写入一次
     const statusChanged = payload.status !== lastPersistedStatus
     if (statusChanged) {
       // 状态变更（开始/完成/失败/取消/校验中）→ 立即全量持久化
-      persistTasks(backupEngine.getAllTasks())
+      await persistTasks(backupEngine.getAllTasks())
       lastPersistedStatus = payload.status
       persistFileCounter = 0
     } else if (payload.status === 'running') {
       // 运行中：每 10 个文件才持久化一次（减少磁盘 I/O）
       persistFileCounter++
       if (persistFileCounter >= 10) {
-        persistTasks(backupEngine.getAllTasks())
+        await persistTasks(backupEngine.getAllTasks())
         persistFileCounter = 0
       }
     }
 
     if (payload.status === 'completed' || payload.status === 'failed') {
-      const s = loadSettings()
+      const s = await loadSettings()
       if (s.webhookEnabled && s.webhookUrl) {
         const task = backupEngine.getTask(payload.taskId)
         if (task) {
@@ -78,12 +78,12 @@ function createWindow(): void {
   }
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   app.setAppUserModelId('com.kocpy.app')
   initLogger()
   logInfo('Application started')
 
-  const saved = loadPersistedTasks()
+  const saved = await loadPersistedTasks()
   for (const task of saved) {
     if (task.status === 'running' || task.status === 'verifying') {
       task.status = 'failed'

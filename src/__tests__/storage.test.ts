@@ -5,17 +5,21 @@ import * as path from 'path'
 // Mock fs module
 vi.mock('fs', () => ({
   default: {
-    readFileSync: vi.fn(),
-    writeFileSync: vi.fn(),
-    renameSync: vi.fn(),
+    promises: {
+      readFile: vi.fn(),
+      writeFile: vi.fn(),
+      rename: vi.fn(),
+      copyFile: vi.fn(),
+    },
     existsSync: vi.fn(),
-    copyFileSync: vi.fn(),
   },
-  readFileSync: vi.fn(),
-  writeFileSync: vi.fn(),
-  renameSync: vi.fn(),
+  promises: {
+    readFile: vi.fn(),
+    writeFile: vi.fn(),
+    rename: vi.fn(),
+    copyFile: vi.fn(),
+  },
   existsSync: vi.fn(),
-  copyFileSync: vi.fn(),
 }))
 
 // Mock electron app
@@ -41,20 +45,18 @@ describe('Storage Module', () => {
   })
 
   describe('loadSettings', () => {
-    it('should return default settings when file does not exist', () => {
-      vi.mocked(fs.readFileSync).mockImplementation(() => {
-        throw new Error('File not found')
-      })
+    it('should return default settings when file does not exist', async () => {
+      vi.mocked(fs.promises.readFile).mockRejectedValue(new Error('File not found'))
 
-      const settings = loadSettings()
+      const settings = await loadSettings()
       expect(settings).toEqual(DEFAULT_SETTINGS)
     })
 
-    it('should merge user settings with defaults', () => {
+    it('should merge user settings with defaults', async () => {
       const userSettings = { defaultHash: 'sha256', verifyAfterCopy: false }
-      vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify(userSettings))
+      vi.mocked(fs.promises.readFile).mockResolvedValue(JSON.stringify(userSettings))
 
-      const settings = loadSettings()
+      const settings = await loadSettings()
       expect(settings.defaultHash).toBe('sha256')
       expect(settings.verifyAfterCopy).toBe(false)
       expect(settings.devices).toEqual(DEFAULT_SETTINGS.devices)
@@ -62,27 +64,27 @@ describe('Storage Module', () => {
   })
 
   describe('saveSettings', () => {
-    it('should backup existing file before writing', () => {
+    it('should backup existing file before writing', async () => {
       vi.mocked(fs.existsSync).mockReturnValue(true)
 
-      saveSettings(DEFAULT_SETTINGS)
+      await saveSettings(DEFAULT_SETTINGS)
 
-      expect(fs.copyFileSync).toHaveBeenCalled()
-      expect(fs.writeFileSync).toHaveBeenCalled()
-      expect(fs.renameSync).toHaveBeenCalled()
+      expect(fs.promises.copyFile).toHaveBeenCalled()
+      expect(fs.promises.writeFile).toHaveBeenCalled()
+      expect(fs.promises.rename).toHaveBeenCalled()
     })
 
-    it('should create atomic write with .tmp file', () => {
+    it('should create atomic write with .tmp file', async () => {
       vi.mocked(fs.existsSync).mockReturnValue(false)
 
-      saveSettings(DEFAULT_SETTINGS)
+      await saveSettings(DEFAULT_SETTINGS)
 
-      expect(fs.writeFileSync).toHaveBeenCalledWith(
+      expect(fs.promises.writeFile).toHaveBeenCalledWith(
         expect.stringContaining('.tmp'),
         expect.any(String),
         'utf-8'
       )
-      expect(fs.renameSync).toHaveBeenCalledWith(
+      expect(fs.promises.rename).toHaveBeenCalledWith(
         expect.stringContaining('.tmp'),
         expect.stringContaining('settings.json')
       )
@@ -90,60 +92,56 @@ describe('Storage Module', () => {
   })
 
   describe('loadPersistedTasks', () => {
-    it('should return empty array when file does not exist', () => {
-      vi.mocked(fs.readFileSync).mockImplementation(() => {
-        throw new Error('File not found')
-      })
+    it('should return empty array when file does not exist', async () => {
+      vi.mocked(fs.promises.readFile).mockRejectedValue(new Error('File not found'))
 
-      const tasks = loadPersistedTasks()
+      const tasks = await loadPersistedTasks()
       expect(tasks).toEqual([])
     })
 
-    it('should parse and return tasks', () => {
+    it('should parse and return tasks', async () => {
       const mockTasks = [{ id: '1', name: 'Test Task' }]
-      vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify(mockTasks))
+      vi.mocked(fs.promises.readFile).mockResolvedValue(JSON.stringify(mockTasks))
 
-      const tasks = loadPersistedTasks()
+      const tasks = await loadPersistedTasks()
       expect(tasks).toEqual(mockTasks)
     })
   })
 
   describe('persistTasks', () => {
-    it('should backup and save tasks', () => {
+    it('should backup and save tasks', async () => {
       vi.mocked(fs.existsSync).mockReturnValue(true)
 
-      persistTasks([{ id: '1', name: 'Test' }] as any)
+      await persistTasks([{ id: '1', name: 'Test' }] as any)
 
-      expect(fs.copyFileSync).toHaveBeenCalled()
-      expect(fs.writeFileSync).toHaveBeenCalled()
+      expect(fs.promises.copyFile).toHaveBeenCalled()
+      expect(fs.promises.writeFile).toHaveBeenCalled()
     })
   })
 
   describe('loadProjects', () => {
-    it('should return empty array when file does not exist', () => {
-      vi.mocked(fs.readFileSync).mockImplementation(() => {
-        throw new Error('File not found')
-      })
+    it('should return empty array when file does not exist', async () => {
+      vi.mocked(fs.promises.readFile).mockRejectedValue(new Error('File not found'))
 
-      const projects = loadProjects()
+      const projects = await loadProjects()
       expect(projects).toEqual([])
     })
 
-    it('should parse and return projects', () => {
+    it('should parse and return projects', async () => {
       const mockProjects = [{ id: '1', name: 'Test Project' }]
-      vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify(mockProjects))
+      vi.mocked(fs.promises.readFile).mockResolvedValue(JSON.stringify(mockProjects))
 
-      const projects = loadProjects()
+      const projects = await loadProjects()
       expect(projects).toEqual(mockProjects)
     })
   })
 
   describe('saveProjects', () => {
-    it('should save projects without backup', () => {
-      saveProjects([{ id: '1', name: 'Test' }] as any)
+    it('should save projects without backup', async () => {
+      await saveProjects([{ id: '1', name: 'Test' }] as any)
 
-      expect(fs.writeFileSync).toHaveBeenCalled()
-      expect(fs.copyFileSync).not.toHaveBeenCalled()
+      expect(fs.promises.writeFile).toHaveBeenCalled()
+      expect(fs.promises.copyFile).not.toHaveBeenCalled()
     })
   })
 })
