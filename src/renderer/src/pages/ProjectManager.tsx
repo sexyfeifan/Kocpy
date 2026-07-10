@@ -121,10 +121,10 @@ function PositionManager({
 
 // ─── Project edit / create panel ──────────────────────────────────────────────
 function ProjectEditPanel({
-  project, allDevices, onSave, onCancel, onDeviceAdd, onDeviceRemove, onDeviceRename
+  project, allDevices = [], onSave, onCancel, onDeviceAdd, onDeviceRemove, onDeviceRename
 }: {
   project: Partial<ProjectConfig> | null
-  allDevices: string[]
+  allDevices?: string[]  // 可选，默认空数组
   onSave: (p: ProjectConfig) => Promise<void>
   onCancel: () => void
   onDeviceAdd: (name: string) => Promise<void>
@@ -151,20 +151,32 @@ function ProjectEditPanel({
   const [dateError, setDateError] = useState('')
 
   useEffect(() => {
-    if (!project?.destinationPaths?.length) { setDestinations([]); return }
+    console.log('ProjectEditPanel useEffect, project:', project)
+    console.log('destinationPaths:', project?.destinationPaths)
+
+    if (!project?.destinationPaths?.length) {
+      console.log('No destination paths, setting empty')
+      setDestinations([])
+      return
+    }
 
     const loadDestinations = async () => {
       try {
+        console.log('Loading destinations for paths:', project.destinationPaths)
         const results = await Promise.all(
           project.destinationPaths.map(async (p) => {
             try {
+              console.log('Getting drive info for:', p)
               const info = await window.api.getDriveInfo(p)
+              console.log('Drive info result for', p, ':', info)
               return { id: uuidv4(), path: p, driveInfo: info }
-            } catch {
+            } catch (err) {
+              console.error('Error getting drive info for', p, ':', err)
               return { id: uuidv4(), path: p, driveInfo: null }
             }
           })
         )
+        console.log('Setting destinations:', results)
         setDestinations(results)
       } catch (err) {
         console.error('Failed to load destinations:', err)
@@ -644,11 +656,22 @@ export function ProjectManager(): JSX.Element {
   const [showTutorial, setShowTutorial] = useState(false)
 
   useEffect(() => {
-    window.api.getProjects().then(setProjects).catch((err) => {
+    console.log('ProjectManager useEffect, loading data...')
+
+    window.api.getProjects().then((projects) => {
+      console.log('Loaded projects:', projects)
+      setProjects(projects)
+    }).catch((err) => {
       console.error('Failed to load projects:', err)
+      setProjects([])
     })
-    window.api.getDevices().then(setDevices).catch((err) => {
+
+    window.api.getDevices().then((devices) => {
+      console.log('Loaded devices:', devices)
+      setDevices(devices || [])  // 确保总是数组
+    }).catch((err) => {
       console.error('Failed to load devices:', err)
+      setDevices([])  // 失败时设置为空数组
     })
   }, [])
 
