@@ -7,7 +7,7 @@ import { promisify } from 'util'
 import { v4 as uuidv4 } from 'uuid'
 import _ffmpegPath from 'ffmpeg-static'
 import { logInfo, logWarn, logError } from '../logger'
-import { formatBytes } from '../utils'
+import { formatBytes, isValidPath, validateTaskName } from '../utils'
 
 // Type definition for statfs
 interface StatFs {
@@ -77,6 +77,21 @@ export class BackupEngine extends EventEmitter {
   private readonly FILE_CONCURRENCY = 2
 
   createTask(config: TaskConfig): BackupTask {
+    // 验证源路径安全性
+    if (!isValidPath(config.sourcePath)) {
+      throw new Error('源路径包含不安全的字符或路径')
+    }
+
+    // 验证所有目标路径安全性
+    for (const destPath of config.destinationPaths) {
+      if (!isValidPath(destPath)) {
+        throw new Error(`目标路径包含不安全的字符或路径: ${destPath}`)
+      }
+    }
+
+    // 清理任务名称
+    const safeName = validateTaskName(config.namingTemplate || '')
+
     const now = new Date()
     const pad = (n: number, len = 2): string => String(n).padStart(len, '0')
     const timestamp =
@@ -96,8 +111,8 @@ export class BackupEngine extends EventEmitter {
       ? (config.projectName ? `${shootingDate}${config.projectName}` : shootingDate)
       : ''
 
-    const volumeName = config.namingTemplate
-      ? `${config.namingTemplate}_${timestamp}`
+    const volumeName = safeName
+      ? `${safeName}_${timestamp}`
       : `Untitled_${timestamp}`
 
     const task: BackupTask = {

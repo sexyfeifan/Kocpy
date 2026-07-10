@@ -12,6 +12,27 @@ export function detectPlatform(url: string): WebhookPlatform {
   return 'slack'
 }
 
+/**
+ * 验证 Webhook URL 是否安全有效
+ */
+export function isValidWebhookUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url)
+    // 仅允许 http 和 https 协议
+    if (!['http:', 'https:'].includes(parsed.protocol)) {
+      return false
+    }
+    // 检查是否包含危险字符
+    const dangerousPatterns = ['javascript:', 'data:', 'vbscript:']
+    if (dangerousPatterns.some(p => url.toLowerCase().includes(p))) {
+      return false
+    }
+    return true
+  } catch {
+    return false
+  }
+}
+
 function buildPayload(platform: WebhookPlatform, text: string): object {
   switch (platform) {
     case 'feishu':
@@ -28,6 +49,11 @@ function buildPayload(platform: WebhookPlatform, text: string): object {
 }
 
 export function sendWebhook(webhookUrl: string, text: string, retries = 3): Promise<void> {
+  // 验证 URL 安全性
+  if (!isValidWebhookUrl(webhookUrl)) {
+    return Promise.reject(new Error('Webhook URL 格式无效或不安全'))
+  }
+
   const attempt = async (n: number): Promise<void> => {
     let parsed: URL
     try {
