@@ -35,7 +35,9 @@ export function loadSettings(): AppSettings {
   try {
     const raw = fs.readFileSync(getSettingsPath(), 'utf-8')
     return { ...DEFAULT_SETTINGS, ...JSON.parse(raw) }
-  } catch {
+  } catch (err) {
+    // Settings file may not exist on first launch, use defaults
+    console.warn('Failed to load settings, using defaults:', err)
     return { ...DEFAULT_SETTINGS }
   }
 }
@@ -66,7 +68,9 @@ export function loadPersistedTasks(): BackupTask[] {
   try {
     const raw = fs.readFileSync(getTasksPath(), 'utf-8')
     return JSON.parse(raw) as BackupTask[]
-  } catch {
+  } catch (err) {
+    // Tasks file may not exist on first launch
+    console.warn('Failed to load tasks, returning empty array:', err)
     return []
   }
 }
@@ -84,7 +88,9 @@ export function loadProjects(): ProjectConfig[] {
   try {
     const raw = fs.readFileSync(getProjectsPath(), 'utf-8')
     return JSON.parse(raw) as ProjectConfig[]
-  } catch {
+  } catch (err) {
+    // Projects file may not exist on first launch
+    console.warn('Failed to load projects, returning empty array:', err)
     return []
   }
 }
