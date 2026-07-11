@@ -477,3 +477,26 @@ export function registerIpcHandlers(backupEngine: BackupEngine): void {
     }
   })
 }
+
+  // ASC MHL 相关处理器
+  ipcMain.handle('mhl:generate', async (_, sourcePath: string, algorithm: string, operator: string, notes?: string) => {
+    try {
+      const mhl = await generateMHL(sourcePath, algorithm as any, operator, notes)
+      const outputPath = sourcePath + '.mhl'
+      await saveMHLFile(mhl, outputPath, 'xml')
+      return { success: true, outputPath, totalFiles: mhl.files.length }
+    } catch (err) {
+      logError('Failed to generate MHL', err)
+      return { success: false, error: String(err) }
+    }
+  })
+
+  ipcMain.handle('mhl:verify', async (_, mhlPath: string, targetPath: string) => {
+    try {
+      const result = await verifyMHL(mhlPath, targetPath)
+      return { success: true, result }
+    } catch (err) {
+      logError('Failed to verify MHL', err)
+      return { success: false, error: String(err) }
+    }
+  })

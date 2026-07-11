@@ -114,5 +114,12 @@ contextBridge.exposeInMainWorld('api', {
     const handler = (_: Electron.IpcRendererEvent, payload: ProgressPayload) => callback(payload)
     ipcRenderer.on('backup:progress', handler)
     return () => ipcRenderer.removeListener('backup:progress', handler)
-  }
+  },
+
+  // ASC MHL 相关API
+  mhlGenerate: (sourcePath: string, algorithm: string, operator: string, notes?: string) =>
+    ipcRenderer.invoke('mhl:generate', sourcePath, algorithm, operator, notes),
+
+  mhlVerify: (mhlPath: string, targetPath: string) =>
+    ipcRenderer.invoke('mhl:verify', mhlPath, targetPath)
 })
