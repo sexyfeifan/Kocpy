@@ -500,3 +500,36 @@ export function registerIpcHandlers(backupEngine: BackupEngine): void {
       return { success: false, error: String(err) }
     }
   })
+
+  // 元数据提取相关处理器
+  ipcMain.handle('metadata:extract', async (_, filePath: string) => {
+    try {
+      const { metadataManager } = await import('./metadata')
+      const metadata = await metadataManager.extractMetadata(filePath)
+      return { success: true, metadata }
+    } catch (err) {
+      logError('Failed to extract metadata', err)
+      return { success: false, error: String(err) }
+    }
+  })
+
+  ipcMain.handle('metadata:extractBatch', async (_, filePaths: string[]) => {
+    try {
+      const { metadataManager } = await import('./metadata')
+      const results = await metadataManager.extractMetadataBatch(filePaths)
+      return { success: true, results: Object.fromEntries(results) }
+    } catch (err) {
+      logError('Failed to extract batch metadata', err)
+      return { success: false, error: String(err) }
+    }
+  })
+
+  ipcMain.handle('metadata:getSupportedFormats', async () => {
+    try {
+      const { metadataManager } = await import('./metadata')
+      return metadataManager.getSupportedFormats()
+    } catch (err) {
+      logError('Failed to get supported formats', err)
+      return []
+    }
+  })
