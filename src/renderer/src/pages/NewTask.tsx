@@ -897,7 +897,7 @@ export function NewTask(): JSX.Element {
               {(() => {
                 const deviceList = selectedProject?.devices?.length
                   ? selectedProject.devices
-                  : devices
+                  : (devices ?? [])
                 if (deviceList.length === 0) {
                   return <p className="text-xs text-gray-500">请在项目管理中添加机位</p>
                 }
@@ -922,7 +922,7 @@ export function NewTask(): JSX.Element {
                   </div>
                 )
               })()}
-              {selectedDevice === '' && (selectedProject?.devices?.length ?? devices.length) > 0 && (
+              {selectedDevice === '' && (selectedProject?.devices?.length ?? (devices?.length ?? 0)) > 0 && (
                 <p className="text-xs text-amber-500/70 mt-2">请选择一个机位</p>
               )}
             </div>
