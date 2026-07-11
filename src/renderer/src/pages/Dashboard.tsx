@@ -1,223 +1,291 @@
+import { useState, useEffect } from 'react'
+import { 
+  LayoutDashboard, Film, BarChart3, Download, Trash2, 
+  RefreshCw, CheckCircle, XCircle, Clock, HardDrive
+} from 'lucide-react'
 import { useTaskStore } from '../store/taskStore'
 import { TaskCard } from '../components/TaskCard'
-import { HardDrive, Plus, LogOut, ChevronDown, CreditCard, Database, Monitor, RefreshCw } from 'lucide-react'
-import { useEffect, useState, useCallback, useRef } from 'react'
-import type { VolumeInfo } from '../types'
-import { formatBytes } from '../utils'
-
-const DEVICE_TYPE_CONFIG = {
-  system: { label: '系统盘', color: 'text-gray-400', bg: 'bg-gray-500/10 border-gray-500/20', Icon: Monitor },
-  source: { label: '数据来源', color: 'text-amber-400', bg: 'bg-amber-500/10 border-amber-500/20', Icon: CreditCard },
-  destination: { label: '外接设备', color: 'text-blue-400', bg: 'bg-blue-500/10 border-blue-500/20', Icon: Database }
-}
-
-function ConnectedDrives(): JSX.Element {
-  const [volumes, setVolumes] = useState<VolumeInfo[]>([])
-  const [ejecting, setEjecting] = useState<string | null>(null)
-  const [open, setOpen] = useState(false)
-  const [refreshing, setRefreshing] = useState(false)
-  const panelRef = useRef<HTMLDivElement>(null)
-
-  const refresh = useCallback(async () => {
-    const vols = await window.api.listVolumes()
-    setVolumes(vols)
-  }, [])
-
-  const handleRefresh = useCallback(async () => {
-    setRefreshing(true)
-    await refresh()
-    setRefreshing(false)
-  }, [refresh])
-
-  useEffect(() => {
-    refresh()
-    const id = setInterval(refresh, 30000) // 30秒轮询，减少资源消耗
-    return () => clearInterval(id)
-  }, [refresh])
-
-  useEffect(() => {
-    if (!open) return
-    const handler = (e: MouseEvent) => {
-      if (panelRef.current && !panelRef.current.contains(e.target as Node)) {
-        setOpen(false)
-      }
-    }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [open])
-
-  const handleEject = async (vol: VolumeInfo) => {
-    setEjecting(vol.path)
-    await window.api.ejectVolume(vol.path)
-    await refresh()
-    setEjecting(null)
-  }
-
-  if (volumes.length === 0) return <></>
-
-  const sourceCount = volumes.filter((v) => v.deviceType === 'source').length
-  const destCount = volumes.filter((v) => v.deviceType === 'destination').length
-  const externalCount = sourceCount + destCount
-
-  return (
-    <div className="mb-4 relative" ref={panelRef}>
-      <div className="flex items-center gap-2">
-        <button
-          onClick={() => setOpen((v) => !v)}
-          className="flex items-center gap-2 px-3 py-2 rounded-xl bg-[#111] border border-[#2a2a2a] hover:border-[#3a3a3a] transition-colors text-sm text-gray-400"
-        >
-          <HardDrive size={14} className="text-gray-500" />
-          <span>已连接 {volumes.length} 个储存设备</span>
-          {sourceCount > 0 && (
-            <span className="flex items-center gap-1 text-xs px-1.5 py-0.5 rounded-md bg-amber-500/10 text-amber-400 border border-amber-500/20">
-              <CreditCard size={10} />
-              {sourceCount}
-            </span>
-          )}
-          {destCount > 0 && (
-            <span className="flex items-center gap-1 text-xs px-1.5 py-0.5 rounded-md bg-blue-500/10 text-blue-400 border border-blue-500/20">
-              <Database size={10} />
-              {destCount}
-            </span>
-          )}
-          <ChevronDown
-            size={13}
-            className={`text-gray-600 transition-transform ${open ? 'rotate-180' : ''}`}
-          />
-        </button>
-        <button
-          onClick={handleRefresh}
-          title="刷新设备列表"
-          className="p-2 rounded-lg bg-[#111] border border-[#2a2a2a] hover:border-[#3a3a3a] transition-colors text-gray-500 hover:text-gray-300"
-        >
-          <RefreshCw size={13} className={refreshing ? 'animate-spin' : ''} />
-        </button>
-      </div>
-
-      {open && (
-        <div className="absolute left-0 top-full mt-1.5 z-40 min-w-[420px] bg-[#141414] border border-[#2a2a2a] rounded-xl shadow-2xl p-3 flex flex-col gap-2">
-          {volumes.map((vol) => {
-            const usedPct = vol.total > 0 ? (vol.used / vol.total) * 100 : 0
-            const isEjecting = ejecting === vol.path
-            const typeCfg = DEVICE_TYPE_CONFIG[vol.deviceType]
-            const TypeIcon = typeCfg.Icon
-            return (
-              <div key={vol.path} className="flex items-center gap-4 px-3 py-2.5 bg-[#1a1a1a] rounded-lg border border-[#242424]">
-                <HardDrive size={16} className="text-gray-500 shrink-0" />
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center justify-between mb-1 gap-2">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <span className="text-sm font-medium text-gray-200 truncate">{vol.name}</span>
-                      <span className={`shrink-0 flex items-center gap-1 text-xs px-1.5 py-0.5 rounded-md border ${typeCfg.bg} ${typeCfg.color}`}>
-                        <TypeIcon size={9} />
-                        {typeCfg.label}
-                      </span>
-                    </div>
-                    <span className="text-xs text-gray-500 ml-2 shrink-0">
-                      {formatBytes(vol.free)} 可用 / {formatBytes(vol.total)}
-                    </span>
-                  </div>
-                  <div className="h-1 bg-[#2a2a2a] rounded-full overflow-hidden">
-                    <div
-                      className={`h-full rounded-full transition-all ${usedPct > 85 ? 'bg-red-500' : usedPct > 60 ? 'bg-amber-400' : 'bg-blue-500'}`}
-                      style={{ width: `${usedPct}%` }}
-                    />
-                  </div>
-                </div>
-                {vol.canEject && (
-                  <button
-                    onClick={() => handleEject(vol)}
-                    disabled={isEjecting}
-                    className="p-1.5 rounded-lg text-gray-500 hover:text-amber-400 hover:bg-amber-400/10 transition-colors disabled:opacity-40"
-                    title="推出"
-                  >
-                    <LogOut size={14} />
-                  </button>
-                )}
-              </div>
-            )
-          })}
-          {externalCount === 0 && (
-            <p className="text-xs text-gray-600 text-center py-2">未检测到外接存储设备</p>
-          )}
-        </div>
-      )}
-    </div>
-  )
-}
+import { MediaBrowser } from '../components/MediaBrowser'
+import { formatBytes, formatDuration } from '../utils'
 
 export function Dashboard(): JSX.Element {
-  const { tasks, setActivePage } = useTaskStore()
+  const { tasks, refreshTasks, deleteTask, setPriority } = useTaskStore()
+  const [activeTab, setActiveTab] = useState<'tasks' | 'media' | 'stats'>('tasks')
+  const [selectedTasks, setSelectedTasks] = useState<Set<string>>(new Set())
+  const [isDeleting, setIsDeleting] = useState(false)
 
-  const running = tasks.filter((t) => t.status === 'running' || t.status === 'verifying')
-  const completed = tasks.filter((t) => t.status === 'completed')
-  const failed = tasks.filter((t) => t.status === 'failed')
-  const totalBytes = tasks.filter((t) => t.status === 'completed').reduce((s, t) => s + t.totalBytes, 0)
+  // 统计数据
+  const stats = {
+    totalTasks: tasks.length,
+    completedTasks: tasks.filter(t => t.status === 'completed').length,
+    failedTasks: tasks.filter(t => t.status === 'failed').length,
+    totalBytes: tasks.reduce((sum, t) => sum + t.totalBytes, 0),
+    transferredBytes: tasks.reduce((sum, t) => sum + t.transferredBytes, 0)
+  }
+
+  // 批量选择
+  const toggleTaskSelection = (taskId: string) => {
+    setSelectedTasks(prev => {
+      const newSet = new Set(prev)
+      if (newSet.has(taskId)) {
+        newSet.delete(taskId)
+      } else {
+        newSet.add(taskId)
+      }
+      return newSet
+    })
+  }
+
+  const selectAllTasks = () => {
+    if (selectedTasks.size === tasks.length) {
+      setSelectedTasks(new Set())
+    } else {
+      setSelectedTasks(new Set(tasks.map(t => t.id)))
+    }
+  }
+
+  // 批量删除
+  const handleBatchDelete = async () => {
+    if (selectedTasks.size === 0) return
+    
+    const confirmed = window.confirm(`确定要删除选中的 ${selectedTasks.size} 个任务吗？`)
+    if (!confirmed) return
+
+    setIsDeleting(true)
+    try {
+      for (const taskId of selectedTasks) {
+        await deleteTask(taskId)
+      }
+      setSelectedTasks(new Set())
+    } catch (err) {
+      console.error('Failed to delete tasks:', err)
+      alert('删除失败')
+    } finally {
+      setIsDeleting(false)
+    }
+  }
+
+  // 批量导出
+  const handleBatchExport = async () => {
+    if (selectedTasks.size === 0) return
+
+    const selectedTaskList = tasks.filter(t => selectedTasks.has(t.id))
+    
+    // 导出为JSON
+    const data = JSON.stringify(selectedTaskList, null, 2)
+    const blob = new Blob([data], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `kocpy-tasks-${new Date().toISOString().slice(0, 10)}.json`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  }
+
+  // 刷新任务
+  useEffect(() => {
+    refreshTasks()
+  }, [refreshTasks])
+
+  const tabs = [
+    { id: 'tasks', label: '任务列表', icon: LayoutDashboard },
+    { id: 'media', label: '素材浏览', icon: Film },
+    { id: 'stats', label: '统计分析', icon: BarChart3 }
+  ]
 
   return (
-    <div className="flex-1 overflow-y-auto p-6">
-      {/* Stats */}
-      <div className="grid grid-cols-4 gap-3 mb-4">
-        {[
-          { label: '运行中', value: running.length, color: 'text-blue-400', dot: 'bg-blue-500' },
-          { label: '已完成', value: completed.length, color: 'text-green-400', dot: 'bg-green-500' },
-          { label: '失败', value: failed.length, color: 'text-red-400', dot: 'bg-red-500' },
-          { label: '总数据量', value: formatBytes(totalBytes), color: 'text-gray-300', dot: 'bg-gray-500' }
-        ].map(({ label, value, color, dot }) => (
-          <div key={label} className="glass-card p-4">
+    <div className="flex flex-col h-full bg-[#0a0a0a]">
+      {/* 头部统计 */}
+      <div className="p-4 border-b border-[#2a2a2a]">
+        <div className="grid grid-cols-4 gap-4">
+          <div className="glass-card p-3">
             <div className="flex items-center gap-2 mb-2">
-              <div className={`w-2 h-2 rounded-full ${dot}`} />
-              <span className="text-xs text-gray-500">{label}</span>
+              <Clock size={14} className="text-blue-400" />
+              <span className="text-xs text-gray-500">总任务</span>
             </div>
-            <span className={`text-2xl font-bold ${color}`}>{value}</span>
+            <p className="text-xl font-semibold text-gray-200">{stats.totalTasks}</p>
           </div>
-        ))}
+          <div className="glass-card p-3">
+            <div className="flex items-center gap-2 mb-2">
+              <CheckCircle size={14} className="text-green-400" />
+              <span className="text-xs text-gray-500">已完成</span>
+            </div>
+            <p className="text-xl font-semibold text-gray-200">{stats.completedTasks}</p>
+          </div>
+          <div className="glass-card p-3">
+            <div className="flex items-center gap-2 mb-2">
+              <XCircle size={14} className="text-red-400" />
+              <span className="text-xs text-gray-500">失败</span>
+            </div>
+            <p className="text-xl font-semibold text-gray-200">{stats.failedTasks}</p>
+          </div>
+          <div className="glass-card p-3">
+            <div className="flex items-center gap-2 mb-2">
+              <HardDrive size={14} className="text-purple-400" />
+              <span className="text-xs text-gray-500">总数据</span>
+            </div>
+            <p className="text-xl font-semibold text-gray-200">{formatBytes(stats.totalBytes)}</p>
+          </div>
+        </div>
       </div>
 
-      {/* Connected drives — collapsible pill */}
-      <ConnectedDrives />
+      {/* 标签页切换 */}
+      <div className="flex items-center gap-1 p-2 border-b border-[#2a2a2a]">
+        {tabs.map((tab) => {
+          const Icon = tab.icon
+          return (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id as any)}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm transition-colors ${
+                activeTab === tab.id
+                  ? 'bg-blue-600 text-white'
+                  : 'text-gray-400 hover:text-gray-200 hover:bg-[#111]'
+              }`}
+            >
+              <Icon size={16} />
+              {tab.label}
+            </button>
+          )
+        })}
+      </div>
 
-      {/* Active tasks */}
-      {running.length > 0 && (
-        <div className="mb-6">
-          <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">
-            进行中
-          </h2>
-          <div className="flex flex-col gap-3">
-            {running.map((t) => <TaskCard key={t.id} task={t} />)}
-          </div>
-        </div>
-      )}
+      {/* 内容区域 */}
+      <div className="flex-1 overflow-auto p-4">
+        {/* 任务列表 */}
+        {activeTab === 'tasks' && (
+          <div>
+            {/* 批量操作工具栏 */}
+            {selectedTasks.size > 0 && (
+              <div className="flex items-center gap-3 p-3 mb-4 bg-blue-600/10 border border-blue-500/30 rounded-lg">
+                <span className="text-sm text-blue-300">
+                  已选择 {selectedTasks.size} 个任务
+                </span>
+                <button
+                  onClick={handleBatchDelete}
+                  disabled={isDeleting}
+                  className="flex items-center gap-2 px-3 py-1.5 bg-red-600 text-white rounded-lg hover:bg-red-500 disabled:opacity-50"
+                >
+                  <Trash2 size={14} />
+                  {isDeleting ? '删除中...' : '批量删除'}
+                </button>
+                <button
+                  onClick={handleBatchExport}
+                  className="flex items-center gap-2 px-3 py-1.5 bg-green-600 text-white rounded-lg hover:bg-green-500"
+                >
+                  <Download size={14} />
+                  批量导出
+                </button>
+                <button
+                  onClick={selectAllTasks}
+                  className="px-3 py-1.5 text-sm text-gray-400 hover:text-gray-200"
+                >
+                  {selectedTasks.size === tasks.length ? '取消全选' : '全选'}
+                </button>
+              </div>
+            )}
 
-      {/* All tasks */}
-      {tasks.length > 0 ? (
-        <div>
-          <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">
-            全部任务
-          </h2>
-          <div className="flex flex-col gap-3">
-            {tasks
-              .filter((t) => t.status !== 'running' && t.status !== 'verifying')
-              .map((t) => <TaskCard key={t.id} task={t} />)}
+            {/* 任务列表 */}
+            <div className="space-y-3">
+              {tasks.length === 0 ? (
+                <div className="flex flex-col items-center justify-center h-64 gap-4">
+                  <LayoutDashboard size={48} className="text-gray-600" />
+                  <p className="text-gray-500">暂无任务</p>
+                  <button
+                    onClick={() => window.location.hash = '#/new'}
+                    className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-500"
+                  >
+                    创建新任务
+                  </button>
+                </div>
+              ) : (
+                tasks.map((task) => (
+                  <div key={task.id} className="flex items-start gap-3">
+                    <input
+                      type="checkbox"
+                      checked={selectedTasks.has(task.id)}
+                      onChange={() => toggleTaskSelection(task.id)}
+                      className="mt-4 w-4 h-4 rounded border-gray-600 text-blue-600 focus:ring-blue-500"
+                    />
+                    <div className="flex-1">
+                      <TaskCard task={task} />
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
           </div>
-        </div>
-      ) : (
-        /* Empty state */
-        <div className="flex flex-col items-center justify-center h-64 text-center">
-          <div className="w-16 h-16 rounded-2xl bg-[#1a1a1a] border border-[#2a2a2a] flex items-center justify-center mb-4">
-            <HardDrive size={28} className="text-gray-600" />
+        )}
+
+        {/* 素材浏览 */}
+        {activeTab === 'media' && (
+          <MediaBrowser />
+        )}
+
+        {/* 统计分析 */}
+        {activeTab === 'stats' && (
+          <div className="space-y-6">
+            <div className="glass-card p-6">
+              <h3 className="text-lg font-semibold text-gray-200 mb-4">备份统计</h3>
+              <div className="grid grid-cols-2 gap-6">
+                <div>
+                  <p className="text-sm text-gray-500 mb-2">成功率</p>
+                  <div className="flex items-center gap-3">
+                    <div className="flex-1 h-2 bg-[#2a2a2a] rounded-full overflow-hidden">
+                      <div 
+                        className="h-full bg-green-500 rounded-full"
+                        style={{ width: `${stats.totalTasks > 0 ? (stats.completedTasks / stats.totalTasks) * 100 : 0}%` }}
+                      />
+                    </div>
+                    <span className="text-sm font-medium text-gray-200">
+                      {stats.totalTasks > 0 ? Math.round((stats.completedTasks / stats.totalTasks) * 100) : 0}%
+                    </span>
+                  </div>
+                </div>
+                <div>
+                  <p className="text-sm text-gray-500 mb-2">数据传输</p>
+                  <div className="flex items-center gap-3">
+                    <div className="flex-1 h-2 bg-[#2a2a2a] rounded-full overflow-hidden">
+                      <div 
+                        className="h-full bg-blue-500 rounded-full"
+                        style={{ width: `${stats.totalBytes > 0 ? (stats.transferredBytes / stats.totalBytes) * 100 : 0}%` }}
+                      />
+                    </div>
+                    <span className="text-sm font-medium text-gray-200">
+                      {formatBytes(stats.transferredBytes)} / {formatBytes(stats.totalBytes)}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="glass-card p-6">
+              <h3 className="text-lg font-semibold text-gray-200 mb-4">任务分布</h3>
+              <div className="space-y-3">
+                {[
+                  { label: '已完成', count: stats.completedTasks, color: 'bg-green-500' },
+                  { label: '失败', count: stats.failedTasks, color: 'bg-red-500' },
+                  { label: '其他', count: stats.totalTasks - stats.completedTasks - stats.failedTasks, color: 'bg-gray-500' }
+                ].map((item) => (
+                  <div key={item.label} className="flex items-center gap-3">
+                    <div className={`w-3 h-3 rounded-full ${item.color}`} />
+                    <span className="text-sm text-gray-400 flex-1">{item.label}</span>
+                    <span className="text-sm font-medium text-gray-200">{item.count}</span>
+                    <div className="w-32 h-2 bg-[#2a2a2a] rounded-full overflow-hidden">
+                      <div 
+                        className={`h-full ${item.color} rounded-full`}
+                        style={{ width: `${stats.totalTasks > 0 ? (item.count / stats.totalTasks) * 100 : 0}%` }}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
-          <p className="text-gray-400 font-medium mb-1">暂无备份任务</p>
-          <p className="text-gray-600 text-sm mb-4">选择素材源和目的地，开始你的第一次备份</p>
-          <button
-            onClick={() => setActivePage('new')}
-            className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-sm font-medium transition-colors"
-          >
-            <Plus size={15} />
-            新建备份任务
-          </button>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   )
 }
