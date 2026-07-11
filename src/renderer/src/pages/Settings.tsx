@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import {
   Settings as SettingsIcon, Hash, FileVideo, Palette, HardDrive,
-  Database, Film, Shield, Webhook, Save, RefreshCw, Check, X, Plus, Trash2
+  Database, Film, Shield, Webhook, Save, RefreshCw, Check, X, Plus, Trash2,
+  FolderOpen, Play, Pause, Stop
 } from 'lucide-react'
 
 interface SettingsProps {
@@ -28,11 +29,15 @@ export function Settings(): JSX.Element {
   const [transcodeQuality, setTranscodeQuality] = useState('medium')
   const [applyLUT, setApplyLUT] = useState(false)
   const [selectedLUT, setSelectedLUT] = useState('')
+  const [luts, setLuts] = useState<any[]>([])
+  const [cdls, setCdls] = useState<any[]>([])
 
   // NAS 设置
   const [nasAutoScan, setNasAutoScan] = useState(true)
   const [nasSyncInterval, setNasSyncInterval] = useState(30)
   const [nasHealthCheck, setNasHealthCheck] = useState(true)
+  const [nasDevices, setNasDevices] = useState<any[]>([])
+  const [scanning, setScanning] = useState(false)
 
   // Webhook 设置
   const [webhookUrl, setWebhookUrl] = useState('')
@@ -43,9 +48,21 @@ export function Settings(): JSX.Element {
   const [resolveExportFormat, setResolveExportFormat] = useState('ale')
   const [resolveAutoProject, setResolveAutoProject] = useState(false)
 
+  // 媒体生命周期设置
+  const [lifecycleEnabled, setLifecycleEnabled] = useState(false)
+  const [archivePolicies, setArchivePolicies] = useState<any[]>([])
+
   useEffect(() => {
     // 加载设置
     loadSettings()
+    // 加载LUT列表
+    loadLUTs()
+    // 加载CDL列表
+    loadCDLs()
+    // 加载NAS设备
+    loadNASDevices()
+    // 加载归档策略
+    loadArchivePolicies()
   }, [])
 
   const loadSettings = async () => {
@@ -59,6 +76,50 @@ export function Settings(): JSX.Element {
       }
     } catch (err) {
       console.error('Failed to load settings:', err)
+    }
+  }
+
+  const loadLUTs = async () => {
+    try {
+      const result = await window.api.lutGetAll()
+      if (result && Array.isArray(result)) {
+        setLuts(result)
+      }
+    } catch (err) {
+      console.error('Failed to load LUTs:', err)
+    }
+  }
+
+  const loadCDLs = async () => {
+    try {
+      const result = await window.api.lutGetCDLs()
+      if (result && Array.isArray(result)) {
+        setCdls(result)
+      }
+    } catch (err) {
+      console.error('Failed to load CDLs:', err)
+    }
+  }
+
+  const loadNASDevices = async () => {
+    try {
+      const result = await window.api.nasGetDevices()
+      if (result && Array.isArray(result)) {
+        setNasDevices(result)
+      }
+    } catch (err) {
+      console.error('Failed to load NAS devices:', err)
+    }
+  }
+
+  const loadArchivePolicies = async () => {
+    try {
+      const result = await window.api.lifecycleGetArchivePolicies()
+      if (result && Array.isArray(result)) {
+        setArchivePolicies(result)
+      }
+    } catch (err) {
+      console.error('Failed to load archive policies:', err)
     }
   }
 
@@ -78,6 +139,43 @@ export function Settings(): JSX.Element {
     }
   }
 
+  const handleImportLUT = async () => {
+    try {
+      const filePath = await window.api.selectDirectory()
+      if (filePath) {
+        const result = await window.api.lutImport(filePath, selectedLUT || undefined)
+        if (result && result.success) {
+          await loadLUTs()
+          setSelectedLUT('')
+          alert('LUT 导入成功')
+        } else {
+          alert('LUT 导入失败: ' + (result?.error || '未知错误'))
+        }
+      }
+    } catch (err) {
+      console.error('Failed to import LUT:', err)
+      alert('LUT 导入失败')
+    }
+  }
+
+  const handleScanNAS = async () => {
+    setScanning(true)
+    try {
+      const result = await window.api.nasScan()
+      if (result && result.success) {
+        await loadNASDevices()
+        alert(`扫描完成，发现 ${result.devices?.length || 0} 个 NAS 设备`)
+      } else {
+        alert('NAS 扫描失败: ' + (result?.error || '未知错误'))
+      }
+    } catch (err) {
+      console.error('Failed to scan NAS:', err)
+      alert('NAS 扫描失败')
+    } finally {
+      setScanning(false)
+    }
+  }
+
   const tabs = [
     { id: 'general', label: '通用设置', icon: SettingsIcon },
     { id: 'mhl', label: 'ASC MHL', icon: Shield },
@@ -85,6 +183,7 @@ export function Settings(): JSX.Element {
     { id: 'lut', label: 'LUT/CDL', icon: Palette },
     { id: 'nas', label: 'NAS 管理', icon: HardDrive },
     { id: 'resolve', label: 'DaVinci', icon: Film },
+    { id: 'lifecycle', label: '生命周期', icon: Database },
     { id: 'webhook', label: 'Webhook', icon: Webhook }
   ]
 
@@ -131,224 +230,88 @@ export function Settings(): JSX.Element {
             </button>
           </div>
 
-          {/* 通用设置 */}
-          {activeTab === 'general' && (
-            <div className="space-y-6">
-              <div className="glass-card p-4">
-                <h3 className="text-sm font-semibold text-gray-200 mb-4">备份设置</h3>
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-xs text-gray-500 mb-2">默认哈希算法</label>
-                    <select
-                      value={defaultHash}
-                      onChange={(e) => setDefaultHash(e.target.value)}
-                      className="w-full px-3 py-2 bg-[#111] border border-[#2a2a2a] rounded-lg text-sm text-gray-200"
-                    >
-                      <option value="md5">MD5 (快速)</option>
-                      <option value="sha1">SHA-1 (常用)</option>
-                      <option value="sha256">SHA-256 (安全)</option>
-                      <option value="xxhash64">xxHash64 (极速)</option>
-                      <option value="xxhash3-64">xxHash3-64 (最新)</option>
-                    </select>
-                  </div>
-
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm text-gray-200">备份后自动校验</p>
-                      <p className="text-xs text-gray-500">备份完成后自动验证文件完整性</p>
-                    </div>
-                    <button
-                      onClick={() => setVerifyAfterCopy(!verifyAfterCopy)}
-                      className={`w-12 h-6 rounded-full transition-colors ${
-                        verifyAfterCopy ? 'bg-blue-600' : 'bg-gray-600'
-                      }`}
-                    >
-                      <div className={`w-5 h-5 bg-white rounded-full transition-transform ${
-                        verifyAfterCopy ? 'translate-x-6' : 'translate-x-1'
-                      }`} />
-                    </button>
-                  </div>
-
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm text-gray-200">自动备份</p>
-                      <p className="text-xs text-gray-500">插入摄影机卡时自动开始备份</p>
-                    </div>
-                    <button
-                      onClick={() => setAutoBackup(!autoBackup)}
-                      className={`w-12 h-6 rounded-full transition-colors ${
-                        autoBackup ? 'bg-blue-600' : 'bg-gray-600'
-                      }`}
-                    >
-                      <div className={`w-5 h-5 bg-white rounded-full transition-transform ${
-                        autoBackup ? 'translate-x-6' : 'translate-x-1'
-                      }`} />
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* ASC MHL 设置 */}
-          {activeTab === 'mhl' && (
-            <div className="space-y-6">
-              <div className="glass-card p-4">
-                <h3 className="text-sm font-semibold text-gray-200 mb-4">ASC MHL 配置</h3>
-                <p className="text-xs text-gray-500 mb-4">
-                  ASC MHL (Media Hash List) 是行业标准，用于记录和验证媒体文件的完整性。
-                  Netflix 等平台要求使用 ASC MHL。
-                </p>
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm text-gray-200">启用 ASC MHL</p>
-                      <p className="text-xs text-gray-500">备份时自动生成 MHL 文件</p>
-                    </div>
-                    <button
-                      onClick={() => setMhlEnabled(!mhlEnabled)}
-                      className={`w-12 h-6 rounded-full transition-colors ${
-                        mhlEnabled ? 'bg-blue-600' : 'bg-gray-600'
-                      }`}
-                    >
-                      <div className={`w-5 h-5 bg-white rounded-full transition-transform ${
-                        mhlEnabled ? 'translate-x-6' : 'translate-x-1'
-                      }`} />
-                    </button>
-                  </div>
-
-                  {mhlEnabled && (
-                    <>
-                      <div>
-                        <label className="block text-xs text-gray-500 mb-2">MHL 哈希算法</label>
-                        <select
-                          value={mhlAlgorithm}
-                          onChange={(e) => setMhlAlgorithm(e.target.value)}
-                          className="w-full px-3 py-2 bg-[#111] border border-[#2a2a2a] rounded-lg text-sm text-gray-200"
-                        >
-                          <option value="md5">MD5</option>
-                          <option value="sha1">SHA-1</option>
-                          <option value="sha256">SHA-256 (推荐)</option>
-                        </select>
-                      </div>
-
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="text-sm text-gray-200">自动验证 MHL</p>
-                          <p className="text-xs text-gray-500">备份完成后自动验证 MHL 文件</p>
-                        </div>
-                        <button
-                          onClick={() => setMhlAutoVerify(!mhlAutoVerify)}
-                          className={`w-12 h-6 rounded-full transition-colors ${
-                            mhlAutoVerify ? 'bg-blue-600' : 'bg-gray-600'
-                          }`}
-                        >
-                          <div className={`w-5 h-5 bg-white rounded-full transition-transform ${
-                            mhlAutoVerify ? 'translate-x-6' : 'translate-x-1'
-                          }`} />
-                        </button>
-                      </div>
-                    </>
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* 转码设置 */}
-          {activeTab === 'transcode' && (
-            <div className="space-y-6">
-              <div className="glass-card p-4">
-                <h3 className="text-sm font-semibold text-gray-200 mb-4">转码配置</h3>
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-xs text-gray-500 mb-2">输出格式</label>
-                    <select
-                      value={transcodeFormat}
-                      onChange={(e) => setTranscodeFormat(e.target.value)}
-                      className="w-full px-3 py-2 bg-[#111] border border-[#2a2a2a] rounded-lg text-sm text-gray-200"
-                    >
-                      <option value="prores">Apple ProRes (高质量)</option>
-                      <option value="h264">H.264/AVC (兼容性好)</option>
-                      <option value="h265">H.265/HEVC (压缩率高)</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs text-gray-500 mb-2">分辨率</label>
-                    <select
-                      value={transcodeResolution}
-                      onChange={(e) => setTranscodeResolution(e.target.value)}
-                      className="w-full px-3 py-2 bg-[#111] border border-[#2a2a2a] rounded-lg text-sm text-gray-200"
-                    >
-                      <option value="4k">4K (3840x2160)</option>
-                      <option value="1080p">1080p (1920x1080)</option>
-                      <option value="720p">720p (1280x720)</option>
-                      <option value="480p">480p (854x480)</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs text-gray-500 mb-2">质量</label>
-                    <select
-                      value={transcodeQuality}
-                      onChange={(e) => setTranscodeQuality(e.target.value)}
-                      className="w-full px-3 py-2 bg-[#111] border border-[#2a2a2a] rounded-lg text-sm text-gray-200"
-                    >
-                      <option value="low">低质量 (文件小)</option>
-                      <option value="medium">中等质量 (平衡)</option>
-                      <option value="high">高质量 (文件大)</option>
-                    </select>
-                  </div>
-
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm text-gray-200">应用 LUT</p>
-                      <p className="text-xs text-gray-500">转码时应用 LUT 文件</p>
-                    </div>
-                    <button
-                      onClick={() => setApplyLUT(!applyLUT)}
-                      className={`w-12 h-6 rounded-full transition-colors ${
-                        applyLUT ? 'bg-blue-600' : 'bg-gray-600'
-                      }`}
-                    >
-                      <div className={`w-5 h-5 bg-white rounded-full transition-transform ${
-                        applyLUT ? 'translate-x-6' : 'translate-x-1'
-                      }`} />
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
           {/* LUT/CDL 设置 */}
           {activeTab === 'lut' && (
             <div className="space-y-6">
               <div className="glass-card p-4">
-                <h3 className="text-sm font-semibold text-gray-200 mb-4">LUT/CDL 管理</h3>
+                <h3 className="text-sm font-semibold text-gray-200 mb-4">LUT 管理</h3>
                 <p className="text-xs text-gray-500 mb-4">
-                  管理 LUT (Look-Up Table) 和 CDL (Color Decision List) 文件
+                  管理 LUT (Look-Up Table) 文件，用于色彩校正
                 </p>
                 <div className="space-y-4">
                   <div>
-                    <label className="block text-xs text-gray-500 mb-2">已导入的 LUT</label>
+                    <label className="block text-xs text-gray-500 mb-2">导入 LUT 文件</label>
                     <div className="flex items-center gap-2">
                       <input
                         type="text"
                         value={selectedLUT}
                         onChange={(e) => setSelectedLUT(e.target.value)}
-                        placeholder="选择 LUT 文件..."
+                        placeholder="输入 LUT 名称..."
                         className="flex-1 px-3 py-2 bg-[#111] border border-[#2a2a2a] rounded-lg text-sm text-gray-200"
                       />
-                      <button className="px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-500">
+                      <button 
+                        onClick={handleImportLUT}
+                        className="px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-500 transition-colors"
+                      >
                         导入
                       </button>
                     </div>
                   </div>
 
-                  <div className="p-3 bg-[#111] border border-[#2a2a2a] rounded-lg">
-                    <p className="text-xs text-gray-500">暂无已导入的 LUT 文件</p>
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-2">已导入的 LUT ({luts.length})</label>
+                    <div className="space-y-2 max-h-40 overflow-auto">
+                      {luts.length === 0 ? (
+                        <div className="p-3 bg-[#111] border border-[#2a2a2a] rounded-lg">
+                          <p className="text-xs text-gray-500">暂无已导入的 LUT 文件</p>
+                        </div>
+                      ) : (
+                        luts.map((lut) => (
+                          <div key={lut.id} className="flex items-center justify-between p-2 bg-[#111] border border-[#2a2a2a] rounded-lg">
+                            <div>
+                              <p className="text-sm text-gray-200">{lut.name}</p>
+                              <p className="text-xs text-gray-500">{lut.format} • {lut.size}x{lut.size}x{lut.size}</p>
+                            </div>
+                            <button className="p-1 text-gray-500 hover:text-red-400">
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="glass-card p-4">
+                <h3 className="text-sm font-semibold text-gray-200 mb-4">CDL 管理</h3>
+                <p className="text-xs text-gray-500 mb-4">
+                  管理 CDL (Color Decision List) 文件
+                </p>
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-2">已创建的 CDL ({cdls.length})</label>
+                    <div className="space-y-2 max-h-40 overflow-auto">
+                      {cdls.length === 0 ? (
+                        <div className="p-3 bg-[#111] border border-[#2a2a2a] rounded-lg">
+                          <p className="text-xs text-gray-500">暂无已创建的 CDL</p>
+                        </div>
+                      ) : (
+                        cdls.map((cdl) => (
+                          <div key={cdl.id} className="flex items-center justify-between p-2 bg-[#111] border border-[#2a2a2a] rounded-lg">
+                            <div>
+                              <p className="text-sm text-gray-200">{cdl.name}</p>
+                              <p className="text-xs text-gray-500">
+                                Slope: {cdl.slope.join(', ')} • Offset: {cdl.offset.join(', ')}
+                              </p>
+                            </div>
+                            <button className="p-1 text-gray-500 hover:text-red-400">
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                        ))
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -407,91 +370,117 @@ export function Settings(): JSX.Element {
                     </button>
                   </div>
 
-                  <button className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-[#111] border border-[#2a2a2a] rounded-lg text-sm text-gray-400 hover:text-gray-200">
-                    <RefreshCw size={14} />
-                    扫描 NAS 设备
+                  <button 
+                    onClick={handleScanNAS}
+                    disabled={scanning}
+                    className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-[#111] border border-[#2a2a2a] rounded-lg text-sm text-gray-400 hover:text-gray-200 disabled:opacity-50"
+                  >
+                    {scanning ? (
+                      <>
+                        <RefreshCw size={14} className="animate-spin" />
+                        扫描中...
+                      </>
+                    ) : (
+                      <>
+                        <RefreshCw size={14} />
+                        扫描 NAS 设备
+                      </>
+                    )}
                   </button>
-                </div>
-              </div>
-            </div>
-          )}
 
-          {/* DaVinci Resolve 设置 */}
-          {activeTab === 'resolve' && (
-            <div className="space-y-6">
-              <div className="glass-card p-4">
-                <h3 className="text-sm font-semibold text-gray-200 mb-4">DaVinci Resolve 集成</h3>
-                <div className="space-y-4">
                   <div>
-                    <label className="block text-xs text-gray-500 mb-2">默认导出格式</label>
-                    <select
-                      value={resolveExportFormat}
-                      onChange={(e) => setResolveExportFormat(e.target.value)}
-                      className="w-full px-3 py-2 bg-[#111] border border-[#2a2a2a] rounded-lg text-sm text-gray-200"
-                    >
-                      <option value="ale">ALE (Avid Log Exchange)</option>
-                      <option value="xml">FCP XML (Final Cut Pro)</option>
-                      <option value="edl">EDL (Edit Decision List)</option>
-                      <option value="cdl">CDL (Color Decision List)</option>
-                    </select>
-                  </div>
-
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm text-gray-200">自动创建项目</p>
-                      <p className="text-xs text-gray-500">导出时自动创建 DaVinci Resolve 项目结构</p>
+                    <label className="block text-xs text-gray-500 mb-2">已发现的 NAS 设备 ({nasDevices.length})</label>
+                    <div className="space-y-2 max-h-40 overflow-auto">
+                      {nasDevices.length === 0 ? (
+                        <div className="p-3 bg-[#111] border border-[#2a2a2a] rounded-lg">
+                          <p className="text-xs text-gray-500">暂未发现 NAS 设备</p>
+                        </div>
+                      ) : (
+                        nasDevices.map((device) => (
+                          <div key={device.id} className="p-3 bg-[#111] border border-[#2a2a2a] rounded-lg">
+                            <div className="flex items-center justify-between mb-2">
+                              <p className="text-sm font-medium text-gray-200">{device.name}</p>
+                              <span className={`px-2 py-1 text-xs rounded ${
+                                device.health?.smart?.healthy ? 'bg-green-600/20 text-green-400' : 'bg-red-600/20 text-red-400'
+                              }`}>
+                                {device.health?.smart?.healthy ? '健康' : '异常'}
+                              </span>
+                            </div>
+                            <p className="text-xs text-gray-500">{device.host} • {device.protocol.toUpperCase()}</p>
+                            <div className="mt-2 grid grid-cols-3 gap-2 text-xs">
+                              <div>
+                                <p className="text-gray-500">总容量</p>
+                                <p className="text-gray-200">{Math.round(device.health?.capacity?.total / 1024 / 1024 / 1024)} GB</p>
+                              </div>
+                              <div>
+                                <p className="text-gray-500">已使用</p>
+                                <p className="text-gray-200">{Math.round(device.health?.capacity?.used / 1024 / 1024 / 1024)} GB</p>
+                              </div>
+                              <div>
+                                <p className="text-gray-500">可用</p>
+                                <p className="text-gray-200">{Math.round(device.health?.capacity?.available / 1024 / 1024 / 1024)} GB</p>
+                              </div>
+                            </div>
+                          </div>
+                        ))
+                      )}
                     </div>
-                    <button
-                      onClick={() => setResolveAutoProject(!resolveAutoProject)}
-                      className={`w-12 h-6 rounded-full transition-colors ${
-                        resolveAutoProject ? 'bg-blue-600' : 'bg-gray-600'
-                      }`}
-                    >
-                      <div className={`w-5 h-5 bg-white rounded-full transition-transform ${
-                        resolveAutoProject ? 'translate-x-6' : 'translate-x-1'
-                      }`} />
-                    </button>
                   </div>
                 </div>
               </div>
             </div>
           )}
 
-          {/* Webhook 设置 */}
-          {activeTab === 'webhook' && (
+          {/* 生命周期设置 */}
+          {activeTab === 'lifecycle' && (
             <div className="space-y-6">
               <div className="glass-card p-4">
-                <h3 className="text-sm font-semibold text-gray-200 mb-4">Webhook 通知</h3>
+                <h3 className="text-sm font-semibold text-gray-200 mb-4">媒体生命周期管理</h3>
+                <p className="text-xs text-gray-500 mb-4">
+                  管理素材从拍摄到归档的完整生命周期
+                </p>
                 <div className="space-y-4">
                   <div className="flex items-center justify-between">
                     <div>
-                      <p className="text-sm text-gray-200">启用 Webhook</p>
-                      <p className="text-xs text-gray-500">备份事件推送到钉钉/飞书/企微</p>
+                      <p className="text-sm text-gray-200">启用生命周期管理</p>
+                      <p className="text-xs text-gray-500">追踪素材状态和归档策略</p>
                     </div>
                     <button
-                      onClick={() => setWebhookEnabled(!webhookEnabled)}
+                      onClick={() => setLifecycleEnabled(!lifecycleEnabled)}
                       className={`w-12 h-6 rounded-full transition-colors ${
-                        webhookEnabled ? 'bg-blue-600' : 'bg-gray-600'
+                        lifecycleEnabled ? 'bg-blue-600' : 'bg-gray-600'
                       }`}
                     >
                       <div className={`w-5 h-5 bg-white rounded-full transition-transform ${
-                        webhookEnabled ? 'translate-x-6' : 'translate-x-1'
+                        lifecycleEnabled ? 'translate-x-6' : 'translate-x-1'
                       }`} />
                     </button>
                   </div>
 
-                  {webhookEnabled && (
-                    <div>
-                      <label className="block text-xs text-gray-500 mb-2">Webhook URL</label>
-                      <input
-                        type="text"
-                        value={webhookUrl}
-                        onChange={(e) => setWebhookUrl(e.target.value)}
-                        placeholder="https://..."
-                        className="w-full px-3 py-2 bg-[#111] border border-[#2a2a2a] rounded-lg text-sm text-gray-200"
-                      />
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-2">归档策略 ({archivePolicies.length})</label>
+                    <div className="space-y-2 max-h-40 overflow-auto">
+                      {archivePolicies.length === 0 ? (
+                        <div className="p-3 bg-[#111] border border-[#2a2a2a] rounded-lg">
+                          <p className="text-xs text-gray-500">暂无归档策略</p>
+                        </div>
+                      ) : (
+                        archivePolicies.map((policy) => (
+                          <div key={policy.id} className="p-3 bg-[#111] border border-[#2a2a2a] rounded-lg">
+                            <div className="flex items-center justify-between mb-2">
+                              <p className="text-sm font-medium text-gray-200">{policy.name}</p>
+                              <span className={`px-2 py-1 text-xs rounded ${
+                                policy.enabled ? 'bg-green-600/20 text-green-400' : 'bg-gray-600/20 text-gray-400'
+                              }`}>
+                                {policy.enabled ? '启用' : '禁用'}
+                              </span>
+                            </div>
+                            <p className="text-xs text-gray-500">{policy.description}</p>
+                          </div>
+                        ))
+                      )}
                     </div>
-                  )}
+                  </div>
                 </div>
               </div>
             </div>
