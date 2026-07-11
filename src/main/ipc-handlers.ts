@@ -584,3 +584,247 @@ export function registerIpcHandlers(backupEngine: BackupEngine): void {
       return []
     }
   })
+
+  // LUT/CDL 相关处理器
+  ipcMain.handle('lut:import', async (_, filePath: string, name?: string, tags?: string[]) => {
+    try {
+      const { lutManager } = await import('./lut')
+      const lut = await lutManager.importLUT(filePath, name, tags)
+      return { success: true, lut }
+    } catch (err) {
+      logError('Failed to import LUT', err)
+      return { success: false, error: String(err) }
+    }
+  })
+
+  ipcMain.handle('lut:getAll', async () => {
+    try {
+      const { lutManager } = await import('./lut')
+      return await lutManager.getLUTs()
+    } catch (err) {
+      logError('Failed to get LUTs', err)
+      return []
+    }
+  })
+
+  ipcMain.handle('lut:createCDL', async (_, name: string, slope: number[], offset: number[], power: number[], saturation: number) => {
+    try {
+      const { lutManager } = await import('./lut')
+      const cdl = await lutManager.createCDL(name, slope as any, offset as any, power as any, saturation)
+      return { success: true, cdl }
+    } catch (err) {
+      logError('Failed to create CDL', err)
+      return { success: false, error: String(err) }
+    }
+  })
+
+  ipcMain.handle('lut:getCDLs', async () => {
+    try {
+      const { lutManager } = await import('./lut')
+      return await lutManager.getCDLs()
+    } catch (err) {
+      logError('Failed to get CDLs', err)
+      return []
+    }
+  })
+
+  ipcMain.handle('lut:exportCDL', async (_, cdlId: string, format: 'xml' | 'ccc') => {
+    try {
+      const { lutManager } = await import('./lut')
+      const cdls = await lutManager.getCDLs()
+      const cdl = cdls.find(c => c.id === cdlId)
+      if (!cdl) throw new Error('CDL not found')
+      
+      const content = format === 'xml' 
+        ? lutManager.exportCDLToXML(cdl)
+        : lutManager.exportCDLToCCC(cdl)
+      return { success: true, content }
+    } catch (err) {
+      logError('Failed to export CDL', err)
+      return { success: false, error: String(err) }
+    }
+  })
+
+  // DaVinci Resolve 相关处理器
+  ipcMain.handle('resolve:exportALE', async (_, entries: any[], outputPath: string) => {
+    try {
+      const { exportALE } = await import('./resolve')
+      await exportALE(entries, outputPath)
+      return { success: true }
+    } catch (err) {
+      logError('Failed to export ALE', err)
+      return { success: false, error: String(err) }
+    }
+  })
+
+  ipcMain.handle('resolve:exportXML', async (_, entries: any[], outputPath: string) => {
+    try {
+      const { exportFCPXML } = await import('./resolve')
+      await exportFCPXML(entries, outputPath)
+      return { success: true }
+    } catch (err) {
+      logError('Failed to export XML', err)
+      return { success: false, error: String(err) }
+    }
+  })
+
+  ipcMain.handle('resolve:exportEDL', async (_, entries: any[], outputPath: string) => {
+    try {
+      const { exportEDL } = await import('./resolve')
+      await exportEDL(entries, outputPath)
+      return { success: true }
+    } catch (err) {
+      logError('Failed to export EDL', err)
+      return { success: false, error: String(err) }
+    }
+  })
+
+  ipcMain.handle('resolve:createProject', async (_, projectName: string, basePath: string) => {
+    try {
+      const { createResolveProject } = await import('./resolve')
+      const result = await createResolveProject(projectName, basePath)
+      return { success: true, ...result }
+    } catch (err) {
+      logError('Failed to create Resolve project', err)
+      return { success: false, error: String(err) }
+    }
+  })
+
+  // NAS 相关处理器
+  ipcMain.handle('nas:scan', async () => {
+    try {
+      const { nasManager } = await import('./nas')
+      const devices = await nasManager.scanNetwork()
+      return { success: true, devices }
+    } catch (err) {
+      logError('Failed to scan NAS', err)
+      return { success: false, error: String(err) }
+    }
+  })
+
+  ipcMain.handle('nas:getDevices', async () => {
+    try {
+      const { nasManager } = await import('./nas')
+      return nasManager.getDiscoveredDevices()
+    } catch (err) {
+      logError('Failed to get NAS devices', err)
+      return []
+    }
+  })
+
+  ipcMain.handle('nas:createSyncJob', async (_, source: string, destination: string) => {
+    try {
+      const { nasManager } = await import('./nas')
+      const job = await nasManager.createSyncJob(source, destination)
+      return { success: true, job }
+    } catch (err) {
+      logError('Failed to create sync job', err)
+      return { success: false, error: String(err) }
+    }
+  })
+
+  ipcMain.handle('nas:startSync', async (_, jobId: string) => {
+    try {
+      const { nasManager } = await import('./nas')
+      await nasManager.startSync(jobId)
+      return { success: true }
+    } catch (err) {
+      logError('Failed to start sync', err)
+      return { success: false, error: String(err) }
+    }
+  })
+
+  ipcMain.handle('nas:getSyncJobs', async () => {
+    try {
+      const { nasManager } = await import('./nas')
+      return nasManager.getSyncJobs()
+    } catch (err) {
+      logError('Failed to get sync jobs', err)
+      return []
+    }
+  })
+
+  // 媒体生命周期相关处理器
+  ipcMain.handle('lifecycle:register', async (_, filePath: string, project?: string, tags?: string[]) => {
+    try {
+      const { lifecycleManager } = await import('./lifecycle')
+      const lifecycle = await lifecycleManager.registerMedia(filePath, project, tags)
+      return { success: true, lifecycle }
+    } catch (err) {
+      logError('Failed to register media', err)
+      return { success: false, error: String(err) }
+    }
+  })
+
+  ipcMain.handle('lifecycle:updateStatus', async (_, id: string, status: string, location?: string, notes?: string) => {
+    try {
+      const { lifecycleManager } = await import('./lifecycle')
+      await lifecycleManager.updateStatus(id, status as any, location, notes)
+      return { success: true }
+    } catch (err) {
+      logError('Failed to update status', err)
+      return { success: false, error: String(err) }
+    }
+  })
+
+  ipcMain.handle('lifecycle:getAll', async () => {
+    try {
+      const { lifecycleManager } = await import('./lifecycle')
+      return lifecycleManager.getAllLifecycles()
+    } catch (err) {
+      logError('Failed to get lifecycles', err)
+      return []
+    }
+  })
+
+  ipcMain.handle('lifecycle:search', async (_, query: string) => {
+    try {
+      const { lifecycleManager } = await import('./lifecycle')
+      return lifecycleManager.search(query)
+    } catch (err) {
+      logError('Failed to search lifecycles', err)
+      return []
+    }
+  })
+
+  ipcMain.handle('lifecycle:getStatistics', async () => {
+    try {
+      const { lifecycleManager } = await import('./lifecycle')
+      return lifecycleManager.getStatistics()
+    } catch (err) {
+      logError('Failed to get statistics', err)
+      return {}
+    }
+  })
+
+  ipcMain.handle('lifecycle:createArchivePolicy', async (_, policy: any) => {
+    try {
+      const { lifecycleManager } = await import('./lifecycle')
+      const result = await lifecycleManager.createArchivePolicy(policy)
+      return { success: true, policy: result }
+    } catch (err) {
+      logError('Failed to create archive policy', err)
+      return { success: false, error: String(err) }
+    }
+  })
+
+  ipcMain.handle('lifecycle:getArchivePolicies', async () => {
+    try {
+      const { lifecycleManager } = await import('./lifecycle')
+      return lifecycleManager.getArchivePolicies()
+    } catch (err) {
+      logError('Failed to get archive policies', err)
+      return []
+    }
+  })
+
+  ipcMain.handle('lifecycle:executeArchivePolicy', async (_, policyId: string) => {
+    try {
+      const { lifecycleManager } = await import('./lifecycle')
+      const result = await lifecycleManager.executeArchivePolicy(policyId)
+      return { success: true, ...result }
+    } catch (err) {
+      logError('Failed to execute archive policy', err)
+      return { success: false, error: String(err) }
+    }
+  })

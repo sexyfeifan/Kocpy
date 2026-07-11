@@ -107,12 +107,16 @@ export interface ProgressPayload {
   unchangedFiles?: number
   unchangedBytes?: number
 }
+
+export interface VolumeInfo {
   path: string
   label: string
   total: number
   free: number
   used: number
   type: string
+  deviceType?: 'system' | 'source' | 'destination'
+  canEject?: boolean
 }
 
 export interface ProjectConfig {

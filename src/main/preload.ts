@@ -12,6 +12,7 @@ interface AppSettings {
 }
 
 contextBridge.exposeInMainWorld('api', {
+  // 基础功能
   selectDirectory: (defaultPath?: string): Promise<string | null> =>
     ipcRenderer.invoke('dialog:selectDirectory', defaultPath),
 
@@ -42,6 +43,7 @@ contextBridge.exposeInMainWorld('api', {
   generateReport: (taskId: string, savePath: string, options?: { includeThumbnails?: boolean }) =>
     ipcRenderer.invoke('backup:generateReport', taskId, savePath, options),
 
+  // 系统功能
   getDriveInfo: (dirPath: string) =>
     ipcRenderer.invoke('system:getDriveInfo', dirPath),
 
@@ -60,6 +62,7 @@ contextBridge.exposeInMainWorld('api', {
   ejectVolume: (volumePath: string) =>
     ipcRenderer.invoke('system:ejectVolume', volumePath),
 
+  // 设置功能
   getSettings: (): Promise<AppSettings> =>
     ipcRenderer.invoke('settings:get'),
 
@@ -78,6 +81,7 @@ contextBridge.exposeInMainWorld('api', {
   renameDevice: (oldName: string, newName: string): Promise<string[]> =>
     ipcRenderer.invoke('settings:renameDevice', oldName, newName),
 
+  // 项目功能
   getProjects: (): Promise<ProjectConfig[]> =>
     ipcRenderer.invoke('projects:getAll'),
 
@@ -93,6 +97,7 @@ contextBridge.exposeInMainWorld('api', {
   resolveBackupPath: (params: { projectId: string; shootingDate: string; deviceName: string; positionLabel: string }) =>
     ipcRenderer.invoke('projects:resolveBackupPath', params),
 
+  // 应用功能
   getAppVersion: (): Promise<string> =>
     ipcRenderer.invoke('app:getVersion'),
 
@@ -116,14 +121,14 @@ contextBridge.exposeInMainWorld('api', {
     return () => ipcRenderer.removeListener('backup:progress', handler)
   },
 
-  // ASC MHL 相关API
+  // ASC MHL API
   mhlGenerate: (sourcePath: string, algorithm: string, operator: string, notes?: string) =>
     ipcRenderer.invoke('mhl:generate', sourcePath, algorithm, operator, notes),
 
   mhlVerify: (mhlPath: string, targetPath: string) =>
     ipcRenderer.invoke('mhl:verify', mhlPath, targetPath),
 
-  // 元数据提取API
+  // 元数据 API
   metadataExtract: (filePath: string) =>
     ipcRenderer.invoke('metadata:extract', filePath),
 
@@ -133,7 +138,7 @@ contextBridge.exposeInMainWorld('api', {
   metadataGetSupportedFormats: () =>
     ipcRenderer.invoke('metadata:getSupportedFormats'),
 
-  // 转码API
+  // 转码 API
   transcodeVideo: (options: any) =>
     ipcRenderer.invoke('transcode:video', options),
 
@@ -144,5 +149,75 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.invoke('transcode:getFormats'),
 
   transcodeGetResolutions: () =>
-    ipcRenderer.invoke('transcode:getResolutions')
+    ipcRenderer.invoke('transcode:getResolutions'),
+
+  // LUT/CDL API
+  lutImport: (filePath: string, name?: string, tags?: string[]) =>
+    ipcRenderer.invoke('lut:import', filePath, name, tags),
+
+  lutGetAll: () =>
+    ipcRenderer.invoke('lut:getAll'),
+
+  lutCreateCDL: (name: string, slope: number[], offset: number[], power: number[], saturation: number) =>
+    ipcRenderer.invoke('lut:createCDL', name, slope, offset, power, saturation),
+
+  lutGetCDLs: () =>
+    ipcRenderer.invoke('lut:getCDLs'),
+
+  lutExportCDL: (cdlId: string, format: 'xml' | 'ccc') =>
+    ipcRenderer.invoke('lut:exportCDL', cdlId, format),
+
+  // DaVinci Resolve API
+  resolveExportALE: (entries: any[], outputPath: string) =>
+    ipcRenderer.invoke('resolve:exportALE', entries, outputPath),
+
+  resolveExportXML: (entries: any[], outputPath: string) =>
+    ipcRenderer.invoke('resolve:exportXML', entries, outputPath),
+
+  resolveExportEDL: (entries: any[], outputPath: string) =>
+    ipcRenderer.invoke('resolve:exportEDL', entries, outputPath),
+
+  resolveCreateProject: (projectName: string, basePath: string) =>
+    ipcRenderer.invoke('resolve:createProject', projectName, basePath),
+
+  // NAS API
+  nasScan: () =>
+    ipcRenderer.invoke('nas:scan'),
+
+  nasGetDevices: () =>
+    ipcRenderer.invoke('nas:getDevices'),
+
+  nasCreateSyncJob: (source: string, destination: string) =>
+    ipcRenderer.invoke('nas:createSyncJob', source, destination),
+
+  nasStartSync: (jobId: string) =>
+    ipcRenderer.invoke('nas:startSync', jobId),
+
+  nasGetSyncJobs: () =>
+    ipcRenderer.invoke('nas:getSyncJobs'),
+
+  // 媒体生命周期 API
+  lifecycleRegister: (filePath: string, project?: string, tags?: string[]) =>
+    ipcRenderer.invoke('lifecycle:register', filePath, project, tags),
+
+  lifecycleUpdateStatus: (id: string, status: string, location?: string, notes?: string) =>
+    ipcRenderer.invoke('lifecycle:updateStatus', id, status, location, notes),
+
+  lifecycleGetAll: () =>
+    ipcRenderer.invoke('lifecycle:getAll'),
+
+  lifecycleSearch: (query: string) =>
+    ipcRenderer.invoke('lifecycle:search', query),
+
+  lifecycleGetStatistics: () =>
+    ipcRenderer.invoke('lifecycle:getStatistics'),
+
+  lifecycleCreateArchivePolicy: (policy: any) =>
+    ipcRenderer.invoke('lifecycle:createArchivePolicy', policy),
+
+  lifecycleGetArchivePolicies: () =>
+    ipcRenderer.invoke('lifecycle:getArchivePolicies'),
+
+  lifecycleExecuteArchivePolicy: (policyId: string) =>
+    ipcRenderer.invoke('lifecycle:executeArchivePolicy', policyId)
 })
