@@ -533,3 +533,54 @@ export function registerIpcHandlers(backupEngine: BackupEngine): void {
       return []
     }
   })
+
+  // 转码相关处理器
+  ipcMain.handle('transcode:video', async (_, options: any) => {
+    try {
+      const { transcodeVideo } = await import('./transcode')
+      const result = await transcodeVideo(options)
+      return result
+    } catch (err) {
+      logError('Failed to transcode video', err)
+      return { success: false, error: String(err) }
+    }
+  })
+
+  ipcMain.handle('transcode:batch', async (_, files: any[], options: any, concurrency?: number) => {
+    try {
+      const { transcodeBatch } = await import('./transcode')
+      const results = await transcodeBatch(files, options, concurrency)
+      return { success: true, results }
+    } catch (err) {
+      logError('Failed to transcode batch', err)
+      return { success: false, error: String(err) }
+    }
+  })
+
+  ipcMain.handle('transcode:getFormats', async () => {
+    try {
+      const { getSupportedFormats, getFormatDescription, getResolutionDescription } = await import('./transcode')
+      const formats = getSupportedFormats()
+      return formats.map(f => ({
+        value: f,
+        label: getFormatDescription(f)
+      }))
+    } catch (err) {
+      logError('Failed to get transcode formats', err)
+      return []
+    }
+  })
+
+  ipcMain.handle('transcode:getResolutions', async () => {
+    try {
+      const { getResolutionDescription } = await import('./transcode')
+      const resolutions: Array<'4k' | '1080p' | '720p' | '480p'> = ['4k', '1080p', '720p', '480p']
+      return resolutions.map(r => ({
+        value: r,
+        label: getResolutionDescription(r)
+      }))
+    } catch (err) {
+      logError('Failed to get resolutions', err)
+      return []
+    }
+  })

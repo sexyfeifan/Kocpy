@@ -131,5 +131,18 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.invoke('metadata:extractBatch', filePaths),
 
   metadataGetSupportedFormats: () =>
-    ipcRenderer.invoke('metadata:getSupportedFormats')
+    ipcRenderer.invoke('metadata:getSupportedFormats'),
+
+  // 转码API
+  transcodeVideo: (options: any) =>
+    ipcRenderer.invoke('transcode:video', options),
+
+  transcodeBatch: (files: any[], options: any, concurrency?: number) =>
+    ipcRenderer.invoke('transcode:batch', files, options, concurrency),
+
+  transcodeGetFormats: () =>
+    ipcRenderer.invoke('transcode:getFormats'),
+
+  transcodeGetResolutions: () =>
+    ipcRenderer.invoke('transcode:getResolutions')
 })
