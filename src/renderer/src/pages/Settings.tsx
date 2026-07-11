@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import {
   Settings as SettingsIcon, Hash, FileVideo, Palette, HardDrive,
   Database, Film, Shield, Webhook, Save, RefreshCw, Check, X, Plus, Trash2,
-  FolderOpen, Play, Pause, Stop
+  FolderOpen, Play, Pause, Stop, Download, ExternalLink
 } from 'lucide-react'
 
 interface SettingsProps {
