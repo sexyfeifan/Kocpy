@@ -35,6 +35,9 @@ export function NewTask(): JSX.Element {
   const [taskPriority] = useState(false)
   const [fx3Rename, setFx3Rename] = useState(false)
   const [includeHidden, setIncludeHidden] = useState(true)
+  const [generateMHL, setGenerateMHL] = useState(false)
+  const [enableTranscode, setEnableTranscode] = useState(false)
+  const [enableDaVinciExport, setEnableDaVinciExport] = useState(false)
 
   const [selectedProjectId, setSelectedProjectId] = useState<string>('')
   const [showAllProjects, setShowAllProjects] = useState(false)
@@ -1039,6 +1042,57 @@ export function NewTask(): JSX.Element {
                 }`} />
               </div>
             </label>
+            {/* Generate MHL */}
+            <label className="flex items-center justify-between cursor-pointer">
+              <div>
+                <p className="text-xs text-gray-300">生成 ASC MHL 文件</p>
+                <p className="text-[11px] text-gray-600 mt-0.5">备份完成后生成 MHL 校验文件（满足 Netflix 等平台要求）</p>
+              </div>
+              <div
+                onClick={() => setGenerateMHL((v) => !v)}
+                className={`relative w-9 h-5 rounded-full transition-colors shrink-0 ${
+                  generateMHL ? 'bg-blue-600' : 'bg-[#2a2a2a]'
+                }`}
+              >
+                <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${
+                  generateMHL ? 'left-4' : 'left-0.5'
+                }`} />
+              </div>
+            </label>
+            {/* Enable transcoding */}
+            <label className="flex items-center justify-between cursor-pointer">
+              <div>
+                <p className="text-xs text-gray-300">转码代理文件</p>
+                <p className="text-[11px] text-gray-600 mt-0.5">备份后自动生成代理文件（ProRes/H.264/H.265）</p>
+              </div>
+              <div
+                onClick={() => setEnableTranscode((v) => !v)}
+                className={`relative w-9 h-5 rounded-full transition-colors shrink-0 ${
+                  enableTranscode ? 'bg-blue-600' : 'bg-[#2a2a2a]'
+                }`}
+              >
+                <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${
+                  enableTranscode ? 'left-4' : 'left-0.5'
+                }`} />
+              </div>
+            </label>
+            {/* DaVinci export */}
+            <label className="flex items-center justify-between cursor-pointer">
+              <div>
+                <p className="text-xs text-gray-300">导出到 DaVinci Resolve</p>
+                <p className="text-[11px] text-gray-600 mt-0.5">备份完成后导出 ALE/XML 文件到 DaVinci Resolve</p>
+              </div>
+              <div
+                onClick={() => setEnableDaVinciExport((v) => !v)}
+                className={`relative w-9 h-5 rounded-full transition-colors shrink-0 ${
+                  enableDaVinciExport ? 'bg-blue-600' : 'bg-[#2a2a2a]'
+                }`}
+              >
+                <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${
+                  enableDaVinciExport ? 'left-4' : 'left-0.5'
+                }`} />
+              </div>
+            </label>
           </div>
         </div>
 
@@ -1073,3 +1127,62 @@ export function NewTask(): JSX.Element {
     </div>
   )
 }
+
+// 在高级选项部分添加以下内容（需要插入到适当位置）
+// 这里只是示例，实际需要修改文件中的高级选项部分
+
+/*
+// MHL 生成选项
+<div className="flex items-center justify-between">
+  <div>
+    <p className="text-xs text-gray-300">生成 ASC MHL 文件</p>
+    <p className="text-xs text-gray-500">备份完成后生成 MHL 校验文件</p>
+  </div>
+  <button
+    onClick={() => setGenerateMHL(!generateMHL)}
+    className={`w-12 h-6 rounded-full transition-colors ${
+      generateMHL ? 'bg-blue-600' : 'bg-gray-600'
+    }`}
+  >
+    <div className={`w-5 h-5 bg-white rounded-full transition-transform ${
+      generateMHL ? 'translate-x-6' : 'translate-x-1'
+    }`} />
+  </button>
+</div>
+
+// 转码选项
+<div className="flex items-center justify-between">
+  <div>
+    <p className="text-xs text-gray-300">转码代理文件</p>
+    <p className="text-xs text-gray-500">备份后自动生成代理文件</p>
+  </div>
+  <button
+    onClick={() => setEnableTranscode(!enableTranscode)}
+    className={`w-12 h-6 rounded-full transition-colors ${
+      enableTranscode ? 'bg-blue-600' : 'bg-gray-600'
+    }`}
+  >
+    <div className={`w-5 h-5 bg-white rounded-full transition-transform ${
+      enableTranscode ? 'translate-x-6' : 'translate-x-1'
+    }`} />
+  </button>
+</div>
+
+// DaVinci 导出选项
+<div className="flex items-center justify-between">
+  <div>
+    <p className="text-xs text-gray-300">导出到 DaVinci Resolve</p>
+    <p className="text-xs text-gray-500">备份完成后导出 ALE/XML 文件</p>
+  </div>
+  <button
+    onClick={() => setEnableDaVinciExport(!enableDaVinciExport)}
+    className={`w-12 h-6 rounded-full transition-colors ${
+      enableDaVinciExport ? 'bg-blue-600' : 'bg-gray-600'
+    }`}
+  >
+    <div className={`w-5 h-5 bg-white rounded-full transition-transform ${
+      enableDaVinciExport ? 'translate-x-6' : 'translate-x-1'
+    }`} />
+  </button>
+</div>
+*/
