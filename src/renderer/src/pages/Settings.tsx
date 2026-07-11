@@ -557,6 +557,118 @@ export function Settings(): JSX.Element {
               </div>
             </div>
           )}
+
+          {/* 检查更新 */}
+          {activeTab === 'update' && (
+            <div className="space-y-6">
+              <div className="glass-card p-4">
+                <h3 className="text-sm font-semibold text-gray-200 mb-4">检查更新</h3>
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm text-gray-300">当前版本</span>
+                      <span className="text-xs text-gray-500 font-mono">
+                        {appVersion ? `v${appVersion}` : '...'}
+                      </span>
+                    </div>
+                    <button
+                      onClick={checkForUpdates}
+                      disabled={updateStatus === 'checking'}
+                      className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-500 disabled:opacity-50"
+                    >
+                      {updateStatus === 'checking' ? (
+                        <>
+                          <RefreshCw size={14} className="animate-spin" />
+                          检查中...
+                        </>
+                      ) : (
+                        <>
+                          <Download size={14} />
+                          检查更新
+                        </>
+                      )}
+                    </button>
+                  </div>
+
+                  {/* 更新状态显示 */}
+                  {updateStatus === 'latest' && (
+                    <div className="p-3 bg-green-600/10 border border-green-500/20 rounded-lg">
+                      <p className="text-sm text-green-400">✓ 已是最新版本</p>
+                    </div>
+                  )}
+
+                  {updateStatus === 'error' && (
+                    <div className="p-3 bg-red-600/10 border border-red-500/20 rounded-lg">
+                      <p className="text-sm text-red-400">检查更新失败，请检查网络连接</p>
+                    </div>
+                  )}
+
+                  {updateStatus === 'available' && updateInfo.latestVersion && (
+                    <div className="p-4 bg-blue-600/10 border border-blue-500/20 rounded-lg">
+                      <div className="flex items-center gap-2 mb-3">
+                        <span className="px-2 py-1 text-xs bg-blue-600 text-white rounded">
+                          发现新版本
+                        </span>
+                        <span className="text-sm font-mono text-gray-300">
+                          v{updateInfo.latestVersion}
+                        </span>
+                      </div>
+
+                      {updateInfo.publishedAt && (
+                        <p className="text-xs text-gray-500 mb-2">
+                          发布时间: {new Date(updateInfo.publishedAt).toLocaleDateString()}
+                        </p>
+                      )}
+
+                      {updateInfo.releaseNotes && (
+                        <div className="mb-3">
+                          <p className="text-xs text-gray-500 mb-1">更新日志:</p>
+                          <p className="text-xs text-gray-400 max-h-20 overflow-auto">
+                            {updateInfo.releaseNotes}
+                          </p>
+                        </div>
+                      )}
+
+                      {updateInfo.assets && updateInfo.assets.length > 0 && (
+                        <div className="mb-3">
+                          <p className="text-xs text-gray-500 mb-2">下载链接:</p>
+                          <div className="space-y-1">
+                            {updateInfo.assets.map((asset) => (
+                              <a
+                                key={asset.name}
+                                href={asset.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="flex items-center gap-2 px-3 py-2 bg-[#111] border border-[#2a2a2a] rounded-lg hover:border-blue-500 transition-colors"
+                              >
+                                <Download size={14} className="text-blue-400" />
+                                <span className="text-xs text-gray-300">{asset.name}</span>
+                                <span className="text-xs text-gray-500 ml-auto">
+                                  {(asset.size / 1024 / 1024).toFixed(1)} MB
+                                </span>
+                              </a>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {updateInfo.releaseUrl && (
+                        <a
+                          href={updateInfo.releaseUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-500"
+                        >
+                          <ExternalLink size={14} />
+                          查看发布页面
+                        </a>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>
