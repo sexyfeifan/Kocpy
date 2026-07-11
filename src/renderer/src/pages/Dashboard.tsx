@@ -66,22 +66,132 @@ export function Dashboard(): JSX.Element {
   }
 
   // 批量导出
-  const handleBatchExport = async () => {
+  const handleBatchExport = async (format: 'json' | 'csv' | 'pdf') => {
     if (selectedTasks.size === 0) return
 
     const selectedTaskList = tasks.filter(t => selectedTasks.has(t.id))
-    
-    // 导出为JSON
-    const data = JSON.stringify(selectedTaskList, null, 2)
-    const blob = new Blob([data], { type: 'application/json' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `kocpy-tasks-${new Date().toISOString().slice(0, 10)}.json`
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
-    URL.revokeObjectURL(url)
+
+    if (format === 'json') {
+      // 导出为JSON
+      const data = JSON.stringify(selectedTaskList, null, 2)
+      const blob = new Blob([data], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `kocpy-tasks-${new Date().toISOString().slice(0, 10)}.json`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    } else if (format === 'csv') {
+      // 导出为CSV
+      const headers = ['ID', '名称', '状态', '源路径', '哈希算法', '总大小', '已传输', '开始时间', '完成时间']
+      const rows = selectedTaskList.map(t => [
+        t.id,
+        t.name,
+        t.status,
+        t.sourcePath,
+        t.hashAlgorithm,
+        t.totalBytes,
+        t.transferredBytes,
+        t.startedAt ? new Date(t.startedAt).toLocaleString() : '',
+        t.completedAt ? new Date(t.completedAt).toLocaleString() : ''
+      ])
+
+      const csvContent = [headers, ...rows]
+        .map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(','))
+        .join('\n')
+
+      const blob = new Blob(['﻿' + csvContent], { type: 'text/csv;charset=utf-8' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `kocpy-tasks-${new Date().toISOString().slice(0, 10)}.csv`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    } else if (format === 'pdf') {
+      // 导出为PDF (使用浏览器打印功能)
+      const printWindow = window.open('', '_blank')
+      if (printWindow) {
+        printWindow.document.write(`
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <title>Kocpy 备份报告</title>
+            <style>
+              body { font-family: Arial, sans-serif; padding: 20px; }
+              h1 { color: #333; border-bottom: 2px solid #333; padding-bottom: 10px; }
+              table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+              th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+              th { background-color: #f2f2f2; font-weight: bold; }
+              tr:nth-child(even) { background-color: #f9f9f9; }
+              .header { display: flex; justify-content: space-between; margin-bottom: 20px; }
+              .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 20px; }
+              .stat-card { border: 1px solid #ddd; padding: 10px; border-radius: 5px; }
+              .stat-label { font-size: 12px; color: #666; }
+              .stat-value { font-size: 24px; font-weight: bold; color: #333; }
+            </style>
+          </head>
+          <body>
+            <div class="header">
+              <h1>Kocpy 备份报告</h1>
+              <p>生成时间: ${new Date().toLocaleString()}</p>
+            </div>
+            <div class="stats">
+              <div class="stat-card">
+                <div class="stat-label">总任务</div>
+                <div class="stat-value">${selectedTaskList.length}</div>
+              </div>
+              <div class="stat-card">
+                <div class="stat-label">已完成</div>
+                <div class="stat-value">${selectedTaskList.filter(t => t.status === 'completed').length}</div>
+              </div>
+              <div class="stat-card">
+                <div class="stat-label">失败</div>
+                <div class="stat-value">${selectedTaskList.filter(t => t.status === 'failed').length}</div>
+              </div>
+              <div class="stat-card">
+                <div class="stat-label">总数据</div>
+                <div class="stat-value">${formatBytes(selectedTaskList.reduce((sum, t) => sum + t.totalBytes, 0))}</div>
+              </div>
+            </div>
+            <table>
+              <thead>
+                <tr>
+                  <th>名称</th>
+                  <th>状态</th>
+                  <th>源路径</th>
+                  <th>哈希算法</th>
+                  <th>总大小</th>
+                  <th>开始时间</th>
+                  <th>完成时间</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${selectedTaskList.map(t => `
+                  <tr>
+                    <td>${t.name}</td>
+                    <td>${t.status === 'completed' ? '已完成' : t.status === 'failed' ? '失败' : t.status === 'running' ? '进行中' : t.status}</td>
+                    <td>${t.sourcePath}</td>
+                    <td>${t.hashAlgorithm.toUpperCase()}</td>
+                    <td>${formatBytes(t.totalBytes)}</td>
+                    <td>${t.startedAt ? new Date(t.startedAt).toLocaleString() : '-'}</td>
+                    <td>${t.completedAt ? new Date(t.completedAt).toLocaleString() : '-'}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </body>
+          </html>
+        `)
+        printWindow.document.close()
+        setTimeout(() => {
+          printWindow.print()
+        }, 500)
+      }
+    }
   }
 
   // 刷新任务
@@ -172,11 +282,25 @@ export function Dashboard(): JSX.Element {
                   {isDeleting ? '删除中...' : '批量删除'}
                 </button>
                 <button
-                  onClick={handleBatchExport}
+                  onClick={() => handleBatchExport('json')}
                   className="flex items-center gap-2 px-3 py-1.5 bg-green-600 text-white rounded-lg hover:bg-green-500"
                 >
                   <Download size={14} />
-                  批量导出
+                  导出 JSON
+                </button>
+                <button
+                  onClick={() => handleBatchExport('csv')}
+                  className="flex items-center gap-2 px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-500"
+                >
+                  <Download size={14} />
+                  导出 CSV
+                </button>
+                <button
+                  onClick={() => handleBatchExport('pdf')}
+                  className="flex items-center gap-2 px-3 py-1.5 bg-red-600 text-white rounded-lg hover:bg-red-500"
+                >
+                  <Download size={14} />
+                  导出 PDF
                 </button>
                 <button
                   onClick={selectAllTasks}
