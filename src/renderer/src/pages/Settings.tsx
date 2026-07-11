@@ -52,6 +52,11 @@ export function Settings(): JSX.Element {
   const [lifecycleEnabled, setLifecycleEnabled] = useState(false)
   const [archivePolicies, setArchivePolicies] = useState<any[]>([])
 
+  // Loading 状态
+  const [importingLUT, setImportingLUT] = useState(false)
+  const [savingSettings, setSavingSettings] = useState(false)
+  const [exportingCDL, setExportingCDL] = useState<string | null>(null)
+
   useEffect(() => {
     // 加载设置
     loadSettings()
@@ -124,6 +129,7 @@ export function Settings(): JSX.Element {
   }
 
   const handleSave = async () => {
+    setSavingSettings(true)
     try {
       await window.api.saveSettings({
         defaultHash: defaultHash as any,
@@ -136,10 +142,14 @@ export function Settings(): JSX.Element {
       setTimeout(() => setSaved(false), 2000)
     } catch (err) {
       console.error('Failed to save settings:', err)
+      alert('保存设置失败: ' + (err instanceof Error ? err.message : '未知错误'))
+    } finally {
+      setSavingSettings(false)
     }
   }
 
   const handleImportLUT = async () => {
+    setImportingLUT(true)
     try {
       const filePath = await window.api.selectDirectory()
       if (filePath) {
@@ -154,7 +164,9 @@ export function Settings(): JSX.Element {
       }
     } catch (err) {
       console.error('Failed to import LUT:', err)
-      alert('LUT 导入失败')
+      alert('LUT 导入失败: ' + (err instanceof Error ? err.message : '未知错误'))
+    } finally {
+      setImportingLUT(false)
     }
   }
 
@@ -223,10 +235,25 @@ export function Settings(): JSX.Element {
             </h1>
             <button
               onClick={handleSave}
-              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-500 transition-colors"
+              disabled={savingSettings}
+              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-500 transition-colors disabled:opacity-50"
             >
-              {saved ? <Check size={16} /> : <Save size={16} />}
-              {saved ? '已保存' : '保存设置'}
+              {savingSettings ? (
+                <>
+                  <RefreshCw size={16} className="animate-spin" />
+                  保存中...
+                </>
+              ) : saved ? (
+                <>
+                  <Check size={16} />
+                  已保存
+                </>
+              ) : (
+                <>
+                  <Save size={16} />
+                  保存设置
+                </>
+              )}
             </button>
           </div>
 
@@ -249,11 +276,19 @@ export function Settings(): JSX.Element {
                         placeholder="输入 LUT 名称..."
                         className="flex-1 px-3 py-2 bg-[#111] border border-[#2a2a2a] rounded-lg text-sm text-gray-200"
                       />
-                      <button 
+                      <button
                         onClick={handleImportLUT}
-                        className="px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-500 transition-colors"
+                        disabled={importingLUT}
+                        className="px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-500 transition-colors disabled:opacity-50"
                       >
-                        导入
+                        {importingLUT ? (
+                          <>
+                            <RefreshCw size={14} className="animate-spin" />
+                            导入中...
+                          </>
+                        ) : (
+                          '导入'
+                        )}
                       </button>
                     </div>
                   </div>
