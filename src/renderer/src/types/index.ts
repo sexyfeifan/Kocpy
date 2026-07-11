@@ -174,3 +174,73 @@ declare global {
     }
   }
 }
+
+// 媒体元数据类型
+export interface MediaMetadata {
+  // 基础信息
+  fileName: string
+  filePath: string
+  fileSize: number
+  fileType: string
+  mimeType: string
+
+  // 视频信息
+  duration?: number  // 秒
+  frameRate?: number
+  resolution?: {
+    width: number
+    height: number
+  }
+  aspectRatio?: string
+  codec?: string
+  bitrate?: number
+
+  // 摄影机信息
+  camera?: {
+    manufacturer: string
+    model: string
+    serialNumber?: string
+    firmware?: string
+  }
+
+  // 拍摄参数
+  exposure?: {
+    iso?: number
+    shutter?: string
+    aperture?: string
+    whiteBalance?: number
+    exposureTime?: string
+  }
+
+  // 时间码
+  timecode?: {
+    record?: string
+    camera?: string
+    userBits?: string
+  }
+
+  // 镜头信息
+  lens?: {
+    model?: string
+    focalLength?: number
+    maxAperture?: number
+    serialNumber?: string
+  }
+
+  // 色彩信息
+  color?: {
+    colorSpace?: string
+    colorProfile?: string
+    bitDepth?: number
+  }
+
+  // GPS信息
+  gps?: {
+    latitude?: number
+    longitude?: number
+    altitude?: number
+  }
+
+  // 其他元数据
+  metadata: Record<string, any>
+}

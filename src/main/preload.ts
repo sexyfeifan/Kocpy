@@ -121,8 +121,7 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.invoke('mhl:generate', sourcePath, algorithm, operator, notes),
 
   mhlVerify: (mhlPath: string, targetPath: string) =>
-    ipcRenderer.invoke('mhl:verify', mhlPath, targetPath)
-})
+    ipcRenderer.invoke('mhl:verify', mhlPath, targetPath),
 
   // 元数据提取API
   metadataExtract: (filePath: string) =>
@@ -133,3 +132,4 @@ contextBridge.exposeInMainWorld('api', {
 
   metadataGetSupportedFormats: () =>
     ipcRenderer.invoke('metadata:getSupportedFormats')
+})
