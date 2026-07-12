@@ -30,7 +30,8 @@
 - **摄影机卡自动识别**：通过多维度评分模型（协议类型、文件系统、分区方案、块大小、容量、卷名等）区分数据卡与备份硬盘，自动填入素材源
 - **支持卡型**：SD · CFexpress Type A/B · CFast · CF · SxS · XQD
 - **磁盘状态实时监控**：5 秒轮询已连接存储设备，显示容量、剩余空间、设备类型
-- **设备弹出**：支持在界面内直接安全弹出外接设备
+- **接入介质显示**：主页实时展示所有已连接存储设备（素材卡/备份盘/系统盘），容量进度条、安全弹出
+- **设备安全弹出**：支持在界面内直接安全弹出外接设备（unmount + eject 两步流程）
 
 ### 项目管理
 
@@ -44,6 +45,24 @@
 
 - **视频首帧缩略图**：备份完成后可一键提取 MXF / MOV / MP4 / R3D / BRAW 视频文件首帧，ffmpeg 已内置，无需额外安装
 - **PDF 备份报告**：包含任务摘要、源信息、每个目的地的文件校验列表，支持内嵌视频首帧缩略图，可导出存档
+
+### 行业标准与元数据
+
+- **ASC MHL 合规**：实现 ASC MHL V1 标准，生成和验证 MHL 文件，支持 XML/JSON 格式导出，满足 Netflix 等平台要求
+- **xxHash 算法**：新增 xxHash64 / xxHash3-64 / xxHash3-128 / C4 四种高性能哈希算法（WASM 实现），连同原有 MD5/SHA-1/SHA-256 共 7 种可选
+- **元数据提取**：支持 ARRI / RED / Sony / Blackmagic / Canon 主流摄影机格式，基于 ExifTool 的通用提取器
+
+### 转码与调色
+
+- **代理文件生成**：支持 ProRes / H.264 / H.265，多种分辨率（4K/1080p/720p/480p）和质量，硬件加速（Apple Silicon VideoToolbox / Intel QSV / NVIDIA NVENC）
+- **LUT/CDL 管理**：LUT 导入（.cube/.3dl/.csp）、CDL 创建/导出（XML/CCC），可在备份时应用 LUT/CDL 到代理文件
+- **DaVinci Resolve 集成**：导出 ALE / FCP XML / EDL / CDL 文件，创建 Resolve 项目结构
+
+### NAS 归档与生命周期
+
+- **NAS 设备发现**：自动扫描局域网 NAS（SMB/NFS/AFP 协议），健康监控（SMART/容量/RAID 状态）
+- **增量同步**：智能增量备份，仅同步修改的文件，断点续传，并行传输
+- **媒体生命周期管理**：素材从拍摄到归档的完整追踪，状态历史记录，归档策略管理，自动化归档执行
 
 ---
 
@@ -60,8 +79,8 @@
 
 | 架构 | 安装包 |
 |------|--------|
-| Apple Silicon（M1/M2/M3/M4） | `Kocpy-1.10.1-arm64.dmg` |
-| Intel | `Kocpy-1.10.1-x64.dmg` |
+| Apple Silicon（M1/M2/M3/M4） | `Kocpy-1.14.2-arm64.dmg` |
+| Intel | `Kocpy-1.14.2-x64.dmg` |
 
 下载 `.dmg` 后，双击打开，将 Kocpy 拖入 Applications 文件夹即可。
 
@@ -115,81 +134,120 @@ src/
 │   ├── backup/
 │   │   ├── BackupEngine.ts        # 核心备份引擎：文件枚举、并行拷贝、哈希校验、缩略图生成
 │   │   └── ReportGenerator.ts     # HTML 报告生成器（用于 PDF 导出）
-│   ├── webhook.ts                 # Webhook 推送：平台检测（飞书/钉钉/企微/Discord/Slack）、payload 构建、重试逻辑
-│   ├── report-builder.ts          # Webhook 纯文本报告构建器（任务摘要、路径、校验结果、目录树）
-│   ├── storage.ts                 # 数据持久化：原子写入（atomicWrite）+ 写前备份（.bak）
-│   ├── types.ts                   # 主进程类型定义（BackupTask、FileRecord、TaskConfig 等）
-│   ├── utils.ts                   # 工具函数（formatSpeed、formatEta）+ 从 report-builder 重导出
-│   ├── logger.ts                  # 文件日志系统（按日滚动，自动保留 7 天）
+│   ├── hash.ts                    # xxHash 算法集成（WASM）
+│   ├── mhl.ts                     # ASC MHL V1 标准实现
+│   ├── metadata.ts                # 摄影机元数据提取（ExifTool）
+│   ├── transcode.ts               # 代理文件转码（ProRes/H.264/H.265）
+│   ├── lut.ts                     # LUT/CDL 管理
+│   ├── resolve.ts                 # DaVinci Resolve 集成（ALE/XML/EDL/CDL 导出）
+│   ├── nas.ts                     # NAS 设备发现与增量同步
+│   ├── lifecycle.ts               # 媒体生命周期管理
+│   ├── webhook.ts                 # Webhook 推送（飞书/钉钉/企微/Discord/Slack）
+│   ├── report-builder.ts          # Webhook 纯文本报告构建器
+│   ├── storage.ts                 # 数据持久化：原子写入 + 写前备份（.bak）
+│   ├── types.ts                   # 主进程类型定义
+│   ├── utils.ts                   # 工具函数
+│   ├── logger.ts                  # 文件日志系统（按日滚动，保留 7 天）
 │   └── preload.ts                 # contextBridge API 暴露层
 ├── renderer/
 │   └── src/
 │       ├── App.tsx                # 根组件：路由分发、进度事件监听
 │       ├── main.tsx               # React 入口
+│       ├── locales.ts             # 国际化文案
 │       ├── store/
-│       │   └── taskStore.ts       # Zustand 全局状态（任务列表、项目、设备、页面路由）
+│       │   └── taskStore.ts       # Zustand 全局状态
 │       ├── pages/
 │       │   ├── Dashboard.tsx      # 任务总览：统计卡片、已连接设备面板、任务列表
-│       │   ├── NewTask.tsx        # 新建任务：备卡/镜像/项目三种模式、素材卡自动识别
+│       │   ├── NewTask.tsx        # 新建任务：备卡/镜像/项目三种模式
 │       │   ├── History.tsx        # 历史记录：热力图 + 按日期筛选
-│       │   ├── Settings.tsx       # 设置：哈希算法、校验开关、Webhook 配置、检查更新
-│       │   └── ProjectManager.tsx # 项目管理：创建/编辑/归档项目、目录结构预创建
+│       │   ├── Settings.tsx       # 设置：哈希、Webhook、LUT/CDL、NAS 配置
+│       │   ├── ProjectManager.tsx # 项目管理：创建/编辑/归档项目
+│       │   ├── NASManager.tsx     # NAS 设备管理与同步任务
+│       │   └── LifecycleManager.tsx # 媒体生命周期管理
 │       ├── components/
+│       │   ├── ConnectedDrives.tsx # 接入介质显示组件（设备卡片、安全弹出）
 │       │   ├── TaskCard.tsx       # 任务卡片：进度条、校验日志、操作按钮
-│       │   ├── Header.tsx         # 顶部栏：页面标题、运行状态、版本号
+│       │   ├── Header.tsx         # 顶部栏
 │       │   ├── Sidebar.tsx        # 侧边导航栏
-│       │   ├── BackupHeatmap.tsx  # GitHub 风格备份热力图（52 周）
+│       │   ├── BackupHeatmap.tsx  # GitHub 风格备份热力图
+│       │   ├── MediaBrowser.tsx   # 素材浏览器（网格/列表视图、搜索筛选）
 │       │   └── ErrorBoundary.tsx  # React 错误边界
 │       ├── types/
-│       │   └── index.ts           # 渲染进程类型定义 + Window.api 全局类型声明
-│       └── utils.ts               # 渲染进程工具函数（formatBytes、formatEta、formatDuration 等）
+│       │   └── index.ts           # 渲染进程类型定义
+│       └── utils.ts               # 渲染进程工具函数
+└── __tests__/                     # 单元测试（79 个用例，100% 通过）
 ```
 
 ---
 
 ## 更新日志
 
+### v1.14.2（2026-07-12）
+
+- **设备推出修复** — 修复 `diskutil eject` 因传入挂载路径而非 disk 标识符导致静默失败；改为先 unmount 卷再 eject 整个磁盘
+- **前端状态修正** — 推出失败时不再假成功地从 UI 移除设备；`pages/Dashboard.tsx` 补上缺失的 `onVolumeEject` 回调
+
+### v1.14.1（2026-07-12）
+
+- **本地硬盘显示修复** — Macintosh HD 现在正确显示完整容量信息，添加 `deviceType: 'system'` 标识
+- **设备去重** — 前端基于 path 去重，避免同一设备重复显示
+
+### v1.14.0（2026-07-12）
+
+- **接入介质显示** — 参考 DiskHop 设计，在主页实时显示已连接存储设备，包含设备类型标签（素材卡/备份盘/系统盘）、容量进度条、安全弹出按钮
+- **设备自动识别** — 多维度评分模型区分摄影机卡与备份硬盘，支持 SD/CFexpress/CFast/CF/SxS/XQD
+
+### v1.13.0（2026-07-12）
+
+- **Dashboard 增强** — 素材浏览器集成、批量操作（全选/删除/导出 JSON）、统计分析标签页
+- **高级选项** — 新建任务时可选生成 ASC MHL 文件、转码代理文件、导出到 DaVinci Resolve
+- **NAS 管理页面** — NAS 设备列表、健康监控、同步任务管理
+- **生命周期管理页面** — 素材从拍摄到归档的完整追踪、搜索筛选、状态历史记录
+- **Settings 完善** — LUT/CDL 管理、NAS 扫描设置、归档策略配置
+
+### v1.12.0（2026-07-12）
+
+- **ASC MHL 合规** — 实现 ASC MHL V1 标准，支持 XML/JSON 格式导出，满足 Netflix 等平台要求
+- **xxHash 算法** — 新增 xxHash64/xxHash3-64/xxHash3-128/C4 四种高性能哈希算法（WASM 实现）
+- **元数据提取** — 支持 ARRI/RED/Sony/Blackmagic/Canon 主流摄影机格式，基于 ExifTool
+- **代理文件生成** — 支持 ProRes/H.264/H.265，多种分辨率和质量，硬件加速（Apple Silicon VideoToolbox）
+- **LUT/CDL 管理** — LUT 导入、CDL 创建/导出（XML/CCC），支持 .cube/.3dl/.csp 格式
+- **DaVinci Resolve 集成** — 导出 ALE/FCP XML/EDL/CDL 文件，创建 Resolve 项目结构
+- **NAS 归档** — 自动扫描局域网 NAS（SMB/NFS/AFP）、健康监控、智能增量同步、断点续传
+- **媒体生命周期** — 素材从拍摄到归档的完整追踪、归档策略管理、自动化执行
+
+### v1.11.0（2026-07-10）
+
+- **Astryx UI 设计系统** — 集成 @astryxdesign/core 组件库，深色/浅色主题切换，响应式布局
+- **任务队列系统** — 正确的队列管理、优先级排序、顺序执行
+- **FX3 文件重命名** — Sony FX3 摄影机文件自动重命名（.mp4/.mov/.mxf）
+- **增量备份后端** — 文件比较逻辑（大小 + 修改时间），后端就绪，UI 集成待后续版本
+
 ### v1.10.1（2026-06）
 
-- **检查更新** — 设置页面新增「检查更新」按钮，通过 GitHub API 检测最新版本，显示更新日志并提供直接下载链接
-- **代码质量改进** — 消除 formatBytes 等 6 处重复，统一从 utils.ts 导入
-- **类型安全修复** — 补充 renderer 类型缺失字段、修复模板字符串 bug、Header 补充 projects 页面标题
-- **代码重构** — 拆分 index.ts（IPC 处理移至独立模块）、持久化日志系统、移除免费限制残留代码
-- **数据安全加固** — .tmp 临时文件写入后原子性 rename、写前 .bak 备份、磁盘空间预检、断点续传支持
-- **安全加固** — execFile 替代 exec 防止命令注入、.tmp 文件清理
-- **UI 清理** — 删除 Dashboard 无用 settings 状态、NewTask 空 useEffect
+- **检查更新** — 设置页面新增「检查更新」按钮，通过 GitHub API 检测最新版本
+- **代码质量改进** — 消除重复代码、类型安全修复、代码重构
+- **数据安全加固** — 原子写入、写前备份、磁盘空间预检、断点续传支持
+- **安全加固** — execFile 替代 exec 防止命令注入
 
 ### v1.10.0（2026-06）
 
-- **并行拷贝死锁修复** — 用 Deferred Promise 替换忙等待循环，首个目标失败时不再挂起
-- **双重 Promise 解析修复** — copyFileAndHash / copyFile 添加 settled 标志，确保只 resolve 一次
-- **skip 策略校验误报修复** — 跳过的文件标记为 verified + skipped，不再显示校验失败
-- **verifyAfterCopy 设置生效** — startTask 现在接受 options 参数
-- **resolveBackupPath 修复** — 改为返回所有目标路径数组
-- **Header/Settings 版本号修复** — 移除硬编码过期 fallback
-- **共享 utils.ts** — 消除 formatBytes 等重复代码
+- **并行拷贝死锁修复** — Deferred Promise 替换忙等待循环
+- **skip 策略校验修复** — 跳过的文件标记为 verified + skipped
 - **React ErrorBoundary** — 防止渲染错误导致白屏
 - **Webhook 重试** — 推送增加 3 次指数退避重试
-- **Renderer 类型同步** — TaskConfig / ProgressPayload 补充缺失字段
-- **项目名称统一** — 所有产物名称统一为 Kocpy
 
 ### v1.9.2（2026-05）
 
 - 项目正式更名为 **Kocpy**（原 KocardPro）
 - 新增 Webhook 推送功能（钉钉/飞书/企业微信通知）
 - 新增备份热力图可视化
-- 其他稳定性改进
-
-### v1.8.1（2026-04）
-
-- 项目模式机位子位置校验：当项目中某机器配置了子位置时，新建任务必须选择子位置才能开始备份
 
 ### v1.8.0（2026-04）
 
 - 跳过文件统计展示
 - 重复文件处理策略（跳过 / 重命名）
-- 保存为默认设置
-- 优先执行
+- 保存为默认设置、优先执行
 - 视频首帧缩略图
 
 ---
@@ -199,7 +257,7 @@ src/
 | 层级 | 技术 |
 |------|------|
 | 桌面框架 | Electron 28 + electron-vite |
-| 前端 | React 18 + TypeScript 5 + Tailwind CSS 3 |
+| 前端 | React 19 + TypeScript 5 + Tailwind CSS 3 |
 | 状态管理 | Zustand 4 |
 | 图标 | Lucide React |
 | 视频处理 | ffmpeg-static（内置，用于首帧缩略图提取） |
