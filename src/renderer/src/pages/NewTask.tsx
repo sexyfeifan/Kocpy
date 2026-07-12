@@ -16,12 +16,12 @@ interface DestRow {
   driveInfo: DriveInfo | null
 }
 
-type Mode = 'card' | 'mirror' | 'project'
+type Mode = 'backup' | 'project'
 
 export function NewTask(): JSX.Element {
   const { addTask, setActivePage, projects, projectsError, devices, loadProjects, loadDevices } = useTaskStore()
 
-  const [mode, setMode] = useState<Mode>('card')
+  const [mode, setMode] = useState<Mode>('backup')
   const [sourcePath, setSourcePath] = useState('')
   const [destinations, setDestinations] = useState<DestRow[]>([])
   const [defaultHash, setDefaultHash] = useState<'md5' | 'sha1' | 'sha256'>('md5')
@@ -37,7 +37,8 @@ export function NewTask(): JSX.Element {
   const [includeHidden, setIncludeHidden] = useState(true)
   const [generateMHL, setGenerateMHL] = useState(false)
   const [enableTranscode, setEnableTranscode] = useState(false)
-  const [enableDaVinciExport, setEnableDaVinciExport] = useState(false)
+    const [enableDaVinciExport, setEnableDaVinciExport] = useState(false)
+  const [preserveStructure, setPreserveStructure] = useState(false)
 
   const [selectedProjectId, setSelectedProjectId] = useState<string>('')
   const [showAllProjects, setShowAllProjects] = useState(false)
@@ -245,8 +246,8 @@ export function NewTask(): JSX.Element {
     (resolvedPath !== null || destinations.length > 0)
 
   const canStart =
-    mode === 'card' ? canStartCard :
-    mode === 'mirror' ? canStartMirror :
+    mode === 'backup' ? canStartCard :
+    mode === 'backup' ? canStartMirror :
     canStartAdvanced
 
   const handleStart = async () => {
@@ -274,14 +275,14 @@ export function NewTask(): JSX.Element {
         destinationPaths: destPaths,
         hashAlgorithm: defaultHash,
         namingTemplate:
-          mode === 'card'
+          mode === 'backup'
             ? (sourcePath.split('/').pop() || 'Untitled')
-            : mode === 'mirror'
+            : mode === 'backup'
               ? (sourcePath.split('/').pop() || 'Untitled')
               : (volumePrefix || 'Untitled'),
         shootingDate: mode === 'project' ? shootingDate : '',
         projectName: mode === 'project' ? (selectedProject?.name ?? '') : '',
-        copyMode: mode === 'mirror' ? 'mirror' : 'normal',
+        copyMode: 'normal',  // 备份模式始终使用normal，镜像选项通过高级设置控制
         duplicateStrategy,
         generateThumbnails,
         priority: taskPriority,
@@ -296,7 +297,7 @@ export function NewTask(): JSX.Element {
     }
   }
 
-  const isMirror = mode === 'mirror'
+  const isMirror = mode === 'backup'
 
   const pickVolume = async (vol: VolumeInfo) => {
     // macOS requires a user-initiated open dialog to grant sandbox access to the volume path.
@@ -342,7 +343,7 @@ export function NewTask(): JSX.Element {
           onClick={() => setSourceTab('card')}
           className={`px-4 py-2 text-xs font-medium transition-all border-b-2 -mb-px ${
             sourceTab === 'card'
-              ? mode === 'mirror'
+              ? mode === 'backup'
                 ? 'border-purple-500 text-purple-400'
                 : 'border-blue-500 text-blue-400'
               : 'border-transparent text-gray-500 hover:text-gray-300'
@@ -354,7 +355,7 @@ export function NewTask(): JSX.Element {
           onClick={() => setSourceTab('custom')}
           className={`px-4 py-2 text-xs font-medium transition-all border-b-2 -mb-px ${
             sourceTab === 'custom'
-              ? mode === 'mirror'
+              ? mode === 'backup'
                 ? 'border-purple-500 text-purple-400'
                 : 'border-blue-500 text-blue-400'
               : 'border-transparent text-gray-500 hover:text-gray-300'
@@ -447,7 +448,7 @@ export function NewTask(): JSX.Element {
       )}
 
       {/* FX3 备份重命名 — only in card mode */}
-      {mode === 'card' && (
+      {mode === 'backup' && (
         <label className="flex items-center justify-between cursor-pointer mt-3 pt-3 border-t border-[#1e1e1e]">
           <div>
             <p className="text-xs text-gray-300">FX3 备份重命名</p>
@@ -608,7 +609,7 @@ export function NewTask(): JSX.Element {
       <div className="flex gap-1 p-1 bg-[#111] border border-[#2a2a2a] rounded-xl mb-4">
         <button
           onClick={() => {
-            if (mode === 'card') return
+            if (mode === 'backup') return
             setMode('card')
             setSourcePath('')
             setDestinations([])
@@ -620,7 +621,7 @@ export function NewTask(): JSX.Element {
             setSourceTab('card')
           }}
           className={`flex-1 py-2 rounded-lg text-sm font-medium transition-all ${
-            mode === 'card'
+            mode === 'backup'
               ? 'bg-blue-600 text-white shadow'
               : 'text-gray-500 hover:text-gray-300'
           }`}
@@ -629,7 +630,7 @@ export function NewTask(): JSX.Element {
         </button>
         <button
           onClick={() => {
-            if (mode === 'mirror') return
+            if (mode === 'backup') return
             setMode('mirror')
             setSourcePath('')
             setDestinations([])
@@ -641,7 +642,7 @@ export function NewTask(): JSX.Element {
             setSourceTab('card')
           }}
           className={`flex-1 py-2 rounded-lg text-sm font-medium transition-all ${
-            mode === 'mirror'
+            mode === 'backup'
               ? 'bg-purple-600 text-white shadow'
               : 'text-gray-500 hover:text-gray-300'
           }`}
@@ -681,10 +682,10 @@ export function NewTask(): JSX.Element {
       </div>
 
       {/* Mode description banner */}
-      {mode === 'card' && (
+      {mode === 'backup' && (
         <div className="mb-5 px-4 py-3.5 bg-blue-600/8 border border-blue-500/20 rounded-xl flex flex-col gap-2">
           <div className="flex items-center gap-2">
-            <span className="text-xs font-semibold text-blue-400 uppercase tracking-wider">备卡模式 · Card Mode</span>
+            <span className="text-xs font-semibold text-blue-400 uppercase tracking-wider">备份模式 · Backup Mode</span>
           </div>
           <p className="text-xs text-gray-400 leading-relaxed">
             将素材卡中的文件备份到指定目的地。备份目录以「卷名_时间戳」命名，确保每次备份可唯一追溯。支持同时备份到多个目的地，全部目的地备份完成后逐文件哈希校验。
@@ -700,7 +701,7 @@ export function NewTask(): JSX.Element {
           </div>
         </div>
       )}
-      {mode === 'mirror' && (
+      {mode === 'backup' && (
         <div className="mb-5 px-4 py-3.5 bg-purple-600/8 border border-purple-500/20 rounded-xl flex flex-col gap-2">
           <div className="flex items-center gap-2">
             <span className="text-xs font-semibold text-purple-400 uppercase tracking-wider">镜像模式 · Mirror Mode</span>
@@ -741,12 +742,12 @@ export function NewTask(): JSX.Element {
       )}
 
       <div className="flex flex-col gap-5">
-        {mode === 'card' ? (
+        {mode === 'backup' ? (
           <>
             {sourceSection}
             {destSection}
           </>
-        ) : mode === 'mirror' ? (
+        ) : mode === 'backup' ? (
           <>
             {sourceSection}
             {destSection}
@@ -1102,7 +1103,7 @@ export function NewTask(): JSX.Element {
           disabled={!canStart || isStarting}
           className={`flex items-center justify-center gap-2 w-full py-4 rounded-xl font-semibold text-sm transition-all
             ${canStart && !isStarting
-              ? mode === 'mirror'
+              ? mode === 'backup'
                 ? 'bg-purple-600 hover:bg-purple-500 text-white shadow-lg shadow-purple-600/25'
                 : 'bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-600/25'
               : 'bg-[#1a1a1a] text-gray-600 border border-[#2a2a2a] cursor-not-allowed'
@@ -1114,7 +1115,7 @@ export function NewTask(): JSX.Element {
 
         {!canStart && (
           <p className="text-center text-xs text-gray-600">
-          {mode === 'card' || mode === 'mirror'
+          {mode === 'backup' || mode === 'backup'
               ? '请选择素材源和至少一个目的地'
               : positionRequired
                 ? '请选择机位子位置'
@@ -1186,3 +1187,23 @@ export function NewTask(): JSX.Element {
   </button>
 </div>
 */
+
+            {/* 保持原始目录结构 */}
+            {mode === 'backup' && (
+              <label className="flex items-center justify-between cursor-pointer">
+                <div>
+                  <p className="text-xs text-gray-300">保持原始目录结构</p>
+                  <p className="text-[11px] text-gray-600 mt-0.5">镜像模式：目的地内容与素材源完全一致（A = B）</p>
+                </div>
+                <div
+                  onClick={() => setPreserveStructure((v) => !v)}
+                  className={`relative w-9 h-5 rounded-full transition-colors shrink-0 ${
+                    preserveStructure ? 'bg-purple-600' : 'bg-[#2a2a2a]'
+                  }`}
+                >
+                  <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${
+                    preserveStructure ? 'left-4' : 'left-0.5'
+                  }`} />
+                </div>
+              </label>
+            )}
