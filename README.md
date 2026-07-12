@@ -79,8 +79,8 @@
 
 | 架构 | 安装包 |
 |------|--------|
-| Apple Silicon（M1/M2/M3/M4） | `Kocpy-1.14.3-arm64.dmg` |
-| Intel | `Kocpy-1.14.3-x64.dmg` |
+| Apple Silicon（M1/M2/M3/M4） | `Kocpy-1.14.4-arm64.dmg` |
+| Intel | `Kocpy-1.14.4-x64.dmg` |
 
 下载 `.dmg` 后，双击打开，将 Kocpy 拖入 Applications 文件夹即可。
 
@@ -181,6 +181,10 @@ src/
 ---
 
 ## 更新日志
+
+### v1.14.4（2026-07-12）
+
+- **设备管理修复** — 修复 `settings:getDevices` 中 `loadSettings().devices` 未 await 导致返回 `undefined`；`settings:save` 补充 `await`；设备增删改现在能正确持久化
 
 ### v1.14.3（2026-07-12）
 

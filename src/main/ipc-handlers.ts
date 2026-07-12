@@ -342,12 +342,13 @@ export function registerIpcHandlers(backupEngine: BackupEngine): void {
   })
 
   ipcMain.handle('settings:save', async (_, settings: AppSettings) => {
-    saveSettings(settings)
+    await saveSettings(settings)
     return true
   })
 
   ipcMain.handle('settings:getDevices', async () => {
-    return await loadSettings().devices
+    const s = await loadSettings()
+    return s.devices
   })
 
   ipcMain.handle('settings:addDevice', async (_, name: string) => {
