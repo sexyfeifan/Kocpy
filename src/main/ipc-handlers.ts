@@ -264,8 +264,16 @@ export function registerIpcHandlers(backupEngine: BackupEngine): void {
 
   ipcMain.handle('system:ejectVolume', async (_, volumePath: string) => {
     try {
-      // P0-3: 使用 execFile 避免命令注入
-      await execFileAsync('diskutil', ['eject', volumePath])
+      // Step 1: unmount the volume (works with mount paths like /Volumes/SD_CARD)
+      await execFileAsync('diskutil', ['unmount', volumePath])
+
+      // Step 2: find the parent disk identifier (e.g. disk2) so we can eject the whole disk
+      const { stdout: info } = await execFileAsync('diskutil', ['info', volumePath])
+      const diskNode = info.match(/Device Node:\s+(.+)/)?.[1]?.trim()
+      if (diskNode) {
+        await execFileAsync('diskutil', ['eject', diskNode])
+      }
+
       return true
     } catch (err) {
       logError(`Failed to eject volume ${volumePath}`, err)

@@ -87,7 +87,7 @@ function VolumeCard({
 interface ConnectedDrivesProps {
   selectedVolumes?: string[]
   onVolumeToggle?: (path: string) => void
-  onVolumeEject?: (path: string) => Promise<void>
+  onVolumeEject?: (path: string) => Promise<boolean | void>
   showRefresh?: boolean
   columns?: number
 }
@@ -136,9 +136,10 @@ export function ConnectedDrives({
   const handleEject = async (e: React.MouseEvent, path: string) => {
     e.stopPropagation()
     if (onVolumeEject) {
-      await onVolumeEject(path)
+      const ok = await onVolumeEject(path)
+      // Only remove from UI if eject actually succeeded
+      if (ok === false) return
     }
-    // 移除已弹出的卷
     setVolumes(prev => prev.filter(v => v.path !== path))
   }
 

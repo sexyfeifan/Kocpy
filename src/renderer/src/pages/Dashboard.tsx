@@ -244,7 +244,7 @@ export function Dashboard(): JSX.Element {
 
       {/* 接入介质显示 */}
       <div className="p-4 border-b border-[#2a2a2a]">
-        <ConnectedDrives />
+        <ConnectedDrives onVolumeEject={(path) => window.api.ejectVolume(path)} />
       </div>
 
       {/* 标签页切换 */}

@@ -1,6 +1,6 @@
 {
   "name": "kocpy",
-  "version": "1.14.1",
+  "version": "1.14.2",
   "description": "Professional DIT media backup software",
   "main": "out/main/index.js",
   "productName": "Kocpy",
