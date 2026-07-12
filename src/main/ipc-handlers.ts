@@ -145,6 +145,24 @@ export function registerIpcHandlers(backupEngine: BackupEngine): void {
   ipcMain.handle('system:listVolumes', async () => {
     if (process.platform !== 'darwin') return []
     try {
+      // 添加本地硬盘
+      const volumes = []
+      
+      // 获取根目录信息
+      try {
+        const rootStat = await fs.promises.statfs('/')
+        volumes.push({
+          name: 'Macintosh HD',
+          path: '/',
+          totalBytes: rootStat.blocks * rootStat.bsize,
+          freeBytes: rootStat.bfree * rootStat.bsize,
+          format: 'APFS'
+        })
+      } catch (err) {
+        console.error('Failed to get root disk info:', err)
+      }
+      
+      // 扫描 /Volumes 目录
       const entries = await fs.promises.readdir('/Volumes', { withFileTypes: true })
       const volumes = await Promise.all(
         entries
@@ -251,7 +269,8 @@ export function registerIpcHandlers(backupEngine: BackupEngine): void {
             }
           })
       )
-      return volumes.filter(Boolean).map(({ _fsType: _, ...v }) => v)
+      const externalVolumes = volumes.filter(Boolean).map(({ _fsType: _, ...v }) => v)
+      return [...volumes.slice(0, 1), ...externalVolumes]  // 本地硬盘在前
     } catch (err) {
       logError('Failed to list volumes', err)
       return []
