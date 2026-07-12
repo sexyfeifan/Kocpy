@@ -9,7 +9,7 @@ import { MediaBrowser } from '../components/MediaBrowser'
 import { formatBytes, formatDuration } from '../utils'
 
 export function Dashboard(): JSX.Element {
-  const { tasks, refreshTasks, deleteTask, setPriority } = useTaskStore()
+  const { tasks, refreshTasks, deleteTask, setPriority, setActivePage } = useTaskStore()
   const [activeTab, setActiveTab] = useState<'tasks' | 'media' | 'stats'>('tasks')
   const [selectedTasks, setSelectedTasks] = useState<Set<string>>(new Set())
   const [isDeleting, setIsDeleting] = useState(false)
