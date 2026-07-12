@@ -260,14 +260,14 @@ export function NASManager(): JSX.Element {
 
       {/* 内容区域 */}
       <div className="flex-1 overflow-auto p-4">
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 h-full">
           {/* NAS 设备列表 */}
-          <div>
+          <div className="flex flex-col h-full">
             <h2 className="text-sm font-semibold text-gray-200 mb-4">NAS 设备 ({devices.length})</h2>
-            <div className="space-y-3">
+            <div className="flex-1 space-y-3 overflow-auto">
               {devices.length === 0 ? (
-                <div className="glass-card p-8 text-center">
-                  <HardDrive size={48} className="text-gray-600 mx-auto mb-4" />
+                <div className="glass-card p-8 text-center flex flex-col items-center justify-center h-full">
+                  <HardDrive size={48} className="text-gray-600 mb-4" />
                   <p className="text-gray-500 mb-4">暂无 NAS 设备</p>
                   <button
                     onClick={() => setShowAddModal(true)}
@@ -345,12 +345,12 @@ export function NASManager(): JSX.Element {
           </div>
 
           {/* 同步任务列表 */}
-          <div>
+          <div className="flex flex-col h-full">
             <h2 className="text-sm font-semibold text-gray-200 mb-4">同步任务 ({syncJobs.length})</h2>
-            <div className="space-y-3">
+            <div className="flex-1 space-y-3 overflow-auto">
               {syncJobs.length === 0 ? (
-                <div className="glass-card p-8 text-center">
-                  <ArrowRight size={48} className="text-gray-600 mx-auto mb-4" />
+                <div className="glass-card p-8 text-center flex flex-col items-center justify-center h-full">
+                  <ArrowRight size={48} className="text-gray-600 mb-4" />
                   <p className="text-gray-500 mb-4">暂无同步任务</p>
                   <button
                     onClick={() => setShowSyncModal(true)}
