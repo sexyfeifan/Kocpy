@@ -1006,6 +1006,25 @@ export function NewTask(): JSX.Element {
         <div className="glass-card p-5 flex flex-col gap-4">
           <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider">高级选项</label>
 
+          {/* 模式说明 */}
+          {mode === 'card' && (
+            <div className="p-3 bg-blue-600/10 border border-blue-500/20 rounded-lg">
+              <p className="text-xs text-blue-300 mb-1">备卡模式说明</p>
+              <p className="text-[11px] text-gray-400">
+                备份目录以「卷名_时间戳」命名，确保每次备份可唯一追溯。
+                如需保持原始目录结构（镜像模式），请选择"镜像模式"。
+              </p>
+            </div>
+          )}
+          {mode === 'mirror' && (
+            <div className="p-3 bg-purple-600/10 border border-purple-500/20 rounded-lg">
+              <p className="text-xs text-purple-300 mb-1">镜像模式说明</p>
+              <p className="text-[11px] text-gray-400">
+                完整镜像素材源的目录结构与文件名，目的地内容与素材源完全一致（A = B）。
+              </p>
+            </div>
+          )}
+
           {/* Toggles row */}
           <div className="flex flex-col gap-3">
             {/* Generate thumbnails */}
