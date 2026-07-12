@@ -185,7 +185,9 @@ export function registerIpcHandlers(backupEngine: BackupEngine): void {
                   path: '/',
                   totalBytes: stat.blocks * stat.bsize,
                   freeBytes: stat.bfree * stat.bsize,
-                  format: 'APFS'
+                  format: 'APFS',
+                  deviceType: 'system' as const,
+                  canEject: false
                 }
               }
 
