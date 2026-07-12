@@ -79,8 +79,8 @@
 
 | 架构 | 安装包 |
 |------|--------|
-| Apple Silicon（M1/M2/M3/M4） | `Kocpy-1.14.2-arm64.dmg` |
-| Intel | `Kocpy-1.14.2-x64.dmg` |
+| Apple Silicon（M1/M2/M3/M4） | `Kocpy-1.14.3-arm64.dmg` |
+| Intel | `Kocpy-1.14.3-x64.dmg` |
 
 下载 `.dmg` 后，双击打开，将 Kocpy 拖入 Applications 文件夹即可。
 
@@ -181,6 +181,10 @@ src/
 ---
 
 ## 更新日志
+
+### v1.14.3（2026-07-12）
+
+- **推出后 UI 自动刷新** — `ConnectedDrives` 组件新增 5 秒定时轮询；推出操作后从系统重新拉取设备列表，不再依赖本地 state 过滤；无论成功失败都刷新 UI
 
 ### v1.14.2（2026-07-12）
 
