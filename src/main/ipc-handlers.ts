@@ -164,7 +164,7 @@ export function registerIpcHandlers(backupEngine: BackupEngine): void {
       
       // 扫描 /Volumes 目录
       const entries = await fs.promises.readdir('/Volumes', { withFileTypes: true })
-      const volumes = await Promise.all(
+      const externalVolumes = await Promise.all(
         entries
           .filter((e) => !e.name.startsWith('.'))
           .map(async (e) => {
@@ -269,8 +269,8 @@ export function registerIpcHandlers(backupEngine: BackupEngine): void {
             }
           })
       )
-      const externalVolumes = volumes.filter(Boolean).map(({ _fsType: _, ...v }) => v)
-      return [...volumes.slice(0, 1), ...externalVolumes]  // 本地硬盘在前
+      const allVolumes = [...volumes, ...externalVolumes.filter(Boolean).map(({ _fsType: _, ...v }) => v)]
+      return allVolumes  // 本地硬盘在前
     } catch (err) {
       logError('Failed to list volumes', err)
       return []
