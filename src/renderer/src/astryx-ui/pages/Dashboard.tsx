@@ -184,10 +184,8 @@ function ConnectedDrives(): JSX.Element {
 
   const handleEject = async (vol: VolumeInfo) => {
     setEjecting(vol.path)
-    const ok = await window.api.ejectVolume(vol.path)
-    if (ok) {
-      await refresh()
-    }
+    await window.api.ejectVolume(vol.path)
+    await refresh()
     setEjecting(null)
   }
 

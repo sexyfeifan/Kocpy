@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { HardDrive, RefreshCw, LogOut } from 'lucide-react'
 
 /**
@@ -102,7 +102,7 @@ export function ConnectedDrives({
   const [volumes, setVolumes] = useState<Volume[]>([])
   const [refreshing, setRefreshing] = useState(false)
 
-  const loadVolumes = async () => {
+  const loadVolumes = useCallback(async () => {
     setRefreshing(true)
     try {
       const data = await window.api.listVolumes()
@@ -121,11 +121,13 @@ export function ConnectedDrives({
     } finally {
       setRefreshing(false)
     }
-  }
+  }, [])
 
   useEffect(() => {
     loadVolumes()
-  }, [])
+    const id = setInterval(loadVolumes, 5000)
+    return () => clearInterval(id)
+  }, [loadVolumes])
 
   const handleToggle = (path: string) => {
     if (onVolumeToggle) {
@@ -136,11 +138,10 @@ export function ConnectedDrives({
   const handleEject = async (e: React.MouseEvent, path: string) => {
     e.stopPropagation()
     if (onVolumeEject) {
-      const ok = await onVolumeEject(path)
-      // Only remove from UI if eject actually succeeded
-      if (ok === false) return
+      await onVolumeEject(path)
     }
-    setVolumes(prev => prev.filter(v => v.path !== path))
+    // 从系统重新拉取设备列表，确保 UI 与实际挂载状态一致
+    await loadVolumes()
   }
 
   const gridCols = {
