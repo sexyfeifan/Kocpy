@@ -106,7 +106,16 @@ export function ConnectedDrives({
     setRefreshing(true)
     try {
       const data = await window.api.listVolumes()
-      setVolumes(data || [])
+      // 去重：基于 path 去重，保留第一个
+      const seen = new Set<string>()
+      const uniqueData = (data || []).filter(vol => {
+        if (seen.has(vol.path)) {
+          return false
+        }
+        seen.add(vol.path)
+        return true
+      })
+      setVolumes(uniqueData)
     } catch (err) {
       console.error('Failed to load volumes:', err)
     } finally {
