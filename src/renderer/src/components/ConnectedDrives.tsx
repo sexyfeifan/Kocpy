@@ -1,123 +1,158 @@
-import { useState, useEffect, useCallback } from 'react'
-import { HardDrive, RefreshCw, Eject, CheckCircle, AlertCircle } from 'lucide-react'
+import { useState, useEffect } from 'react'
+import { HardDrive, RefreshCw, LogOut } from 'lucide-react'
 
-interface VolumeInfo {
-  path: string
+interface Volume {
   name: string
-  total: number
-  free: number
-  used: number
-  deviceType: 'system' | 'source' | 'destination'
-  canEject: boolean
+  path: string
+  totalBytes: number
+  freeBytes: number
+  format: string
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes >= 1e12) return `${(bytes / 1e12).toFixed(2)} TB`
+  if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(1)} GB`
+  if (bytes >= 1e6) return `${(bytes / 1e6).toFixed(0)} MB`
+  return `${(bytes / 1e3).toFixed(0)} KB`
+}
+
+interface VolumeCardProps {
+  volume: Volume
+  isSelected: boolean
+  onToggle: () => void
+  onEject: (e: React.MouseEvent) => void
+}
+
+function VolumeCard({ volume, isSelected, onToggle, onEject }: VolumeCardProps) {
+  const usedBytes = volume.totalBytes - volume.freeBytes
+  const usedPct = volume.totalBytes > 0 ? (usedBytes / volume.totalBytes) * 100 : 0
+  const barColor = usedPct > 85 ? 'bg-red-500' : usedPct > 60 ? 'bg-amber-400' : 'bg-blue-500'
+
+  return (
+    <div
+      className={`
+        relative flex flex-col gap-2 p-3 rounded-xl border cursor-pointer transition-all duration-200 group
+        ${isSelected
+          ? 'border-blue-500 bg-blue-950/30'
+          : 'border-gray-700 hover:border-blue-500 hover:bg-blue-950/20'
+        }
+      `}
+      onClick={onToggle}
+    >
+      {/* 弹出按钮 */}
+      <button
+        onClick={onEject}
+        title="安全弹出"
+        className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity text-gray-500 hover:text-amber-400 z-10"
+      >
+        <LogOut size={13} />
+      </button>
+
+      {/* 设备信息 */}
+      <div className="flex items-center gap-2 pr-5">
+        <HardDrive
+          size={18}
+          className={`shrink-0 transition-colors ${
+            isSelected ? 'text-blue-400' : 'text-gray-400 group-hover:text-blue-400'
+          }`}
+        />
+        <span className="text-sm text-gray-200 truncate font-medium flex-1">
+          {volume.name}
+        </span>
+        {isSelected && (
+          <span className="text-xs px-2 py-0.5 rounded bg-blue-600/20 text-blue-400 border border-blue-500/30 shrink-0">
+            已选择
+          </span>
+        )}
+      </div>
+
+      {/* 容量进度条 */}
+      <div className="w-full h-1.5 rounded-full bg-gray-700/60 overflow-hidden">
+        <div
+          className={`h-full rounded-full ${barColor} transition-all`}
+          style={{ width: `${Math.min(usedPct, 100).toFixed(1)}%` }}
+        />
+      </div>
+
+      {/* 容量信息 */}
+      <div className="flex items-center justify-between gap-1">
+        <div className="flex flex-col">
+          <span className="text-xs text-gray-500 uppercase tracking-wider">已用</span>
+          <span className="text-xs text-gray-300 font-mono font-medium">{formatBytes(usedBytes)}</span>
+        </div>
+        <div className="flex flex-col items-center">
+          <span className="text-xs text-gray-600">{usedPct.toFixed(0)}%</span>
+        </div>
+        <div className="flex flex-col items-end">
+          <span className="text-xs text-gray-500 uppercase tracking-wider">剩余</span>
+          <span className="text-xs text-gray-300 font-mono font-medium">{formatBytes(volume.freeBytes)}</span>
+        </div>
+      </div>
+
+      {/* 格式和总容量 */}
+      <div className="flex items-center justify-between">
+        <span className="text-xs text-gray-600 font-mono">{volume.format || '—'}</span>
+        <span className="text-xs text-gray-600 font-mono">总容量 {formatBytes(volume.totalBytes)}</span>
+      </div>
+    </div>
+  )
 }
 
 interface ConnectedDrivesProps {
-  onDriveSelect?: (drive: VolumeInfo) => void
+  onVolumeSelect?: (volume: Volume) => void
 }
 
-export function ConnectedDrives({ onDriveSelect }: ConnectedDrivesProps) {
-  const [volumes, setVolumes] = useState<VolumeInfo[]>([])
+export function ConnectedDrives({ onVolumeSelect }: ConnectedDrivesProps) {
+  const [volumes, setVolumes] = useState<Volume[]>([])
+  const [selectedVolume, setSelectedVolume] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
-  const [selectedDrive, setSelectedDrive] = useState<string | null>(null)
 
-  const refreshVolumes = useCallback(async () => {
+  const loadVolumes = async () => {
     setRefreshing(true)
     try {
-      const vols = await window.api.listVolumes()
-      setVolumes(vols)
+      const data = await window.api.listVolumes()
+      setVolumes(data)
     } catch (err) {
-      console.error('Failed to list volumes:', err)
+      console.error('Failed to load volumes:', err)
     } finally {
       setRefreshing(false)
     }
-  }, [])
+  }
 
   useEffect(() => {
-    refreshVolumes()
-    const interval = setInterval(refreshVolumes, 30000) // 30秒刷新
-    return () => clearInterval(interval)
-  }, [refreshVolumes])
+    loadVolumes()
+  }, [])
 
-  const handleEject = async (path: string) => {
+  const handleToggle = (path: string) => {
+    setSelectedVolume(prev => prev === path ? null : path)
+    const volume = volumes.find(v => v.path === path)
+    if (volume && onVolumeSelect) {
+      onVolumeSelect(volume)
+    }
+  }
+
+  const handleEject = async (e: React.MouseEvent, volume: Volume) => {
+    e.stopPropagation()
     try {
-      await window.api.ejectVolume(path)
-      await refreshVolumes()
+      await window.api.ejectVolume(volume.path)
+      // 移除已弹出的卷
+      setVolumes(prev => prev.filter(v => v.path !== volume.path))
+      if (selectedVolume === volume.path) {
+        setSelectedVolume(null)
+      }
     } catch (err) {
       console.error('Failed to eject volume:', err)
     }
   }
 
-  const handleDriveClick = (drive: VolumeInfo) => {
-    setSelectedDrive(drive.path)
-    onDriveSelect?.(drive)
-  }
-
-  const formatBytes = (bytes: number): string => {
-    if (bytes === 0) return '0 B'
-    const k = 1024
-    const sizes = ['B', 'KB', 'MB', 'GB', 'TB']
-    const i = Math.floor(Math.log(bytes) / Math.log(k))
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
-  }
-
-  const getDeviceIcon = (type: string) => {
-    switch (type) {
-      case 'source':
-        return <HardDrive size={18} className="text-amber-400" />
-      case 'destination':
-        return <HardDrive size={18} className="text-blue-400" />
-      default:
-        return <HardDrive size={18} className="text-gray-400" />
-    }
-  }
-
-  const getDeviceLabel = (type: string) => {
-    switch (type) {
-      case 'source':
-        return '素材卡'
-      case 'destination':
-        return '备份盘'
-      default:
-        return '系统盘'
-    }
-  }
-
-  const getDeviceColor = (type: string) => {
-    switch (type) {
-      case 'source':
-        return 'border-amber-500/30 bg-amber-600/10'
-      case 'destination':
-        return 'border-blue-500/30 bg-blue-600/10'
-      default:
-        return 'border-gray-500/30 bg-gray-600/10'
-    }
-  }
-
-  const sourceCount = volumes.filter(v => v.deviceType === 'source').length
-  const destCount = volumes.filter(v => v.deviceType === 'destination').length
-
   return (
     <div className="glass-card p-4">
       <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-3">
-          <h3 className="text-sm font-semibold text-gray-200">已连接设备</h3>
-          <div className="flex items-center gap-2">
-            {sourceCount > 0 && (
-              <span className="px-2 py-0.5 text-xs rounded bg-amber-600/20 text-amber-400">
-                {sourceCount} 张素材卡
-              </span>
-            )}
-            {destCount > 0 && (
-              <span className="px-2 py-0.5 text-xs rounded bg-blue-600/20 text-blue-400">
-                {destCount} 块备份盘
-              </span>
-            )}
-          </div>
-        </div>
+        <h3 className="text-sm font-semibold text-gray-200">接入介质</h3>
         <button
-          onClick={refreshVolumes}
+          onClick={loadVolumes}
           disabled={refreshing}
-          className="p-2 rounded-lg text-gray-500 hover:text-gray-300 hover:bg-white/5 transition-colors disabled:opacity-50"
+          className="p-1.5 rounded-lg text-gray-500 hover:text-gray-300 hover:bg-white/5 transition-colors disabled:opacity-50"
           title="刷新设备列表"
         >
           <RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} />
@@ -125,91 +160,21 @@ export function ConnectedDrives({ onDriveSelect }: ConnectedDrivesProps) {
       </div>
 
       {volumes.length === 0 ? (
-        <div className="flex items-center justify-center py-8 text-gray-500">
-          <HardDrive size={24} className="mr-3 opacity-50" />
-          <span>暂无已连接设备</span>
+        <div className="text-center py-8 text-gray-500">
+          <HardDrive size={24} className="mx-auto mb-2 opacity-50" />
+          <p className="text-sm">暂无已连接设备</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-          {volumes.map((volume) => {
-            const usedPercent = volume.total > 0 ? (volume.used / volume.total) * 100 : 0
-            const isSelected = selectedDrive === volume.path
-
-            return (
-              <div
-                key={volume.path}
-                onClick={() => handleDriveClick(volume)}
-                className={`
-                  relative p-3 rounded-xl border cursor-pointer transition-all duration-200
-                  ${isSelected
-                    ? 'border-blue-500 bg-blue-600/10 ring-2 ring-blue-500/20'
-                    : `${getDeviceColor(volume.deviceType)} hover:border-gray-500`
-                  }
-                `}
-              >
-                {/* 设备类型标签 */}
-                <div className="flex items-center justify-between mb-2">
-                  <div className="flex items-center gap-2">
-                    {getDeviceIcon(volume.deviceType)}
-                    <span className="text-xs font-medium text-gray-400">
-                      {getDeviceLabel(volume.deviceType)}
-                    </span>
-                  </div>
-                  {volume.canEject && (
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        handleEject(volume.path)
-                      }}
-                      className="p-1 rounded text-gray-500 hover:text-red-400 hover:bg-red-400/10 transition-colors"
-                      title="安全弹出"
-                    >
-                      <Eject size={12} />
-                    </button>
-                  )}
-                </div>
-
-                {/* 设备名称 */}
-                <div className="mb-2">
-                  <p className="text-sm font-medium text-gray-200 truncate">{volume.name}</p>
-                  <p className="text-xs text-gray-500 font-mono truncate">{volume.path}</p>
-                </div>
-
-                {/* 容量信息 */}
-                <div className="mb-2">
-                  <div className="flex items-center justify-between text-xs text-gray-400 mb-1">
-                    <span>{formatBytes(volume.used)} 已用</span>
-                    <span>{formatBytes(volume.free)} 可用</span>
-                  </div>
-                  <div className="h-1.5 bg-gray-700 rounded-full overflow-hidden">
-                    <div
-                      className={`h-full rounded-full transition-all duration-300 ${
-                        usedPercent > 90 ? 'bg-red-500' :
-                        usedPercent > 70 ? 'bg-yellow-500' :
-                        'bg-green-500'
-                      }`}
-                      style={{ width: `${usedPercent}%` }}
-                    />
-                  </div>
-                </div>
-
-                {/* 容量警告 */}
-                {usedPercent > 90 && (
-                  <div className="flex items-center gap-1 mt-2 text-xs text-red-400">
-                    <AlertCircle size={12} />
-                    <span>存储空间不足</span>
-                  </div>
-                )}
-
-                {/* 选中指示器 */}
-                {isSelected && (
-                  <div className="absolute top-2 right-2">
-                    <CheckCircle size={16} className="text-blue-400" />
-                  </div>
-                )}
-              </div>
-            )
-          })}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {volumes.map((volume) => (
+            <VolumeCard
+              key={volume.path}
+              volume={volume}
+              isSelected={selectedVolume === volume.path}
+              onToggle={() => handleToggle(volume.path)}
+              onEject={(e) => handleEject(e, volume)}
+            />
+          ))}
         </div>
       )}
     </div>

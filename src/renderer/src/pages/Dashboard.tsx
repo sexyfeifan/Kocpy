@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react'
-import { 
-  LayoutDashboard, Film, BarChart3, Download, Trash2, 
+import {
+  LayoutDashboard, Film, BarChart3, Download, Trash2,
   RefreshCw, CheckCircle, XCircle, Clock, HardDrive
 } from 'lucide-react'
 import { useTaskStore } from '../store/taskStore'
 import { TaskCard } from '../components/TaskCard'
 import { MediaBrowser } from '../components/MediaBrowser'
+import { ConnectedDrives } from '../components/ConnectedDrives'
 import { formatBytes, formatDuration } from '../utils'
 
 export function Dashboard(): JSX.Element {
@@ -239,6 +240,11 @@ export function Dashboard(): JSX.Element {
             <p className="text-xl font-semibold text-gray-200">{formatBytes(stats.totalBytes)}</p>
           </div>
         </div>
+      </div>
+
+      {/* 接入介质显示 */}
+      <div className="p-4 border-b border-[#2a2a2a]">
+        <ConnectedDrives />
       </div>
 
       {/* 接入介质显示 */}
