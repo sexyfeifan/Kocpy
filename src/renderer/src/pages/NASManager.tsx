@@ -9,6 +9,8 @@ interface NASDevice {
   name: string
   host: string
   protocol: 'smb' | 'nfs' | 'afp'
+  username?: string
+  password?: string
   shares: Array<{
     name: string
     path: string
@@ -53,6 +55,8 @@ export function NASManager(): JSX.Element {
   const [newNASName, setNewNASName] = useState('')
   const [newNASHost, setNewNASHost] = useState('')
   const [newNASProtocol, setNewNASProtocol] = useState<'smb' | 'nfs' | 'afp'>('smb')
+  const [newNASUsername, setNewNASUsername] = useState('')
+  const [newNASPassword, setNewNASPassword] = useState('')
 
   // 同步任务创建
   const [syncSource, setSyncSource] = useState('')
@@ -98,6 +102,8 @@ export function NASManager(): JSX.Element {
       name: newNASName,
       host: newNASHost,
       protocol: newNASProtocol,
+      username: newNASUsername || undefined,
+      password: newNASPassword || undefined,
       shares: [],
       health: {
         smart: { healthy: true, temperature: 0, powerOnHours: 0 },
@@ -111,6 +117,8 @@ export function NASManager(): JSX.Element {
     setShowAddModal(false)
     setNewNASName('')
     setNewNASHost('')
+    setNewNASUsername('')
+    setNewNASPassword('')
     alert(`已添加 NAS: ${newNASName}\n\n现在可以创建同步任务了`)
   }
 
@@ -143,7 +151,9 @@ export function NASManager(): JSX.Element {
     if (syncNASDevice) {
       const device = devices.find(d => d.id === syncNASDevice)
       if (device) {
-        destination = `${device.protocol}://${device.host}/${syncNASPath || 'backup'}`
+        // 构建带认证的 URL
+        const auth = device.username ? `${device.username}:${device.password || ''}@` : ''
+        destination = `${device.protocol}://${auth}${device.host}/${syncNASPath || 'backup'}`
       }
     }
 
@@ -286,6 +296,9 @@ export function NASManager(): JSX.Element {
                         <div>
                           <p className="text-sm font-medium text-gray-200">{device.name}</p>
                           <p className="text-xs text-gray-500">{device.host} • {device.protocol.toUpperCase()}</p>
+                          {device.username && (
+                            <p className="text-xs text-gray-500">账号: {device.username}</p>
+                          )}
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
@@ -419,7 +432,7 @@ export function NASManager(): JSX.Element {
             <h3 className="text-lg font-semibold text-gray-200 mb-4">添加 NAS 设备</h3>
             <div className="space-y-4">
               <div>
-                <label className="block text-sm text-gray-400 mb-2">NAS 名称</label>
+                <label className="block text-sm text-gray-400 mb-2">NAS 名称 *</label>
                 <input
                   type="text"
                   value={newNASName}
@@ -429,7 +442,7 @@ export function NASManager(): JSX.Element {
                 />
               </div>
               <div>
-                <label className="block text-sm text-gray-400 mb-2">主机地址</label>
+                <label className="block text-sm text-gray-400 mb-2">主机地址 *</label>
                 <input
                   type="text"
                   value={newNASHost}
@@ -449,6 +462,31 @@ export function NASManager(): JSX.Element {
                   <option value="nfs">NFS</option>
                   <option value="afp">AFP</option>
                 </select>
+              </div>
+              <div className="border-t border-[#2a2a2a] pt-4">
+                <p className="text-xs text-gray-500 mb-3">认证信息（可选）</p>
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-sm text-gray-400 mb-2">用户名</label>
+                    <input
+                      type="text"
+                      value={newNASUsername}
+                      onChange={(e) => setNewNASUsername(e.target.value)}
+                      placeholder="admin"
+                      className="w-full px-3 py-2 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg text-sm text-gray-200"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm text-gray-400 mb-2">密码</label>
+                    <input
+                      type="password"
+                      value={newNASPassword}
+                      onChange={(e) => setNewNASPassword(e.target.value)}
+                      placeholder="••••••••"
+                      className="w-full px-3 py-2 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg text-sm text-gray-200"
+                    />
+                  </div>
+                </div>
               </div>
               <div className="flex items-center gap-3 pt-4">
                 <button
@@ -519,7 +557,7 @@ export function NASManager(): JSX.Element {
                     <option value="">选择 NAS 设备...</option>
                     {devices.map((device) => (
                       <option key={device.id} value={device.id}>
-                        {device.name} ({device.host})
+                        {device.name} ({device.host}) {device.username ? `- ${device.username}` : ''}
                       </option>
                     ))}
                   </select>
@@ -592,7 +630,11 @@ export function NASManager(): JSX.Element {
                     <p className="text-xs text-gray-300">
                       <span className="text-gray-500">目标: </span>
                       {syncNASDevice
-                        ? `${devices.find(d => d.id === syncNASDevice)?.protocol}://${devices.find(d => d.id === syncNASDevice)?.host}/${syncNASPath || 'backup'}`
+                        ? (() => {
+                            const device = devices.find(d => d.id === syncNASDevice)
+                            const auth = device?.username ? `${device.username}@` : ''
+                            return `${device?.protocol}://${auth}${device?.host}/${syncNASPath || 'backup'}`
+                          })()
                         : syncDestination || '(选择目标路径)'
                       }
                     </p>
