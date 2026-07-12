@@ -678,22 +678,26 @@ export function NewTask(): JSX.Element {
           </div>
         </div>
       )}
-      {mode === 'mirror' && (
-        <div className="mb-5 px-4 py-3.5 bg-purple-600/8 border border-purple-500/20 rounded-xl flex flex-col gap-2">
+            {mode === 'backup' && (
+        <div className="mb-5 px-4 py-3.5 bg-blue-600/8 border border-blue-500/20 rounded-xl flex flex-col gap-2">
           <div className="flex items-center gap-2">
-            <span className="text-xs font-semibold text-purple-400 uppercase tracking-wider">镜像模式 · Mirror Mode</span>
+            <span className="text-xs font-semibold text-blue-400 uppercase tracking-wider">备份模式 · Backup Mode</span>
           </div>
           <p className="text-xs text-gray-400 leading-relaxed">
-            完整镜像素材源的目录结构与文件名，目的地内容与素材源完全一致（A = B）。适用于需要制作完全相同副本的场景，例如将卡内容原封不动同步到多块硬盘。
+            将素材卡中的文件备份到指定目的地。备份目录以「卷名_时间戳」命名，确保每次备份可唯一追溯。支持同时备份到多个目的地，全部目的地备份完成后逐文件哈希校验。
           </p>
           <div className="flex flex-col gap-1">
             {[
               { step: '①', text: '选择素材卡或文件夹作为素材源' },
-              { step: '②', text: '添加一个或多个目的地（均得到相同镜像）' },
-              { step: '③', text: '开始备份，目录结构与文件名原样保留' },
+              { step: '②', text: '添加一个或多个目的地目录' },
+              { step: '③', text: '配置哈希算法、重复策略、缩略图选项' },
+              { step: '④', text: '点击开始备份，完成后自动逐文件哈希校验' },
             ].map(({ step, text }) => (
-              <p key={step} className="text-xs text-purple-300/60"><span className="mr-1.5">{step}</span>{text}</p>
+              <p key={step} className="text-xs text-blue-300/60"><span className="mr-1.5">{step}</span>{text}</p>
             ))}
+          </div>
+        </div>
+      )}
           </div>
         </div>
       )}

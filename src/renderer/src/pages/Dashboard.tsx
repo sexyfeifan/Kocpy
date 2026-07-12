@@ -318,7 +318,7 @@ export function Dashboard(): JSX.Element {
                   <LayoutDashboard size={48} className="text-gray-600" />
                   <p className="text-gray-500">暂无任务</p>
                   <button
-                    onClick={() => window.location.hash = '#/new'}
+                    onClick={() => setActivePage('new')}
                     className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-500"
                   >
                     创建新任务
