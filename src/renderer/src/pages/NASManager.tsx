@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import {
   HardDrive, RefreshCw, Plus, Trash2, Play, Pause,
-  CheckCircle, XCircle, Clock, ArrowRight, Settings
+  CheckCircle, XCircle, Clock, ArrowRight, Settings, FolderOpen
 } from 'lucide-react'
 
 interface NASDevice {
@@ -26,6 +26,7 @@ interface SyncJob {
   id: string
   source: string
   destination: string
+  nasDevice?: string
   status: 'pending' | 'running' | 'completed' | 'failed'
   progress: {
     totalFiles: number
@@ -44,15 +45,21 @@ export function NASManager(): JSX.Element {
   const [syncJobs, setSyncJobs] = useState<SyncJob[]>([])
   const [scanning, setScanning] = useState(false)
   const [selectedDevice, setSelectedDevice] = useState<string | null>(null)
+
+  // 模态框状态
   const [showAddModal, setShowAddModal] = useState(false)
   const [showSyncModal, setShowSyncModal] = useState(false)
-  const [syncSource, setSyncSource] = useState('')
-  const [syncDestination, setSyncDestination] = useState('')
 
   // 手动添加 NAS
   const [newNASName, setNewNASName] = useState('')
   const [newNASHost, setNewNASHost] = useState('')
   const [newNASProtocol, setNewNASProtocol] = useState<'smb' | 'nfs' | 'afp'>('smb')
+
+  // 同步任务创建
+  const [syncSource, setSyncSource] = useState('')
+  const [syncDestination, setSyncDestination] = useState('')
+  const [syncNASDevice, setSyncNASDevice] = useState('')
+  const [syncNASPath, setSyncNASPath] = useState('')
 
   useEffect(() => {
     loadDevices()
@@ -87,7 +94,12 @@ export function NASManager(): JSX.Element {
       const result = await window.api.nasScan()
       if (result && result.success) {
         await loadDevices()
-        alert(`扫描完成，发现 ${result.devices?.length || 0} 个 NAS 设备\n\n提示：如果没有发现设备，请尝试手动添加 NAS`)
+        const count = result.devices?.length || 0
+        if (count > 0) {
+          alert(`扫描完成，发现 ${count} 个 NAS 设备`)
+        } else {
+          alert('扫描完成，未发现 NAS 设备\n\n建议使用"手动添加"功能')
+        }
       } else {
         alert('NAS 扫描失败: ' + (result?.error || '未知错误'))
       }
@@ -105,7 +117,6 @@ export function NASManager(): JSX.Element {
       return
     }
 
-    // 创建手动添加的设备
     const newDevice: NASDevice = {
       id: `manual-${Date.now()}`,
       name: newNASName,
@@ -124,22 +135,58 @@ export function NASManager(): JSX.Element {
     setShowAddModal(false)
     setNewNASName('')
     setNewNASHost('')
-    alert(`已添加 NAS: ${newNASName}\n\n注意：手动添加的设备需要先连接后才能获取详细信息`)
+    alert(`已添加 NAS: ${newNASName}\n\n现在可以创建同步任务了`)
+  }
+
+  const handleSelectSource = async () => {
+    const path = await window.api.selectDirectory()
+    if (path) {
+      setSyncSource(path)
+    }
+  }
+
+  const handleSelectDestination = async () => {
+    const path = await window.api.selectDirectory()
+    if (path) {
+      setSyncDestination(path)
+      setSyncNASDevice('')
+      setSyncNASPath('')
+    }
+  }
+
+  const handleSelectNASDevice = (deviceId: string) => {
+    setSyncNASDevice(deviceId)
+    setSyncSource('')
+    setSyncDestination('')
   }
 
   const handleCreateSyncJob = async () => {
-    if (!syncSource || !syncDestination) {
+    // 确定源和目标
+    let source = syncSource
+    let destination = syncDestination
+
+    // 如果选择了 NAS 设备，自动生成路径
+    if (syncNASDevice) {
+      const device = devices.find(d => d.id === syncNASDevice)
+      if (device) {
+        destination = `${device.protocol}://${device.host}/${syncNASPath || 'backup'}`
+      }
+    }
+
+    if (!source || !destination) {
       alert('请选择源路径和目标路径')
       return
     }
 
     try {
-      const result = await window.api.nasCreateSyncJob(syncSource, syncDestination)
+      const result = await window.api.nasCreateSyncJob(source, destination)
       if (result && result.success) {
         await loadSyncJobs()
         setShowSyncModal(false)
         setSyncSource('')
         setSyncDestination('')
+        setSyncNASDevice('')
+        setSyncNASPath('')
         alert('同步任务创建成功')
       } else {
         alert('创建失败: ' + (result?.error || '未知错误'))
@@ -165,6 +212,15 @@ export function NASManager(): JSX.Element {
     }
   }
 
+  const handleDeleteDevice = (deviceId: string) => {
+    if (confirm('确定要删除这个 NAS 设备吗？')) {
+      setDevices(prev => prev.filter(d => d.id !== deviceId))
+      if (selectedDevice === deviceId) {
+        setSelectedDevice(null)
+      }
+    }
+  }
+
   const formatBytes = (bytes: number): string => {
     if (bytes === 0) return '0 B'
     const k = 1024
@@ -179,6 +235,16 @@ export function NASManager(): JSX.Element {
       case 'running': return 'text-blue-400 bg-blue-600/20'
       case 'failed': return 'text-red-400 bg-red-600/20'
       default: return 'text-gray-400 bg-gray-600/20'
+    }
+  }
+
+  const getStatusLabel = (status: string) => {
+    switch (status) {
+      case 'completed': return '已完成'
+      case 'running': return '同步中'
+      case 'failed': return '失败'
+      case 'pending': return '等待中'
+      default: return status
     }
   }
 
@@ -243,7 +309,13 @@ export function NASManager(): JSX.Element {
                     >
                       扫描局域网
                     </button>
-                    <p className="text-xs text-gray-600">
+                    <button
+                      onClick={() => setShowAddModal(true)}
+                      className="block w-full px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-500"
+                    >
+                      手动添加
+                    </button>
+                    <p className="text-xs text-gray-600 mt-2">
                       提示：如果扫描未发现设备，请使用"手动添加"
                     </p>
                   </div>
@@ -252,29 +324,39 @@ export function NASManager(): JSX.Element {
                 devices.map((device) => (
                   <div
                     key={device.id}
-                    onClick={() => setSelectedDevice(device.id === selectedDevice ? null : device.id)}
                     className={`glass-card p-4 cursor-pointer transition-all ${
                       selectedDevice === device.id ? 'ring-2 ring-blue-500' : ''
                     }`}
                   >
                     <div className="flex items-center justify-between mb-3">
-                      <div className="flex items-center gap-3">
+                      <div
+                        className="flex items-center gap-3 flex-1"
+                        onClick={() => setSelectedDevice(device.id === selectedDevice ? null : device.id)}
+                      >
                         <HardDrive size={20} className="text-blue-400" />
                         <div>
                           <p className="text-sm font-medium text-gray-200">{device.name}</p>
                           <p className="text-xs text-gray-500">{device.host} • {device.protocol.toUpperCase()}</p>
                         </div>
                       </div>
-                      <span className={`px-2 py-1 text-xs rounded ${
-                        device.health?.smart?.healthy ? 'bg-green-600/20 text-green-400' : 'bg-red-600/20 text-red-400'
-                      }`}>
-                        {device.health?.smart?.healthy ? '健康' : '异常'}
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <span className={`px-2 py-1 text-xs rounded ${
+                          device.health?.smart?.healthy ? 'bg-green-600/20 text-green-400' : 'bg-red-600/20 text-red-400'
+                        }`}>
+                          {device.health?.smart?.healthy ? '健康' : '异常'}
+                        </span>
+                        <button
+                          onClick={() => handleDeleteDevice(device.id)}
+                          className="p-1 text-gray-500 hover:text-red-400"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
                     </div>
 
                     {/* 容量信息 */}
                     {device.health?.capacity?.total > 0 && (
-                      <div className="grid grid-cols-3 gap-3 mb-3">
+                      <div className="grid grid-cols-3 gap-3 mt-3 pt-3 border-t border-[#2a2a2a]">
                         <div>
                           <p className="text-xs text-gray-500">总容量</p>
                           <p className="text-sm font-medium text-gray-200">
@@ -293,21 +375,6 @@ export function NASManager(): JSX.Element {
                             {formatBytes(device.health.capacity.available)}
                           </p>
                         </div>
-                      </div>
-                    )}
-
-                    {/* RAID 状态 */}
-                    {device.health?.raid && (
-                      <div className="flex items-center gap-2 text-xs">
-                        <span className="text-gray-500">RAID:</span>
-                        <span className="text-gray-300">{device.health.raid.type}</span>
-                        <span className={`px-1.5 py-0.5 rounded ${
-                          device.health.raid.status === 'healthy'
-                            ? 'bg-green-600/20 text-green-400'
-                            : 'bg-yellow-600/20 text-yellow-400'
-                        }`}>
-                          {device.health.raid.status}
-                        </span>
                       </div>
                     )}
                   </div>
@@ -337,9 +404,7 @@ export function NASManager(): JSX.Element {
                     <div className="flex items-center justify-between mb-3">
                       <div className="flex items-center gap-2">
                         <span className={`px-2 py-1 text-xs rounded ${getStatusColor(job.status)}`}>
-                          {job.status === 'completed' ? '已完成' :
-                           job.status === 'running' ? '同步中' :
-                           job.status === 'failed' ? '失败' : '等待中'}
+                          {getStatusLabel(job.status)}
                         </span>
                       </div>
                       {job.status === 'pending' && (
@@ -384,17 +449,12 @@ export function NASManager(): JSX.Element {
                             }}
                           />
                         </div>
-                        {job.progress.currentFile && (
-                          <p className="text-xs text-gray-500 mt-1 truncate">
-                            当前: {job.progress.currentFile}
-                          </p>
-                        )}
                       </div>
                     )}
 
                     {/* 错误信息 */}
                     {job.status === 'failed' && job.error && (
-                      <div className="p-2 bg-red-600/10 border border-red-500/20 rounded">
+                      <div className="p-2 bg-red-600/10 border border-red-500/20 rounded mt-2">
                         <p className="text-xs text-red-400">{job.error}</p>
                       </div>
                     )}
@@ -466,35 +526,151 @@ export function NASManager(): JSX.Element {
       {/* 创建同步任务模态框 */}
       {showSyncModal && (
         <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50">
-          <div className="w-full max-w-md bg-[#111] border border-[#2a2a2a] rounded-xl p-6">
+          <div className="w-full max-w-lg bg-[#111] border border-[#2a2a2a] rounded-xl p-6">
             <h3 className="text-lg font-semibold text-gray-200 mb-4">创建同步任务</h3>
             <div className="space-y-4">
+              {/* 选择同步方式 */}
               <div>
-                <label className="block text-sm text-gray-400 mb-2">源路径</label>
-                <input
-                  type="text"
-                  value={syncSource}
-                  onChange={(e) => setSyncSource(e.target.value)}
-                  placeholder="/Volumes/Source"
-                  className="w-full px-3 py-2 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg text-sm text-gray-200"
-                />
+                <label className="block text-sm text-gray-400 mb-2">同步方式</label>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => {
+                      setSyncNASDevice('')
+                      setSyncSource('')
+                      setSyncDestination('')
+                    }}
+                    className={`flex-1 px-3 py-2 rounded-lg text-sm ${
+                      !syncNASDevice
+                        ? 'bg-blue-600 text-white'
+                        : 'bg-[#0a0a0a] text-gray-400 border border-[#2a2a2a]'
+                    }`}
+                  >
+                    自定义路径
+                  </button>
+                  <button
+                    onClick={() => {
+                      setSyncSource('')
+                      setSyncDestination('')
+                    }}
+                    className={`flex-1 px-3 py-2 rounded-lg text-sm ${
+                      syncNASDevice
+                        ? 'bg-blue-600 text-white'
+                        : 'bg-[#0a0a0a] text-gray-400 border border-[#2a2a2a]'
+                    }`}
+                  >
+                    选择 NAS 设备
+                  </button>
+                </div>
               </div>
+
+              {/* NAS 设备选择 */}
+              {syncNASDevice !== '' || devices.length > 0 ? (
+                <div>
+                  <label className="block text-sm text-gray-400 mb-2">NAS 设备</label>
+                  <select
+                    value={syncNASDevice}
+                    onChange={(e) => handleSelectNASDevice(e.target.value)}
+                    className="w-full px-3 py-2 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg text-sm text-gray-200"
+                  >
+                    <option value="">选择 NAS 设备...</option>
+                    {devices.map((device) => (
+                      <option key={device.id} value={device.id}>
+                        {device.name} ({device.host})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ) : null}
+
+              {/* NAS 路径 */}
+              {syncNASDevice && (
+                <div>
+                  <label className="block text-sm text-gray-400 mb-2">NAS 上的目标路径</label>
+                  <input
+                    type="text"
+                    value={syncNASPath}
+                    onChange={(e) => setSyncNASPath(e.target.value)}
+                    placeholder="backup/2026"
+                    className="w-full px-3 py-2 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg text-sm text-gray-200"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    在 NAS 上的相对路径，例如: backup/2026
+                  </p>
+                </div>
+              )}
+
+              {/* 源路径 */}
               <div>
-                <label className="block text-sm text-gray-400 mb-2">目标路径 (NAS)</label>
-                <input
-                  type="text"
-                  value={syncDestination}
-                  onChange={(e) => setSyncDestination(e.target.value)}
-                  placeholder="smb://nas/share/backup"
-                  className="w-full px-3 py-2 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg text-sm text-gray-200"
-                />
+                <label className="block text-sm text-gray-400 mb-2">源路径（本地文件夹）</label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={syncSource}
+                    onChange={(e) => setSyncSource(e.target.value)}
+                    placeholder="/Volumes/Source"
+                    className="flex-1 px-3 py-2 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg text-sm text-gray-200"
+                    disabled={!!syncNASDevice}
+                  />
+                  <button
+                    onClick={handleSelectSource}
+                    disabled={!!syncNASDevice}
+                    className="px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-500 disabled:opacity-50"
+                  >
+                    <FolderOpen size={16} />
+                  </button>
+                </div>
               </div>
+
+              {/* 目标路径 */}
+              {!syncNASDevice && (
+                <div>
+                  <label className="block text-sm text-gray-400 mb-2">目标路径（NAS 或其他位置）</label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={syncDestination}
+                      onChange={(e) => setSyncDestination(e.target.value)}
+                      placeholder="smb://nas/share/backup"
+                      className="flex-1 px-3 py-2 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg text-sm text-gray-200"
+                    />
+                    <button
+                      onClick={handleSelectDestination}
+                      className="px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-500"
+                    >
+                      <FolderOpen size={16} />
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* 预览 */}
+              {(syncSource || syncNASDevice) && (
+                <div className="p-3 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg">
+                  <p className="text-xs text-gray-500 mb-2">同步预览:</p>
+                  <div className="space-y-1">
+                    <p className="text-xs text-gray-300">
+                      <span className="text-gray-500">源: </span>
+                      {syncSource || '(选择源路径)'}
+                    </p>
+                    <p className="text-xs text-gray-300">
+                      <span className="text-gray-500">目标: </span>
+                      {syncNASDevice
+                        ? `${devices.find(d => d.id === syncNASDevice)?.protocol}://${devices.find(d => d.id === syncNASDevice)?.host}/${syncNASPath || 'backup'}`
+                        : syncDestination || '(选择目标路径)'
+                      }
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* 按钮 */}
               <div className="flex items-center gap-3 pt-4">
                 <button
                   onClick={handleCreateSyncJob}
-                  className="flex-1 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-500"
+                  disabled={!syncSource && !syncNASDevice}
+                  className="flex-1 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-500 disabled:opacity-50"
                 >
-                  创建
+                  创建同步任务
                 </button>
                 <button
                   onClick={() => setShowSyncModal(false)}
