@@ -241,6 +241,11 @@ export function Dashboard(): JSX.Element {
         </div>
       </div>
 
+      {/* 接入介质显示 */}
+      <div className="p-4 border-b border-[#2a2a2a]">
+        <ConnectedDrives />
+      </div>
+
       {/* 标签页切换 */}
       <div className="flex items-center gap-1 p-2 border-b border-[#2a2a2a]">
         {tabs.map((tab) => {
