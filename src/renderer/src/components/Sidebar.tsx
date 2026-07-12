@@ -1,4 +1,4 @@
-import { LayoutDashboard, Plus, Clock, Settings, HardDrive, Shield, Layers } from 'lucide-react'
+import { LayoutDashboard, Plus, Clock, Settings, HardDrive, Shield, Layers, Database, Server } from 'lucide-react'
 import { useTaskStore } from '../store/taskStore'
 
 const nav = [
@@ -6,6 +6,8 @@ const nav = [
   { id: 'new', icon: Plus, label: '新建任务' },
   { id: 'history', icon: Clock, label: '历史记录' },
   { id: 'projects', icon: Layers, label: '项目管理' },
+  { id: 'nas', icon: Server, label: 'NAS 管理' },
+  { id: 'lifecycle', icon: Database, label: '生命周期' },
   { id: 'settings', icon: Settings, label: '设置' }
 ]
 

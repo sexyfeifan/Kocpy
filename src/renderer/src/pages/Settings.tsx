@@ -1,410 +1,620 @@
 import { useState, useEffect, useRef } from 'react'
-import { Shield, Info, Webhook, Download, Loader2, CheckCircle, ExternalLink, FolderOpen } from 'lucide-react'
-import type { HashAlgorithm } from '../types'
+import {
+  Settings as SettingsIcon, Hash, FileVideo, Palette, HardDrive,
+  Database, Film, Shield, Webhook, Save, RefreshCw, Check, X, Plus, Trash2,
+  FolderOpen, Play, Pause, Stop, Download, ExternalLink
+} from 'lucide-react'
 
-type DuplicateStrategy = 'skip' | 'suffix'
-
-const HASH_OPTIONS: { value: HashAlgorithm; label: string; desc: string }[] = [
-  { value: 'md5',    label: 'MD5',    desc: '快速，广泛支持' },
-  { value: 'sha1',   label: 'SHA1',   desc: '更安全，稍慢' },
-  { value: 'sha256', label: 'SHA256', desc: '最安全，推荐' }
-]
+interface SettingsProps {
+  // 可以添加 props
+}
 
 export function Settings(): JSX.Element {
-  const [defaultHash, setDefaultHash] = useState<HashAlgorithm>('md5')
-  const [verifyAfterCopy, setVerifyAfterCopy] = useState(true)
-  const [defaultDuplicateStrategy, setDefaultDuplicateStrategy] = useState<DuplicateStrategy>('skip')
+  const [activeTab, setActiveTab] = useState('general')
   const [saved, setSaved] = useState(false)
-  const [appVersion, setAppVersion] = useState('')
-  const [backupCount, setBackupCount] = useState(0)
+
+  // 通用设置
+  const [defaultHash, setDefaultHash] = useState('md5')
+  const [verifyAfterCopy, setVerifyAfterCopy] = useState(true)
+  const [autoBackup, setAutoBackup] = useState(false)
+
+  // ASC MHL 设置
+  const [mhlEnabled, setMhlEnabled] = useState(false)
+  const [mhlAlgorithm, setMhlAlgorithm] = useState('sha256')
+  const [mhlAutoVerify, setMhlAutoVerify] = useState(true)
+
+  // 转码设置
+  const [transcodeFormat, setTranscodeFormat] = useState('h264')
+  const [transcodeResolution, setTranscodeResolution] = useState('1080p')
+  const [transcodeQuality, setTranscodeQuality] = useState('medium')
+  const [applyLUT, setApplyLUT] = useState(false)
+  const [selectedLUT, setSelectedLUT] = useState('')
+  const [luts, setLuts] = useState<any[]>([])
+  const [cdls, setCdls] = useState<any[]>([])
+
+  // NAS 设置
+  const [nasAutoScan, setNasAutoScan] = useState(true)
+  const [nasSyncInterval, setNasSyncInterval] = useState(30)
+  const [nasHealthCheck, setNasHealthCheck] = useState(true)
+  const [nasDevices, setNasDevices] = useState<any[]>([])
+  const [scanning, setScanning] = useState(false)
+
+  // Webhook 设置
   const [webhookUrl, setWebhookUrl] = useState('')
   const [webhookEnabled, setWebhookEnabled] = useState(false)
-  const [webhookTestState, setWebhookTestState] = useState<'idle' | 'loading' | 'ok' | 'error'>('idle')
-  const [webhookTestMsg, setWebhookTestMsg] = useState('')
+  const [webhookEvents, setWebhookEvents] = useState(['completed', 'failed'])
+
+  // DaVinci Resolve 设置
+  const [resolveExportFormat, setResolveExportFormat] = useState('ale')
+  const [resolveAutoProject, setResolveAutoProject] = useState(false)
+
+  // 媒体生命周期设置
+  const [lifecycleEnabled, setLifecycleEnabled] = useState(false)
+  const [archivePolicies, setArchivePolicies] = useState<any[]>([])
+
+  // Loading 状态
+  const [importingLUT, setImportingLUT] = useState(false)
+  const [savingSettings, setSavingSettings] = useState(false)
+
+  // 检查更新相关状态
+  const [appVersion, setAppVersion] = useState('')
   const [updateStatus, setUpdateStatus] = useState<'idle' | 'checking' | 'available' | 'latest' | 'error'>('idle')
-  const [updateInfo, setUpdateInfo] = useState<{
-    latestVersion?: string
-    releaseUrl?: string
-    releaseNotes?: string
-    publishedAt?: string
-    assets?: { name: string; url: string; size: number }[]
-  }>({})
-  const loaded = useRef(false)
+  const [updateInfo, setUpdateInfo] = useState<any>({})
 
   useEffect(() => {
-    window.api.getSettings().then((s) => {
-      setDefaultHash(s.defaultHash)
-      setVerifyAfterCopy(s.verifyAfterCopy)
-      setBackupCount(s.backupCount ?? 0)
-      setWebhookUrl(s.webhookUrl ?? '')
-      setWebhookEnabled(s.webhookEnabled ?? false)
-      if (s.defaultDuplicateStrategy) setDefaultDuplicateStrategy(s.defaultDuplicateStrategy)
-      loaded.current = true
-    })
+    // 加载设置
+    loadSettings()
+    // 加载LUT列表
+    loadLUTs()
+    // 加载CDL列表
+    loadCDLs()
+    // 加载NAS设备
+    loadNASDevices()
+    // 加载归档策略
+    loadArchivePolicies()
+    // 获取应用版本
     window.api.getAppVersion().then((v) => setAppVersion(v))
   }, [])
 
-  const persist = async (hash: HashAlgorithm, verify: boolean) => {
-    if (!loaded.current) return
-    const current = await window.api.getSettings()
-    window.api.saveSettings({ ...current, defaultHash: hash, verifyAfterCopy: verify })
-    setSaved(true)
-    setTimeout(() => setSaved(false), 1500)
-  }
-
-  const persistDuplicate = async (strategy: DuplicateStrategy) => {
-    if (!loaded.current) return
-    const current = await window.api.getSettings()
-    window.api.saveSettings({ ...current, defaultDuplicateStrategy: strategy })
-    setSaved(true)
-    setTimeout(() => setSaved(false), 1500)
-  }
-
-  const persistWebhook = async (url: string, enabled: boolean) => {
-    if (!loaded.current) return
-    const current = await window.api.getSettings()
-    window.api.saveSettings({ ...current, webhookUrl: url, webhookEnabled: enabled })
-  }
-
-  const handleWebhookUrlChange = (url: string) => {
-    setWebhookUrl(url)
-    setWebhookTestState('idle')
-    persistWebhook(url, webhookEnabled)
-  }
-
-  const handleWebhookEnabledToggle = () => {
-    const next = !webhookEnabled
-    setWebhookEnabled(next)
-    persistWebhook(webhookUrl, next)
-  }
-
-  const handleWebhookTest = async () => {
-    if (!webhookUrl) return
-    setWebhookTestState('loading')
-    setWebhookTestMsg('')
-    const result = await window.api.testWebhook(webhookUrl)
-    if (result.ok) {
-      setWebhookTestState('ok')
-      setWebhookTestMsg('发送成功')
-    } else {
-      setWebhookTestState('error')
-      setWebhookTestMsg(result.error ?? '未知错误')
-    }
-  }
-
-  async function checkForUpdates() {
+  // 检查更新函数
+  const checkForUpdates = async () => {
     setUpdateStatus('checking')
     try {
       const result = await window.api.checkForUpdates()
       if (result.hasUpdate) {
         setUpdateStatus('available')
-        setUpdateInfo({
-          latestVersion: result.latestVersion,
-          releaseUrl: result.releaseUrl,
-          releaseNotes: result.releaseNotes,
-          publishedAt: result.publishedAt,
-          assets: result.assets,
-        })
+        setUpdateInfo(result)
       } else {
         setUpdateStatus('latest')
-        setTimeout(() => setUpdateStatus('idle'), 3000)
       }
-    } catch {
+    } catch (err) {
+      console.error('Failed to check for updates:', err)
       setUpdateStatus('error')
-      setTimeout(() => setUpdateStatus('idle'), 3000)
     }
   }
 
-  const detectPlatformLabel = (url: string): string => {
-    if (url.includes('open.feishu.cn')) return '飞书'
-    if (url.includes('oapi.dingtalk.com')) return '钉钉'
-    if (url.includes('qyapi.weixin.qq.com')) return '企业微信'
-    if (url.includes('discord.com/api/webhooks')) return 'Discord'
-    if (url) return 'Slack / 其他'
-    return ''
+  const loadSettings = async () => {
+    try {
+      const settings = await window.api.getSettings()
+      if (settings) {
+        setDefaultHash(settings.defaultHash || 'md5')
+        setVerifyAfterCopy(settings.verifyAfterCopy ?? true)
+        setWebhookUrl(settings.webhookUrl || '')
+        setWebhookEnabled(settings.webhookEnabled ?? false)
+      }
+    } catch (err) {
+      console.error('Failed to load settings:', err)
+    }
   }
 
-  const handleHashChange = (v: HashAlgorithm) => {
-    setDefaultHash(v)
-    persist(v, verifyAfterCopy)
+  const loadLUTs = async () => {
+    try {
+      const result = await window.api.lutGetAll()
+      if (result && Array.isArray(result)) {
+        setLuts(result)
+      }
+    } catch (err) {
+      console.error('Failed to load LUTs:', err)
+    }
   }
 
-  const handleVerifyToggle = () => {
-    const next = !verifyAfterCopy
-    setVerifyAfterCopy(next)
-    persist(defaultHash, next)
+  const loadCDLs = async () => {
+    try {
+      const result = await window.api.lutGetCDLs()
+      if (result && Array.isArray(result)) {
+        setCdls(result)
+      }
+    } catch (err) {
+      console.error('Failed to load CDLs:', err)
+    }
   }
+
+  const loadNASDevices = async () => {
+    try {
+      const result = await window.api.nasGetDevices()
+      if (result && Array.isArray(result)) {
+        setNasDevices(result)
+      }
+    } catch (err) {
+      console.error('Failed to load NAS devices:', err)
+    }
+  }
+
+  const loadArchivePolicies = async () => {
+    try {
+      const result = await window.api.lifecycleGetArchivePolicies()
+      if (result && Array.isArray(result)) {
+        setArchivePolicies(result)
+      }
+    } catch (err) {
+      console.error('Failed to load archive policies:', err)
+    }
+  }
+
+  const handleSave = async () => {
+    try {
+      await window.api.saveSettings({
+        defaultHash: defaultHash as any,
+        verifyAfterCopy,
+        webhookUrl,
+        webhookEnabled,
+        devices: []
+      })
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2000)
+    } catch (err) {
+      console.error('Failed to save settings:', err)
+    }
+  }
+
+  const handleImportLUT = async () => {
+    try {
+      const filePath = await window.api.selectDirectory()
+      if (filePath) {
+        const result = await window.api.lutImport(filePath, selectedLUT || undefined)
+        if (result && result.success) {
+          await loadLUTs()
+          setSelectedLUT('')
+          alert('LUT 导入成功')
+        } else {
+          alert('LUT 导入失败: ' + (result?.error || '未知错误'))
+        }
+      }
+    } catch (err) {
+      console.error('Failed to import LUT:', err)
+      alert('LUT 导入失败')
+    }
+  }
+
+  const handleScanNAS = async () => {
+    setScanning(true)
+    try {
+      const result = await window.api.nasScan()
+      if (result && result.success) {
+        await loadNASDevices()
+        alert(`扫描完成，发现 ${result.devices?.length || 0} 个 NAS 设备`)
+      } else {
+        alert('NAS 扫描失败: ' + (result?.error || '未知错误'))
+      }
+    } catch (err) {
+      console.error('Failed to scan NAS:', err)
+      alert('NAS 扫描失败')
+    } finally {
+      setScanning(false)
+    }
+  }
+
+  const tabs = [
+    { id: 'general', label: '通用设置', icon: SettingsIcon },
+    { id: 'mhl', label: 'ASC MHL', icon: Shield },
+    { id: 'transcode', label: '转码设置', icon: FileVideo },
+    { id: 'lut', label: 'LUT/CDL', icon: Palette },
+    { id: 'nas', label: 'NAS 管理', icon: HardDrive },
+    { id: 'resolve', label: 'DaVinci', icon: Film },
+    { id: 'lifecycle', label: '生命周期', icon: Database },
+    { id: 'webhook', label: 'Webhook', icon: Webhook },
+    { id: 'update', label: '检查更新', icon: Download }
+  ]
 
   return (
-    <div className="flex-1 overflow-y-auto p-6 max-w-2xl mx-auto w-full">
-      <div className="flex flex-col gap-5">
-
-        {/* Default hash */}
-        <div className="glass-card p-5">
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-2">
-              <Shield size={14} className="text-gray-400" />
-              <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
-                默认校验算法
-              </label>
-            </div>
-            {saved && <span className="text-xs text-green-400">已保存</span>}
-          </div>
-          <div className="grid grid-cols-3 gap-2">
-            {HASH_OPTIONS.map((opt) => (
+    <div className="flex h-full bg-[#0a0a0a]">
+      {/* 侧边栏 */}
+      <div className="w-48 border-r border-[#2a2a2a] p-4">
+        <h2 className="text-sm font-semibold text-gray-200 mb-4">设置</h2>
+        <nav className="space-y-1">
+          {tabs.map((tab) => {
+            const Icon = tab.icon
+            return (
               <button
-                key={opt.value}
-                onClick={() => handleHashChange(opt.value)}
-                className={`p-3 rounded-xl border text-left transition-all
-                  ${defaultHash === opt.value
-                    ? 'bg-blue-600/15 border-blue-500/40 text-blue-300'
-                    : 'bg-[#111] border-[#2a2a2a] text-gray-500 hover:border-[#3a3a3a]'
-                  }`}
-              >
-                <div className="text-sm font-semibold mb-0.5">{opt.label}</div>
-                <div className="text-xs opacity-70">{opt.desc}</div>
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Copy options */}
-        <div className="glass-card p-5">
-          <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-4">
-            拷贝选项
-          </label>
-          <div className="flex items-center justify-between py-3 border-b border-[#1e1e1e]">
-            <div>
-              <p className="text-sm text-gray-200">拷贝后自动校验</p>
-              <p className="text-xs text-gray-500 mt-0.5">完成拷贝后对每个文件进行哈希校验</p>
-            </div>
-            <div
-              onClick={handleVerifyToggle}
-              className={`relative w-9 h-5 rounded-full transition-colors shrink-0 cursor-pointer ${verifyAfterCopy ? 'bg-blue-600' : 'bg-[#2a2a2a]'}`}
-            >
-              <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${verifyAfterCopy ? 'left-4' : 'left-0.5'}`} />
-            </div>
-          </div>
-          <div className="pt-3">
-            <p className="text-xs text-gray-500 mb-2">重复文件处理</p>
-            <div className="flex gap-2">
-              <button
-                onClick={() => { setDefaultDuplicateStrategy('skip'); persistDuplicate('skip') }}
-                className={`px-3 py-1.5 rounded-lg border text-xs transition-all ${
-                  defaultDuplicateStrategy === 'skip'
-                    ? 'bg-blue-600/15 border-blue-500/40 text-blue-300'
-                    : 'bg-[#111] border-[#2a2a2a] text-gray-500 hover:border-[#3a3a3a]'
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors ${
+                  activeTab === tab.id
+                    ? 'bg-blue-600 text-white'
+                    : 'text-gray-400 hover:text-gray-200 hover:bg-[#111]'
                 }`}
               >
-                跳过
+                <Icon size={16} />
+                {tab.label}
               </button>
-              <button
-                onClick={() => { setDefaultDuplicateStrategy('suffix'); persistDuplicate('suffix') }}
-                className={`px-3 py-1.5 rounded-lg border text-xs transition-all ${
-                  defaultDuplicateStrategy === 'suffix'
-                    ? 'bg-blue-600/15 border-blue-500/40 text-blue-300'
-                    : 'bg-[#111] border-[#2a2a2a] text-gray-500 hover:border-[#3a3a3a]'
-                }`}
-              >
-                重命名（_copy_N）
-              </button>
-            </div>
-          </div>
-        </div>
+            )
+          })}
+        </nav>
+      </div>
 
-        {/* Webhook */}
-        <div className="glass-card p-5">
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-2">
-              <Webhook size={14} className="text-gray-400" />
-              <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
-                Webhook 通知
-              </label>
-            </div>
-            <div
-              onClick={handleWebhookEnabledToggle}
-              className={`relative w-9 h-5 rounded-full transition-colors shrink-0 cursor-pointer ${webhookEnabled ? 'bg-blue-600' : 'bg-[#2a2a2a]'}`}
-            >
-              <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${webhookEnabled ? 'left-4' : 'left-0.5'}`} />
-            </div>
-          </div>
-          <div className="space-y-3">
-            <div className="relative">
-              <input
-                type="url"
-                value={webhookUrl}
-                onChange={(e) => handleWebhookUrlChange(e.target.value)}
-                placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/..."
-                className="w-full bg-[#111] border border-[#2a2a2a] rounded-xl px-3 py-2.5 text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-blue-500/50 pr-16"
-              />
-              {webhookUrl && (
-                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-blue-400 font-medium pointer-events-none">
-                  {detectPlatformLabel(webhookUrl)}
-                </span>
-              )}
-            </div>
-            <div className="flex items-center gap-3">
-              <button
-                onClick={handleWebhookTest}
-                disabled={!webhookUrl || webhookTestState === 'loading'}
-                className="px-4 py-1.5 bg-[#1a1a1a] border border-[#2a2a2a] hover:border-[#3a3a3a] disabled:opacity-40 disabled:cursor-not-allowed text-gray-300 text-xs rounded-lg transition-colors"
-              >
-                {webhookTestState === 'loading' ? '发送中...' : '测试'}
-              </button>
-              {webhookTestState === 'ok' && (
-                <span className="text-xs text-green-400">{webhookTestMsg}</span>
-              )}
-              {webhookTestState === 'error' && (
-                <span className="text-xs text-red-400 truncate max-w-[200px]">{webhookTestMsg}</span>
-              )}
-            </div>
-            <p className="text-xs text-gray-600">备份完成后自动推送通知，支持飞书 / 钉钉 / 企业微信 / Discord / Slack</p>
-          </div>
-        </div>
-
-        {/* Update */}
-        <div className="glass-card p-5">
-          <div className="flex items-center gap-2 mb-4">
-            <Download size={14} className="text-gray-400" />
-            <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
-              检查更新
-            </label>
-          </div>
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span className="text-sm text-gray-300">当前版本</span>
-                <span className="text-xs text-gray-500 font-mono">{appVersion ? `v${appVersion}` : '…'}</span>
-              </div>
-              <button
-                onClick={checkForUpdates}
-                disabled={updateStatus === 'checking'}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors bg-[#1a1a1a] border border-[#2a2a2a] text-gray-300 hover:text-gray-100 hover:border-gray-500 disabled:opacity-50"
-              >
-                {updateStatus === 'checking' ? (
-                  <><Loader2 size={12} className="animate-spin" /> 检查中…</>
-                ) : (
-                  <><Download size={12} /> 检查更新</>
-                )}
-              </button>
-            </div>
-
-            {updateStatus === 'latest' && (
-              <div className="flex items-center gap-2 text-xs text-green-400">
-                <CheckCircle size={14} /> 已是最新版本
-              </div>
-            )}
-
-            {updateStatus === 'error' && (
-              <div className="text-xs text-red-400">检查更新失败，请检查网络连接</div>
-            )}
-
-            {updateStatus === 'available' && updateInfo.latestVersion && (
-              <div className="space-y-2 pt-1">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs px-2 py-0.5 rounded bg-blue-600/20 text-blue-400 border border-blue-600/30 font-medium">
-                    发现新版本
-                  </span>
-                  <span className="text-xs text-gray-400 font-mono">v{updateInfo.latestVersion}</span>
-                </div>
-
-                {updateInfo.publishedAt && (
-                  <div className="text-[11px] text-gray-500">
-                    发布时间: {new Date(updateInfo.publishedAt).toLocaleDateString()}
-                  </div>
-                )}
-
-                {updateInfo.releaseNotes && (
-                  <details className="group">
-                    <summary className="text-xs text-gray-400 cursor-pointer hover:text-gray-300 transition-colors">
-                      更新日志
-                    </summary>
-                    <div className="mt-1.5 text-xs text-gray-400 whitespace-pre-wrap leading-relaxed max-h-40 overflow-y-auto bg-[#111] rounded-lg p-2.5">
-                      {updateInfo.releaseNotes}
-                    </div>
-                  </details>
-                )}
-
-                <div className="flex flex-wrap gap-1.5">
-                  {updateInfo.assets?.filter(a => a.name.endsWith('.dmg')).map(asset => (
-                    <button
-                      key={asset.name}
-                      onClick={() => window.open(asset.url)}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-blue-600 hover:bg-blue-500 text-white transition-colors"
-                    >
-                      <Download size={12} /> {asset.name.replace('.dmg', '').split('-').pop()}
-                    </button>
-                  ))}
-                  {updateInfo.releaseUrl && (
-                    <button
-                      onClick={() => window.open(updateInfo.releaseUrl!)}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-gray-400 hover:text-gray-200 border border-[#2a2a2a] hover:border-gray-500 transition-colors"
-                    >
-                      <ExternalLink size={12} /> GitHub
-                    </button>
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Logs */}
-        <div className="glass-card p-5">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <FolderOpen size={14} className="text-gray-400" />
-              <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
-                日志
-              </label>
-            </div>
+      {/* 内容区域 */}
+      <div className="flex-1 overflow-auto p-6">
+        <div className="max-w-2xl">
+          {/* 保存按钮 */}
+          <div className="flex items-center justify-between mb-6">
+            <h1 className="text-lg font-semibold text-gray-200">
+              {tabs.find(t => t.id === activeTab)?.label}
+            </h1>
             <button
-              onClick={() => window.api.openLogsFolder()}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-[#1a1a1a] border border-[#2a2a2a] text-gray-300 hover:text-gray-100 hover:border-gray-500 transition-colors"
+              onClick={handleSave}
+              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-500 transition-colors"
             >
-              <FolderOpen size={12} /> 打开日志文件夹
+              {saved ? <Check size={16} /> : <Save size={16} />}
+              {saved ? '已保存' : '保存设置'}
             </button>
           </div>
-          <p className="text-xs text-gray-600 mt-2">备份操作日志，自动保留最近 7 天，用于排查备份问题。</p>
-        </div>
 
-        {/* About */}
-        <div className="glass-card p-5">
-          <div className="flex items-center gap-2 mb-4">
-            <Info size={14} className="text-gray-400" />
-            <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
-              关于
-            </label>
-          </div>
-          <div className="space-y-2">
-            <div className="flex justify-between text-sm">
-              <span className="text-gray-500">版本</span>
-              <span className="text-gray-300 font-mono">{appVersion ? `v${appVersion}` : '…'}</span>
-            </div>
-            <div className="flex justify-between text-sm">
-              <span className="text-gray-500">引擎</span>
-              <span className="text-gray-300 font-mono">Electron + React</span>
-            </div>
-            <div className="flex justify-between text-sm">
-              <span className="text-gray-500">校验标准</span>
-              <span className="text-gray-300">MD5 / SHA1 / SHA256</span>
-            </div>
-            <div className="border-t border-[#1e1e1e] pt-2 mt-2 flex justify-between text-sm">
-              <span className="text-gray-500">作者</span>
-              <span className="text-gray-400 text-xs select-none cursor-default">@我是性感的非凡</span>
-            </div>
-            <div className="flex justify-between text-sm">
-              <span className="text-gray-500">联系</span>
-              <span className="text-gray-400 text-xs font-mono">zhoufeifan@gmail.com</span>
-            </div>
-            <div className="flex justify-between text-sm mt-1">
-              <span className="text-gray-500">备份次数</span>
-              <span className="text-gray-400 text-xs font-mono">{backupCount}</span>
-            </div>
-          </div>
-        </div>
+          {/* LUT/CDL 设置 */}
+          {activeTab === 'lut' && (
+            <div className="space-y-6">
+              <div className="glass-card p-4">
+                <h3 className="text-sm font-semibold text-gray-200 mb-4">LUT 管理</h3>
+                <p className="text-xs text-gray-500 mb-4">
+                  管理 LUT (Look-Up Table) 文件，用于色彩校正
+                </p>
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-2">导入 LUT 文件</label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={selectedLUT}
+                        onChange={(e) => setSelectedLUT(e.target.value)}
+                        placeholder="输入 LUT 名称..."
+                        className="flex-1 px-3 py-2 bg-[#111] border border-[#2a2a2a] rounded-lg text-sm text-gray-200"
+                      />
+                      <button 
+                        onClick={handleImportLUT}
+                        className="px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-500 transition-colors"
+                      >
+                        导入
+                      </button>
+                    </div>
+                  </div>
 
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-2">已导入的 LUT ({luts.length})</label>
+                    <div className="space-y-2 max-h-40 overflow-auto">
+                      {luts.length === 0 ? (
+                        <div className="p-3 bg-[#111] border border-[#2a2a2a] rounded-lg">
+                          <p className="text-xs text-gray-500">暂无已导入的 LUT 文件</p>
+                        </div>
+                      ) : (
+                        luts.map((lut) => (
+                          <div key={lut.id} className="flex items-center justify-between p-2 bg-[#111] border border-[#2a2a2a] rounded-lg">
+                            <div>
+                              <p className="text-sm text-gray-200">{lut.name}</p>
+                              <p className="text-xs text-gray-500">{lut.format} • {lut.size}x{lut.size}x{lut.size}</p>
+                            </div>
+                            <button className="p-1 text-gray-500 hover:text-red-400">
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="glass-card p-4">
+                <h3 className="text-sm font-semibold text-gray-200 mb-4">CDL 管理</h3>
+                <p className="text-xs text-gray-500 mb-4">
+                  管理 CDL (Color Decision List) 文件
+                </p>
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-2">已创建的 CDL ({cdls.length})</label>
+                    <div className="space-y-2 max-h-40 overflow-auto">
+                      {cdls.length === 0 ? (
+                        <div className="p-3 bg-[#111] border border-[#2a2a2a] rounded-lg">
+                          <p className="text-xs text-gray-500">暂无已创建的 CDL</p>
+                        </div>
+                      ) : (
+                        cdls.map((cdl) => (
+                          <div key={cdl.id} className="flex items-center justify-between p-2 bg-[#111] border border-[#2a2a2a] rounded-lg">
+                            <div>
+                              <p className="text-sm text-gray-200">{cdl.name}</p>
+                              <p className="text-xs text-gray-500">
+                                Slope: {cdl.slope.join(', ')} • Offset: {cdl.offset.join(', ')}
+                              </p>
+                            </div>
+                            <button className="p-1 text-gray-500 hover:text-red-400">
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* NAS 设置 */}
+          {activeTab === 'nas' && (
+            <div className="space-y-6">
+              <div className="glass-card p-4">
+                <h3 className="text-sm font-semibold text-gray-200 mb-4">NAS 管理</h3>
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm text-gray-200">自动扫描 NAS</p>
+                      <p className="text-xs text-gray-500">启动时自动扫描局域网 NAS 设备</p>
+                    </div>
+                    <button
+                      onClick={() => setNasAutoScan(!nasAutoScan)}
+                      className={`w-12 h-6 rounded-full transition-colors ${
+                        nasAutoScan ? 'bg-blue-600' : 'bg-gray-600'
+                      }`}
+                    >
+                      <div className={`w-5 h-5 bg-white rounded-full transition-transform ${
+                        nasAutoScan ? 'translate-x-6' : 'translate-x-1'
+                      }`} />
+                    </button>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-2">同步间隔（分钟）</label>
+                    <input
+                      type="number"
+                      value={nasSyncInterval}
+                      onChange={(e) => setNasSyncInterval(parseInt(e.target.value))}
+                      min="5"
+                      max="1440"
+                      className="w-full px-3 py-2 bg-[#111] border border-[#2a2a2a] rounded-lg text-sm text-gray-200"
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm text-gray-200">健康监控</p>
+                      <p className="text-xs text-gray-500">监控 NAS 的 SMART、容量和 RAID 状态</p>
+                    </div>
+                    <button
+                      onClick={() => setNasHealthCheck(!nasHealthCheck)}
+                      className={`w-12 h-6 rounded-full transition-colors ${
+                        nasHealthCheck ? 'bg-blue-600' : 'bg-gray-600'
+                      }`}
+                    >
+                      <div className={`w-5 h-5 bg-white rounded-full transition-transform ${
+                        nasHealthCheck ? 'translate-x-6' : 'translate-x-1'
+                      }`} />
+                    </button>
+                  </div>
+
+                  <button 
+                    onClick={handleScanNAS}
+                    disabled={scanning}
+                    className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-[#111] border border-[#2a2a2a] rounded-lg text-sm text-gray-400 hover:text-gray-200 disabled:opacity-50"
+                  >
+                    {scanning ? (
+                      <>
+                        <RefreshCw size={14} className="animate-spin" />
+                        扫描中...
+                      </>
+                    ) : (
+                      <>
+                        <RefreshCw size={14} />
+                        扫描 NAS 设备
+                      </>
+                    )}
+                  </button>
+
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-2">已发现的 NAS 设备 ({nasDevices.length})</label>
+                    <div className="space-y-2 max-h-40 overflow-auto">
+                      {nasDevices.length === 0 ? (
+                        <div className="p-3 bg-[#111] border border-[#2a2a2a] rounded-lg">
+                          <p className="text-xs text-gray-500">暂未发现 NAS 设备</p>
+                        </div>
+                      ) : (
+                        nasDevices.map((device) => (
+                          <div key={device.id} className="p-3 bg-[#111] border border-[#2a2a2a] rounded-lg">
+                            <div className="flex items-center justify-between mb-2">
+                              <p className="text-sm font-medium text-gray-200">{device.name}</p>
+                              <span className={`px-2 py-1 text-xs rounded ${
+                                device.health?.smart?.healthy ? 'bg-green-600/20 text-green-400' : 'bg-red-600/20 text-red-400'
+                              }`}>
+                                {device.health?.smart?.healthy ? '健康' : '异常'}
+                              </span>
+                            </div>
+                            <p className="text-xs text-gray-500">{device.host} • {device.protocol.toUpperCase()}</p>
+                            <div className="mt-2 grid grid-cols-3 gap-2 text-xs">
+                              <div>
+                                <p className="text-gray-500">总容量</p>
+                                <p className="text-gray-200">{Math.round(device.health?.capacity?.total / 1024 / 1024 / 1024)} GB</p>
+                              </div>
+                              <div>
+                                <p className="text-gray-500">已使用</p>
+                                <p className="text-gray-200">{Math.round(device.health?.capacity?.used / 1024 / 1024 / 1024)} GB</p>
+                              </div>
+                              <div>
+                                <p className="text-gray-500">可用</p>
+                                <p className="text-gray-200">{Math.round(device.health?.capacity?.available / 1024 / 1024 / 1024)} GB</p>
+                              </div>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* 生命周期设置 */}
+          {activeTab === 'lifecycle' && (
+            <div className="space-y-6">
+              <div className="glass-card p-4">
+                <h3 className="text-sm font-semibold text-gray-200 mb-4">媒体生命周期管理</h3>
+                <p className="text-xs text-gray-500 mb-4">
+                  管理素材从拍摄到归档的完整生命周期
+                </p>
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm text-gray-200">启用生命周期管理</p>
+                      <p className="text-xs text-gray-500">追踪素材状态和归档策略</p>
+                    </div>
+                    <button
+                      onClick={() => setLifecycleEnabled(!lifecycleEnabled)}
+                      className={`w-12 h-6 rounded-full transition-colors ${
+                        lifecycleEnabled ? 'bg-blue-600' : 'bg-gray-600'
+                      }`}
+                    >
+                      <div className={`w-5 h-5 bg-white rounded-full transition-transform ${
+                        lifecycleEnabled ? 'translate-x-6' : 'translate-x-1'
+                      }`} />
+                    </button>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-2">归档策略 ({archivePolicies.length})</label>
+                    <div className="space-y-2 max-h-40 overflow-auto">
+                      {archivePolicies.length === 0 ? (
+                        <div className="p-3 bg-[#111] border border-[#2a2a2a] rounded-lg">
+                          <p className="text-xs text-gray-500">暂无归档策略</p>
+                        </div>
+                      ) : (
+                        archivePolicies.map((policy) => (
+                          <div key={policy.id} className="p-3 bg-[#111] border border-[#2a2a2a] rounded-lg">
+                            <div className="flex items-center justify-between mb-2">
+                              <p className="text-sm font-medium text-gray-200">{policy.name}</p>
+                              <span className={`px-2 py-1 text-xs rounded ${
+                                policy.enabled ? 'bg-green-600/20 text-green-400' : 'bg-gray-600/20 text-gray-400'
+                              }`}>
+                                {policy.enabled ? '启用' : '禁用'}
+                              </span>
+                            </div>
+                            <p className="text-xs text-gray-500">{policy.description}</p>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   )
 }
+
+          {/* 检查更新 */}
+          {activeTab === 'update' && (
+            <div className="space-y-6">
+              <div className="glass-card p-4">
+                <h3 className="text-sm font-semibold text-gray-200 mb-4">检查更新</h3>
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm text-gray-300">当前版本</span>
+                      <span className="text-xs text-gray-500 font-mono">
+                        {appVersion ? `v${appVersion}` : '...'}
+                      </span>
+                    </div>
+                    <button
+                      onClick={checkForUpdates}
+                      disabled={updateStatus === 'checking'}
+                      className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-500 disabled:opacity-50"
+                    >
+                      {updateStatus === 'checking' ? (
+                        <>
+                          <RefreshCw size={14} className="animate-spin" />
+                          检查中...
+                        </>
+                      ) : (
+                        <>
+                          <Download size={14} />
+                          检查更新
+                        </>
+                      )}
+                    </button>
+                  </div>
+
+                  {updateStatus === 'latest' && (
+                    <div className="p-3 bg-green-600/10 border border-green-500/20 rounded-lg">
+                      <p className="text-sm text-green-400">✓ 已是最新版本</p>
+                    </div>
+                  )}
+
+                  {updateStatus === 'error' && (
+                    <div className="p-3 bg-red-600/10 border border-red-500/20 rounded-lg">
+                      <p className="text-sm text-red-400">检查更新失败，请检查网络连接</p>
+                    </div>
+                  )}
+
+                  {updateStatus === 'available' && updateInfo.latestVersion && (
+                    <div className="p-4 bg-blue-600/10 border border-blue-500/20 rounded-lg">
+                      <div className="flex items-center gap-2 mb-3">
+                        <span className="px-2 py-1 text-xs bg-blue-600 text-white rounded">发现新版本</span>
+                        <span className="text-sm font-mono text-gray-300">v{updateInfo.latestVersion}</span>
+                      </div>
+
+                      {updateInfo.publishedAt && (
+                        <p className="text-xs text-gray-500 mb-2">
+                          发布时间: {new Date(updateInfo.publishedAt).toLocaleDateString()}
+                        </p>
+                      )}
+
+                      {updateInfo.releaseNotes && (
+                        <div className="mb-3">
+                          <p className="text-xs text-gray-500 mb-1">更新日志:</p>
+                          <p className="text-xs text-gray-400 max-h-20 overflow-auto">{updateInfo.releaseNotes}</p>
+                        </div>
+                      )}
+
+                      {updateInfo.assets && updateInfo.assets.length > 0 && (
+                        <div className="mb-3">
+                          <p className="text-xs text-gray-500 mb-2">下载链接:</p>
+                          <div className="space-y-1">
+                            {updateInfo.assets.map((asset: any) => (
+                              <a
+                                key={asset.name}
+                                href={asset.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="flex items-center gap-2 px-3 py-2 bg-[#111] border border-[#2a2a2a] rounded-lg hover:border-blue-500 transition-colors"
+                              >
+                                <Download size={14} className="text-blue-400" />
+                                <span className="text-xs text-gray-300">{asset.name}</span>
+                                <span className="text-xs text-gray-500 ml-auto">{(asset.size / 1024 / 1024).toFixed(1)} MB</span>
+                              </a>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {updateInfo.releaseUrl && (
+                        <a href={updateInfo.releaseUrl} target="_blank" rel="noopener noreferrer"
+                          className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-500">
+                          <ExternalLink size={14} />
+                          查看发布页面
+                        </a>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}

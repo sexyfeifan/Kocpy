@@ -6,6 +6,8 @@ import { Dashboard } from './pages/Dashboard'
 import { NewTask } from './pages/NewTask'
 import { History } from './pages/History'
 import { Settings } from './pages/Settings'
+import { NASManager } from './pages/NASManager'
+import { LifecycleManager } from './pages/LifecycleManager'
 import { ProjectManager } from './pages/ProjectManager'
 import { useTaskStore } from './store/taskStore'
 
@@ -27,6 +29,8 @@ export function App(): JSX.Element {
     activePage === 'history'   ? <History /> :
     activePage === 'projects'  ? <ProjectManager /> :
     activePage === 'settings'  ? <Settings /> :
+    activePage === 'nas'       ? <NASManager /> :
+    activePage === 'lifecycle' ? <LifecycleManager /> :
     <Dashboard />
 
   return (
