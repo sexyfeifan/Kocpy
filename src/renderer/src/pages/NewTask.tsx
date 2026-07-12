@@ -16,12 +16,12 @@ interface DestRow {
   driveInfo: DriveInfo | null
 }
 
-type Mode = 'card' | 'mirror' | 'project'
+type Mode = 'backup' | 'project'
 
 export function NewTask(): JSX.Element {
   const { addTask, setActivePage, projects, projectsError, devices, loadProjects, loadDevices } = useTaskStore()
 
-  const [mode, setMode] = useState<Mode>('card')
+  const [mode, setMode] = useState<Mode>('backup')
   const [sourcePath, setSourcePath] = useState('')
   const [destinations, setDestinations] = useState<DestRow[]>([])
   const [defaultHash, setDefaultHash] = useState<'md5' | 'sha1' | 'sha256'>('md5')
@@ -38,6 +38,7 @@ export function NewTask(): JSX.Element {
   const [generateMHL, setGenerateMHL] = useState(false)
   const [enableTranscode, setEnableTranscode] = useState(false)
   const [enableDaVinciExport, setEnableDaVinciExport] = useState(false)
+  const [preserveStructure, setPreserveStructure] = useState(false)  // 新增：保持原始目录结构
 
   const [selectedProjectId, setSelectedProjectId] = useState<string>('')
   const [showAllProjects, setShowAllProjects] = useState(false)
@@ -245,7 +246,7 @@ export function NewTask(): JSX.Element {
     (resolvedPath !== null || destinations.length > 0)
 
   const canStart =
-    mode === 'card' ? canStartCard :
+    mode === 'backup' ? canStartCard :
     mode === 'mirror' ? canStartMirror :
     canStartAdvanced
 
@@ -274,14 +275,12 @@ export function NewTask(): JSX.Element {
         destinationPaths: destPaths,
         hashAlgorithm: defaultHash,
         namingTemplate:
-          mode === 'card'
+          mode === 'backup'
             ? (sourcePath.split('/').pop() || 'Untitled')
-            : mode === 'mirror'
-              ? (sourcePath.split('/').pop() || 'Untitled')
-              : (volumePrefix || 'Untitled'),
+            : (volumePrefix || 'Untitled'),
         shootingDate: mode === 'project' ? shootingDate : '',
         projectName: mode === 'project' ? (selectedProject?.name ?? '') : '',
-        copyMode: mode === 'mirror' ? 'mirror' : 'normal',
+        copyMode: preserveStructure ? 'mirror' : 'normal',  // 根据开关决定
         duplicateStrategy,
         generateThumbnails,
         priority: taskPriority,
@@ -296,7 +295,7 @@ export function NewTask(): JSX.Element {
     }
   }
 
-  const isMirror = mode === 'mirror'
+  const isMirror = preserveStructure  // 根据开关决定是否镜像
 
   const pickVolume = async (vol: VolumeInfo) => {
     // macOS requires a user-initiated open dialog to grant sandbox access to the volume path.
@@ -446,8 +445,8 @@ export function NewTask(): JSX.Element {
         </div>
       )}
 
-      {/* FX3 备份重命名 — only in card mode */}
-      {mode === 'card' && (
+      {/* FX3 备份重命名 — only in backup mode */}
+      {mode === 'backup' && (
         <label className="flex items-center justify-between cursor-pointer mt-3 pt-3 border-t border-[#1e1e1e]">
           <div>
             <p className="text-xs text-gray-300">FX3 备份重命名</p>
@@ -608,8 +607,8 @@ export function NewTask(): JSX.Element {
       <div className="flex gap-1 p-1 bg-[#111] border border-[#2a2a2a] rounded-xl mb-4">
         <button
           onClick={() => {
-            if (mode === 'card') return
-            setMode('card')
+            if (mode === 'backup') return
+            setMode('backup')
             setSourcePath('')
             setDestinations([])
             autoDetectedRef.current = false
@@ -620,33 +619,12 @@ export function NewTask(): JSX.Element {
             setSourceTab('card')
           }}
           className={`flex-1 py-2 rounded-lg text-sm font-medium transition-all ${
-            mode === 'card'
+            mode === 'backup'
               ? 'bg-blue-600 text-white shadow'
               : 'text-gray-500 hover:text-gray-300'
           }`}
         >
-          备卡模式
-        </button>
-        <button
-          onClick={() => {
-            if (mode === 'mirror') return
-            setMode('mirror')
-            setSourcePath('')
-            setDestinations([])
-            autoDetectedRef.current = false
-            setSelectedProjectId('')
-            setSelectedDevice('')
-            setSelectedPosition('')
-            setResolvedPath(null)
-            setSourceTab('card')
-          }}
-          className={`flex-1 py-2 rounded-lg text-sm font-medium transition-all ${
-            mode === 'mirror'
-              ? 'bg-purple-600 text-white shadow'
-              : 'text-gray-500 hover:text-gray-300'
-          }`}
-        >
-          镜像模式
+          备份模式
         </button>
         <button
           onClick={() => {
