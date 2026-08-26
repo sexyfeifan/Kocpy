@@ -54,7 +54,6 @@
     "mac": {
       "icon": "resources/icon.icns",
       "category": "public.app-category.video",
-      "identity": null,
       "target": [
         "dmg"
       ],
