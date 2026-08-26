@@ -53,6 +53,7 @@ import {
   Trash2,
   ChevronsUp,
   Activity,
+  Pause,
 } from "lucide-react";
 import {
   api,
@@ -93,6 +94,11 @@ const defaults: Settings = {
   includeHidden: true,
   operator: "",
   theme: "dark",
+};
+const duration = (seconds = 0) => {
+  const value = Math.max(0, Math.round(seconds));
+  const h = Math.floor(value / 3600), m = Math.floor((value % 3600) / 60), s = value % 60;
+  return `${h ? `${h}时` : ""}${h || m ? `${String(m).padStart(h ? 2 : 1, "0")}分` : ""}${String(s).padStart(h || m ? 2 : 1, "0")}秒`;
 };
 export function Button({
   children,
@@ -276,7 +282,7 @@ export function App() {
   };
   const running = tasks.filter(active),
     finished = tasks.filter((t) => t.status === "completed"),
-    current = tasks.find((t) => ["running", "verifying"].includes(t.status));
+    current = tasks.find((t) => ["running", "paused", "verifying"].includes(t.status));
   const filtered = tasks.filter(
     (t) =>
       (t.name + " " + t.sourcePath)
@@ -287,7 +293,7 @@ export function App() {
         t.status === filter),
   );
   const selected = tasks.find((t) => t.id === detail);
-  const exportReport = (id: string, format: "pdf" | "json") =>
+  const exportReport = (id: string, format: "pdf" | "json" | "mhl") =>
     act(async () => {
       const result = await api.exportReport(id, format);
       if (result) notify(`报告已保存：${result}`);
@@ -406,7 +412,7 @@ export function App() {
           <img src="./icon.png" alt="Kocpy 图标" />
           <div>
             <strong>
-              Kocpy<span>2.0</span>
+              Kocpy<span>0.0.1</span>
             </strong>
             <small>素材工作台</small>
           </div>
@@ -450,7 +456,7 @@ export function App() {
           </button>
           <div className="sidebar-foot">
             <span className="live-dot" />
-            桌面版 · macOS <span>v2.0.0</span>
+            桌面版 · macOS <span>v0.0.1</span>
           </div>
         </div>
       </aside>
@@ -1041,8 +1047,8 @@ export function App() {
                               </Button>
                               <Button
                                 kind="icon"
-                                title="导出包含每个目标哈希的 JSON 清单"
-                                onClick={() => void exportReport(t.id, "json")}
+                                title="导出 MHL 素材哈希清单"
+                                onClick={() => void exportReport(t.id, "mhl")}
                               >
                                 <File size={16} />
                               </Button>
@@ -1053,7 +1059,7 @@ export function App() {
                       <Empty
                         icon={FileCheck2}
                         title="让每次交付都有据可查"
-                        detail="任务结束后，这里会生成可导出的 PDF 报告与 JSON 哈希清单。"
+                        detail="任务结束后，这里会生成可导出的 PDF 报告、JSON 记录与 MHL 哈希清单。"
                       />
                     )}
                   </section>
@@ -1097,14 +1103,15 @@ export function App() {
             <strong>{current.name}</strong>
             <span>{statusText[current.status]}</span>
             <div className="mini-progress">
-              <i
+              <i className="copy-fill"
                 style={{
-                  width: `${Math.min(100, (current.completedFiles / Math.max(1, current.totalFiles)) * 100)}%`,
+                  width: `${current.copyProgress || 0}%`,
                 }}
               />
+              <i className="verify-fill" style={{ width: `${current.verifyProgress || 0}%` }} />
             </div>
             <span>
-              {current.completedFiles} / {current.totalFiles}
+              {current.status === "verifying" ? "校验" : "拷贝"} {Math.round(current.status === "verifying" ? current.verifyProgress || 0 : current.copyProgress || 0)}%
             </span>
             <ChevronRight size={15} />
           </button>
@@ -1178,32 +1185,25 @@ export function App() {
                 </div>
                 <div>
                   <strong>
-                    {selected.speedBps ? bytes(selected.speedBps) + "/s" : "—"}
+                    {selected.aggregateSpeedBps ? bytes(selected.aggregateSpeedBps) + "/s" : "—"}
                   </strong>
-                  <span>当前速度</span>
+                  <span>实时物理写入</span>
                 </div>
                 <div>
                   <strong>
                     {selected.startedAt && selected.completedAt
-                      ? Math.max(
-                          1,
-                          Math.round(
-                            (selected.completedAt - selected.startedAt) / 1000,
-                          ),
-                        ) + " s"
+                      ? duration((selected.completedAt - selected.startedAt) / 1000)
                       : selected.eta
-                        ? Math.ceil(selected.eta) + " s"
+                        ? duration(selected.eta)
                         : "—"}
                   </strong>
                   <span>{active(selected) ? "预计剩余" : "总用时"}</span>
                 </div>
               </div>
-              <div className="progress-track">
-                <i
-                  style={{
-                    width: `${selected.status === "completed" ? 100 : Math.min(99, (selected.completedFiles / Math.max(1, selected.totalFiles)) * 100)}%`,
-                  }}
-                />
+              <div className="phase-head"><span>拷贝 {Math.round(selected.copyProgress || 0)}%</span><span>校验 {Math.round(selected.verifyProgress || 0)}%</span></div>
+              <div className="progress-track layered-progress">
+                <i className="copy-fill" style={{ width: `${selected.copyProgress || 0}%` }} />
+                <i className="verify-fill" style={{ width: `${selected.verifyProgress || 0}%` }} />
               </div>
               <p className="current-file mono">
                 {selected.currentFile ||
@@ -1246,7 +1246,7 @@ export function App() {
                     </Button>
                   </div>
                   <div className="destination-status">
-                    <span>{bytes(d.bytesWritten)} 实际写入</span>
+                    <span>拷贝 {Math.round(d.copyProgress || 0)}% · 校验 {Math.round(d.verifyProgress || 0)}% · {bytes(d.bytesWritten)} 写入</span>
                     <span
                       className={
                         d.verified
@@ -1278,6 +1278,11 @@ export function App() {
               <div className="row">
                 {active(selected) ? (
                   <>
+                    {selected.status === "paused" ? (
+                      <Button kind="subtle" onClick={() => void act(() => api.resumeTask(selected.id))}><Play size={14} />继续</Button>
+                    ) : ["running", "verifying"].includes(selected.status) ? (
+                      <Button kind="subtle" onClick={() => void act(() => api.pauseTask(selected.id))}><Pause size={14} />暂停</Button>
+                    ) : null}
                     <Button
                       kind="subtle"
                       onClick={() =>
@@ -1330,6 +1335,11 @@ export function App() {
                       >
                         <RefreshCw size={14} />
                         重新执行
+                      </Button>
+                    )}
+                    {selected.fileRecords.length > 0 && (
+                      <Button kind="subtle" onClick={() => void act(() => api.reverifyTask(selected.id), "重新校验完成")}>
+                        <ShieldCheck size={14} />重新校验
                       </Button>
                     )}
                     <Button
@@ -1462,7 +1472,9 @@ function Library({
   proxy: (f: { path: string; name: string }) => void;
 }) {
   const [kind, setKind] = useState("all"),
-    [limit, setLimit] = useState(100);
+    [limit, setLimit] = useState(100),
+    [preview, setPreview] = useState<any>(null),
+    [previewBusy, setPreviewBusy] = useState(false);
   const files = tasks.flatMap((t) =>
     t.fileRecords.map((f) => ({
       ...f,
@@ -1555,13 +1567,10 @@ function Library({
                     <FolderOpen size={16} />
                   </Button>
                   {isVideo(f.name) && (
-                    <Button
-                      kind="subtle"
-                      disabled={!p}
-                      onClick={() => p && proxy({ name: f.name, path: p })}
-                    >
-                      生成代理
-                    </Button>
+                    <>
+                      <Button kind="icon" title="查看缩略图和媒体信息" disabled={!p || previewBusy} onClick={() => p && (setPreviewBusy(true), api.inspectMedia(p).then(setPreview).finally(() => setPreviewBusy(false)))}><Play size={15} /></Button>
+                      <Button kind="subtle" disabled={!p} onClick={() => p && proxy({ name: f.name, path: p })}>生成代理</Button>
+                    </>
                   )}
                 </div>
               </div>
@@ -1585,6 +1594,13 @@ function Library({
           title={files.length ? "没有找到匹配的素材" : "素材备份后，在这里汇合"}
           detail="保留文件结构与校验状态，可在 Finder 中定位副本，或为视频生成剪辑代理。"
         />
+      )}
+      {preview && (
+        <div className="media-preview" role="dialog" aria-label="媒体预览">
+          <button className="media-preview-close" onClick={() => setPreview(null)}><X size={16}/></button>
+          {preview.thumbnail ? <img src={preview.thumbnail} alt={preview.name}/> : <div className="preview-empty"><Clapperboard size={32}/></div>}
+          <div><strong>{preview.name}</strong><p>{preview.duration || "时长未知"} · {bytes(preview.size)}</p><p>{preview.video || "未识别视频参数"}</p>{preview.audio && <p>{preview.audio}</p>}</div>
+        </div>
       )}
     </section>
   );
@@ -1745,13 +1761,13 @@ function SettingsPage({
         <img src="./icon.png" alt="Kocpy 图标" />
         <div>
           <h3>
-            New Kocpy <span>2.0.0</span>
+            Kocpy <span>0.0.1</span>
           </h3>
           <p>
             融合 DiskHop 的轻量工作流与 Kocpy
             的项目管理。为每一份创作，保留可靠的副本。
           </p>
-          <small>本地构建 · 无自动更新 · 保留原 Kocpy 图标</small>
+          <small>本地优先 · 独立校验 · 保留原 Kocpy 图标</small>
         </div>
       </div>
     </div>
@@ -1774,9 +1790,12 @@ function ProxyDialog({
     [format, setFormat] = useState<"h264" | "prores">("h264"),
     [res, setRes] = useState<"1080p" | "720p">("1080p"),
     [result, setResult] = useState(""),
-    [error, setError] = useState("");
+    [error, setError] = useState(""),
+    [progress, setProgress] = useState(0);
+  useEffect(() => api.onProxyProgress(setProgress), []);
   async function run() {
     setBusy(true);
+    setProgress(0);
     setError("");
     try {
       const r = await api.createProxy(file.path, out, format, res);
@@ -1873,9 +1892,10 @@ function ProxyDialog({
             FFmpeg，不保证专有 RAW 格式。
           </p>
           {busy && (
-            <div className="notice">
+            <div className="notice proxy-progress-block">
               <LoaderCircle size={17} className="spin" />
-              正在处理视频，请勿拔出源或目标设备…
+              <span>正在处理视频 · {Math.round(progress)}%</span>
+              <div className="progress-track"><i style={{width:`${progress}%`}} /></div>
             </div>
           )}
           {result && (
@@ -1888,6 +1908,7 @@ function ProxyDialog({
         </div>
         <div className="modal-footer">
           <span className="small muted">唯一文件名 · 不覆盖已有文件</span>
+          {busy && <Button kind="danger" onClick={() => void api.cancelProxy()}><Square size={13}/>取消转码</Button>}
           <Button
             kind="primary"
             disabled={busy || !out || !!result}

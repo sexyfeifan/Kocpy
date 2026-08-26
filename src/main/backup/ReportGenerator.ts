@@ -7,9 +7,9 @@ function formatDuration(ms: number): string {
   const h = Math.floor(seconds / 3600);
   const m = Math.floor((seconds % 3600) / 60);
   const s = seconds % 60;
-  if (h > 0) return `${h}h ${m}m ${s}s`;
-  if (m > 0) return `${m}m ${s}s`;
-  return `${s}s`;
+  if (h > 0) return `${h}时 ${m}分 ${s}秒`;
+  if (m > 0) return `${m}分 ${s}秒`;
+  return `${s}秒`;
 }
 
 function esc(s: string): string {
@@ -94,20 +94,20 @@ export async function generateReport(
     font-family: -apple-system, "PingFang SC", "Microsoft YaHei", "Helvetica Neue", sans-serif;
     font-size: 13px;
     color: #1a1a1a;
-    background: #f5f5f5;
+    background: #f1f0f5;
     padding: 32px;
   }
   .header {
-    background: #0f0f0f;
+    background: linear-gradient(135deg, #111216 0%, #242033 62%, #483d78 140%);
     color: #fff;
     padding: 24px 28px;
-    border-radius: 12px;
+    border-radius: 18px;
     display: flex;
     align-items: flex-start;
     justify-content: space-between;
     margin-bottom: 24px;
   }
-  .header h1 { font-size: 22px; font-weight: 700; letter-spacing: -0.5px; }
+  .header h1 { font-size: 28px; font-weight: 700; letter-spacing: -1px; }
   .header p { font-size: 11px; color: #888; margin-top: 4px; }
   .badge {
     padding: 6px 14px;
@@ -119,7 +119,11 @@ export async function generateReport(
     white-space: nowrap;
     margin-top: 4px;
   }
-  .section { background: #fff; border-radius: 10px; padding: 20px 24px; margin-bottom: 16px; }
+  .summary { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-bottom:16px; }
+  .summary div { background:#fff; border-radius:12px; padding:16px; border:1px solid #eae8ef; }
+  .summary strong { display:block; font-size:17px; color:#24202d; }
+  .summary span { display:block; margin-top:7px; color:#8a8590; font-size:9px; letter-spacing:.05em; }
+  .section { background: #fff; border-radius: 12px; padding: 20px 24px; margin-bottom: 16px; border:1px solid #eae8ef; }
   .section h2 {
     font-size: 12px;
     font-weight: 600;
@@ -143,7 +147,7 @@ export async function generateReport(
   .dest-table th:first-child { width: 62%; }
   .dest-table td:last-child { white-space: normal; }
   th {
-    background: #1a1a1a;
+    background: #272330;
     color: #fff;
     padding: 8px 10px;
     text-align: left;
@@ -166,10 +170,17 @@ export async function generateReport(
 <div class="header">
   <div>
     <h1>Kocpy</h1>
-    <p>专业素材备份报告</p>
+    <p>VERIFIED MEDIA TRANSFER REPORT · v0.0.1</p>
     <p style="margin-top:8px;font-size:12px;color:#aaa">生成时间：${new Date().toLocaleString("zh-CN")}</p>
   </div>
   <div class="badge">${statusLabel}</div>
+</div>
+
+<div class="summary">
+  <div><strong>${task.totalFiles}</strong><span>FILES / 文件</span></div>
+  <div><strong>${formatBytes(task.totalBytes)}</strong><span>SOURCE / 源数据</span></div>
+  <div><strong>${task.destinations.length}</strong><span>COPIES / 目的地</span></div>
+  <div><strong>${duration}</strong><span>DURATION / 总用时</span></div>
 </div>
 
 <div class="section">
@@ -206,7 +217,7 @@ export async function generateReport(
   </table>
 </div>
 
-<div class="footer">Kocpy 专业素材备份 · 共 ${task.totalFiles} 个文件 · ${formatBytes(task.totalBytes)}</div>
+<div class="footer">Kocpy · 本地优先的素材备份工作台 · 报告编号 ${esc(task.id.slice(0, 12).toUpperCase())}</div>
 
 </body>
 </html>`;

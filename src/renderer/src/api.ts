@@ -28,6 +28,9 @@ export interface API {
   createTask(config: TaskConfig): Promise<BackupTask>;
   startTask(id: string): Promise<void>;
   cancelTask(id: string): Promise<void>;
+  pauseTask(id: string): Promise<void>;
+  resumeTask(id: string): Promise<void>;
+  reverifyTask(id: string): Promise<BackupTask>;
   deleteTask(id: string): Promise<void>;
   setPriority(id: string, value: boolean): Promise<void>;
   scanSource(path: string, includeHidden?: boolean): Promise<Scan>;
@@ -41,7 +44,10 @@ export interface API {
   saveSettings(settings: Settings): Promise<void>;
   getProjects(): Promise<ProjectConfig[]>;
   saveProject(project: ProjectConfig): Promise<ProjectConfig[]>;
-  exportReport(id: string, format: "pdf" | "json"): Promise<string | null>;
+  exportReport(id: string, format: "pdf" | "json" | "mhl"): Promise<string | null>;
+  inspectMedia(path: string): Promise<{name:string;path:string;size:number;modifiedAt:number;duration?:string;video?:string;audio?:string;thumbnail?:string}>;
+  cancelProxy(): Promise<void>;
+  onProxyProgress(callback: (percent: number) => void): () => void;
   createProxy(
     input: string,
     out: string,
@@ -76,11 +82,12 @@ export const date = (n?: number) =>
     : "等待开始";
 export const today = () => new Date().toLocaleDateString("sv-SE");
 export const active = (t: BackupTask) =>
-  ["running", "verifying", "pending"].includes(t.status);
+  ["running", "paused", "verifying", "pending"].includes(t.status);
 export const statusText: Record<string, string> = {
   pending: "等待执行",
   running: "正在拷贝",
   verifying: "正在校验",
+  paused: "已暂停",
   completed: "校验通过",
   failed: "需要处理",
   cancelled: "已取消",

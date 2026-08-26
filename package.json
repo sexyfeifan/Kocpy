@@ -1,9 +1,9 @@
 {
-  "name": "new-kocpy",
-  "version": "2.0.0",
-  "description": "Kocpy 素材工作台 · 安全备份与项目归档",
+  "name": "kocpy",
+  "version": "0.0.1",
+  "description": "Kocpy 专业素材工作台 · 多目的地备份、独立校验与项目归档",
   "main": "out/main/index.js",
-  "productName": "New Kocpy",
+  "productName": "Kocpy",
   "author": "Kocpy",
   "license": "MIT",
   "scripts": {
@@ -13,7 +13,11 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "pack": "npm run build && electron-builder --mac --arm64 --dir",
-    "dist": "npm run build && electron-builder --mac --arm64"
+    "dist": "npm run build && electron-builder --mac --arm64 --x64",
+    "pack:arm64": "npm run build && electron-builder --mac --arm64 --dir",
+    "pack:x64": "npm run build && electron-builder --mac --x64 --dir",
+    "dist:arm64": "npm run build && electron-builder --mac --arm64",
+    "dist:x64": "npm run build && electron-builder --mac --x64"
   },
   "dependencies": {
     "react": "^19.2.7",
@@ -35,7 +39,7 @@
   },
   "build": {
     "appId": "com.kocpy.studio",
-    "productName": "New Kocpy",
+    "productName": "Kocpy",
     "directories": {
       "output": "release"
     },
@@ -54,7 +58,17 @@
       "target": [
         "dmg"
       ],
-      "artifactName": "New-Kocpy-${version}-${arch}.${ext}"
-    }
+      "artifactName": "Kocpy-${version}-${arch}.${ext}"
+    },
+    "extraResources": [
+      {
+        "from": "resources/ffmpeg",
+        "to": "ffmpeg",
+        "filter": [
+          "ffmpeg-darwin-*",
+          "LICENSE-*"
+        ]
+      }
+    ]
   }
 }

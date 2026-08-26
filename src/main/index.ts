@@ -20,22 +20,25 @@ import {
 import { Storage, defaultSettings } from "./storage";
 import { listVolumes, driveInfo, ejectVolume } from "./system";
 import { makeProxy } from "./proxy";
+import { inspectMedia } from "./media";
 import { generateReport } from "./backup/ReportGenerator";
+import { generateMhl } from "./backup/ManifestGenerator";
 import type { BackupTask, ProjectConfig, TaskConfig } from "./types";
 
-app.setName("New Kocpy");
-app.setPath(
-  "userData",
-  process.env.KOCPY_DATA_DIR || path.join(app.getPath("appData"), "New Kocpy"),
-);
+app.setName("Kocpy");
+const appDataRoot = app.getPath("appData");
+const userDataPath = process.env.KOCPY_DATA_DIR || path.join(appDataRoot, "Kocpy");
+app.setPath("userData", userDataPath);
 if (!app.requestSingleInstanceLock()) app.exit(0);
 
 const engine = new BackupEngine(),
   store = new Storage(app.getPath("userData"));
 let main: BrowserWindow | null = null,
+  persistTimer: ReturnType<typeof setTimeout> | undefined,
   quitReady = false,
   blocker: number | undefined,
-  proxyBusy = false;
+  proxyBusy = false,
+  proxyController: AbortController | undefined;
 const persist = () =>
   store.write("tasks.json", engine.getAllTasks().slice().reverse());
 app.on("second-instance", () => {
@@ -53,7 +56,7 @@ function createWindow() {
     height: 900,
     minWidth: 1080,
     minHeight: 720,
-    title: "New Kocpy",
+    title: "Kocpy",
     titleBarStyle: "hiddenInset",
     trafficLightPosition: { x: 22, y: 23 },
     backgroundColor: "#111215",
@@ -79,9 +82,19 @@ function createWindow() {
   else main.loadFile(path.join(__dirname, "../renderer/index.html"));
 }
 app.whenReady().then(async () => {
+  // One-time, non-destructive migration from the previous app data folder.
+  if (!process.env.KOCPY_DATA_DIR) {
+    const legacy = path.join(appDataRoot, "New Kocpy");
+    await fs.mkdir(userDataPath, { recursive: true });
+    for (const file of ["tasks.json", "projects.json", "settings.json"]) {
+      const target = path.join(userDataPath, file);
+      const targetExists = await fs.access(target).then(() => true, () => false);
+      if (!targetExists) await fs.copyFile(path.join(legacy, file), target).catch((e) => { if (e.code !== "ENOENT") throw e; });
+    }
+  }
   const saved = await store.read<BackupTask[]>("tasks.json", []);
   for (const task of saved) {
-    if (["pending", "running", "verifying"].includes(task.status)) {
+    if (["pending", "running", "paused", "verifying"].includes(task.status)) {
       task.status = "failed";
       task.errorMessage = "上次运行中断。可重新执行并重新校验已有文件。";
     }
@@ -110,6 +123,9 @@ app.whenReady().then(async () => {
     engine.cancelTask(id);
     return persist();
   });
+  handle("tasks:pause", async (id: string) => { engine.pauseTask(id); await persist(); return true; });
+  handle("tasks:resume", async (id: string) => { engine.resumeTask(id); await persist(); return true; });
+  handle("tasks:reverify", async (id: string) => { const result = await engine.reverifyTask(id); await persist(); return result; });
   handle("tasks:delete", (id: string) => {
     engine.deleteTask(id);
     return persist();
@@ -149,7 +165,7 @@ app.whenReady().then(async () => {
         .getAllTasks()
         .some(
           (t) =>
-            ["running", "verifying", "pending"].includes(t.status) &&
+            ["running", "paused", "verifying", "pending"].includes(t.status) &&
             (inside(t.sourcePath, volume) ||
               t.destinations.some((d) => inside(d.path, volume))),
         )
@@ -176,7 +192,7 @@ app.whenReady().then(async () => {
     await store.write("projects.json", all);
     return all;
   });
-  handle("report:export", async (id: string, format: "pdf" | "json") => {
+  handle("report:export", async (id: string, format: "pdf" | "json" | "mhl") => {
     const task = engine.getTask(id);
     if (!task) throw new Error("任务不存在");
     if (["pending", "running", "verifying"].includes(task.status))
@@ -188,6 +204,7 @@ app.whenReady().then(async () => {
     if (!r.filePath) return null;
     if (format === "json")
       await fs.writeFile(r.filePath, JSON.stringify(task, null, 2));
+    else if (format === "mhl") await fs.writeFile(r.filePath, generateMhl(task));
     else {
       const report = new BrowserWindow({
         show: false,
@@ -214,6 +231,12 @@ app.whenReady().then(async () => {
     }
     return r.filePath;
   });
+  handle("media:inspect", async (input: string) => {
+    const tracked = engine.getAllTasks().flatMap((t) => t.fileRecords).some((f) => f.destinations.some((d) => d.path === input && d.verified));
+    if (!tracked) throw new Error("只能预览已校验的素材副本");
+    return inspectMedia(input, path.join(app.getPath("userData"), "thumbnails"));
+  });
+  handle("proxy:cancel", () => { proxyController?.abort(new Error("用户取消代理任务")); return true; });
   handle(
     "proxy:create",
     async (
@@ -235,25 +258,30 @@ app.whenReady().then(async () => {
         if (inside(canonicalOut, await canonical(task.sourcePath)))
           throw new Error("代理不能写入素材源目录");
       proxyBusy = true;
+      proxyController = new AbortController();
       const lock = powerSaveBlocker.start("prevent-app-suspension");
       try {
-        return await makeProxy(input, out, format, res);
+        return await makeProxy(input, out, format, res, { signal: proxyController.signal, onProgress: (percent) => main?.webContents.send("proxy:progress", percent) });
       } finally {
         proxyBusy = false;
+        proxyController = undefined;
         powerSaveBlocker.stop(lock);
       }
     },
   );
   engine.on("progress", (payload) => {
+    clearTimeout(persistTimer);
+    persistTimer = setTimeout(() => void persist().catch(() => {}), 1000);
     if (main && !main.isDestroyed())
       main.webContents.send("tasks:progress", payload);
     if (
-      ["running", "verifying"].includes(payload.status) &&
+      ["running", "paused", "verifying"].includes(payload.status) &&
       blocker === undefined
     )
       blocker = powerSaveBlocker.start("prevent-app-suspension");
   });
   engine.on("settled", () => {
+    clearTimeout(persistTimer);
     void persist().catch((e) =>
       dialog.showErrorBox("任务记录保存失败", String(e)),
     );
@@ -265,7 +293,7 @@ app.whenReady().then(async () => {
   Menu.setApplicationMenu(
     Menu.buildFromTemplate([
       {
-        label: "New Kocpy",
+        label: "Kocpy",
         submenu: [
           { role: "about" },
           { type: "separator" },

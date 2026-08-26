@@ -1047,6 +1047,7 @@ small {
   color: #c7b68e;
   background: #c7b68e12;
 }
+.badge.paused { color: #e4bd72; background: #e4bd7214; }
 .running-bar {
   display: flex;
   align-items: center;
@@ -1064,6 +1065,7 @@ small {
   color: var(--muted);
 }
 .mini-progress {
+  position: relative;
   flex: 1;
   height: 3px;
   background: var(--border);
@@ -1078,6 +1080,9 @@ small {
   border-radius: inherit;
   transition: width 0.3s;
 }
+.mini-progress i { position: absolute; inset: 0 auto 0 0; }
+.copy-fill { background: var(--purple) !important; }
+.verify-fill { background: var(--green) !important; }
 .projects-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -1363,6 +1368,14 @@ small {
   align-items: center;
   gap: 16px;
 }
+.media-preview { position:fixed; right:28px; bottom:28px; width:440px; z-index:80; background:var(--panel); border:1px solid var(--border); border-radius:14px; overflow:hidden; box-shadow:var(--shadow); }
+.media-preview img,.preview-empty { width:100%; aspect-ratio:16/9; object-fit:cover; background:#090a0d; display:grid; place-items:center; color:var(--muted); }
+.media-preview>div:last-child { padding:16px 18px 18px; }
+.media-preview strong { font-size:14px; }
+.media-preview p { color:var(--muted); font-size:10px; margin-top:7px; overflow-wrap:anywhere; }
+.media-preview-close { position:absolute; z-index:2; right:10px; top:10px; border:1px solid #ffffff22; background:#090a0dcc; color:white; width:30px; height:30px; border-radius:50%; display:grid; place-items:center; }
+.proxy-progress-block { display:grid !important; grid-template-columns:auto 1fr; }
+.proxy-progress-block .progress-track { grid-column:1/-1; width:100%; }
 .settings-layout {
   max-width: 920px;
 }
@@ -2017,10 +2030,14 @@ small {
   margin-top: 9px;
 }
 .progress-track {
+  position: relative;
   height: 5px;
   background: var(--border);
   border-radius: 5px;
 }
+.layered-progress { overflow: hidden; }
+.layered-progress i { position: absolute; inset: 0 auto 0 0; }
+.phase-head { display:flex; justify-content:space-between; color:var(--muted); font-size:10px; margin:0 0 9px; }
 .current-file {
   color: var(--muted);
   font-size: 10px;

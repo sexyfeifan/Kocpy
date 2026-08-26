@@ -240,4 +240,20 @@ describe("Real filesystem backup integrity", () => {
     expect((await done).status).toBe("completed");
     await expect(fs.access(partial)).rejects.toThrow();
   });
+  it("pauses and resumes without losing its checkpoint and exposes real byte progress", async () => {
+    await fs.writeFile(path.join(source, "pause.bin"), randomBytes(20 * 1024 * 1024));
+    const engine = new BackupEngine(), task = engine.createTask(config());
+    let paused = false, sawPhysicalBytes = false, sawVerifyPhase = false;
+    engine.on("progress", (p) => {
+      sawPhysicalBytes ||= (p.physicalWrittenBytes || 0) > 0;
+      sawVerifyPhase ||= p.status === "verifying";
+      if (!paused && p.status === "running" && (p.physicalWrittenBytes || 0) > 0) {
+        paused = true; engine.pauseTask(task.id); setTimeout(() => engine.resumeTask(task.id), 20);
+      }
+    });
+    const done = wait(engine, task.id); engine.startTask(task.id);
+    expect((await done).status).toBe("completed");
+    expect(paused).toBe(true); expect(sawPhysicalBytes).toBe(true); expect(sawVerifyPhase).toBe(true);
+    expect(task.copyProgress).toBe(100); expect(task.verifyProgress).toBe(100);
+  });
 });

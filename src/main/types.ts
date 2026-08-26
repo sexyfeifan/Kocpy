@@ -1,6 +1,12 @@
 export type HashAlgorithm = "md5" | "sha1" | "sha256";
 export type TaskStatus =
-  "pending" | "running" | "verifying" | "completed" | "failed" | "cancelled";
+  | "pending"
+  | "running"
+  | "paused"
+  | "verifying"
+  | "completed"
+  | "failed"
+  | "cancelled";
 export type CopyMode = "normal" | "mirror";
 export type DuplicateStrategy = "skip" | "suffix";
 
@@ -12,6 +18,12 @@ export interface Destination {
   verified: boolean;
   checksum?: string;
   bytesWritten: number;
+  copiedBytes?: number;
+  verifiedBytes?: number;
+  copyProgress?: number;
+  verifyProgress?: number;
+  speedBps?: number;
+  volumeId?: string;
   error?: string;
 }
 
@@ -36,6 +48,7 @@ export interface BackupTask {
   id: string;
   name: string;
   sourcePath: string;
+  sourceVolumeId?: string;
   devices: string[];
   destinations: Destination[];
   hashAlgorithm: HashAlgorithm;
@@ -47,6 +60,11 @@ export interface BackupTask {
   completedFiles: number;
   totalBytes: number;
   transferredBytes: number;
+  physicalWrittenBytes?: number;
+  verifiedBytes?: number;
+  copyProgress?: number;
+  verifyProgress?: number;
+  aggregateSpeedBps?: number;
   speedBps: number;
   eta: number;
   currentFile: string;
@@ -68,6 +86,10 @@ export interface BackupTask {
   incremental?: boolean;
   unchangedFiles?: number;
   unchangedBytes?: number;
+  pausedAt?: number;
+  lastCheckpointAt?: number;
+  volumeWarnings?: string[];
+  lastVerifiedAt?: number;
 }
 
 export interface TaskConfig {
