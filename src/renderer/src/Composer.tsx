@@ -169,15 +169,18 @@ export function Composer({
   async function start() {
     await attempt(async () => {
       for (const source of sources) {
+        const claimed = mode === "project" && project ? await api.claimProjectVolume(project.id, camera) : undefined;
+        const automaticName = claimed ? `${claimed.prefix}${String(claimed.number).padStart(3, "0")}` : leaf(source.path);
+        const taskName = name || automaticName;
         const config = {
-          name: name || leaf(source.path),
+          name: taskName,
           sourcePath: source.path,
           destinationPaths: dests,
           hashAlgorithm: algorithm,
-          namingTemplate: name
+          namingTemplate: taskName
             ? sources.length > 1
-              ? `${name}_${leaf(source.path)}`
-              : name
+              ? `${taskName}_${leaf(source.path)}`
+              : taskName
             : leaf(source.path),
           devices: mode === "project" ? [camera] : [],
           shootingDate: mode === "project" ? shootDate : "",
@@ -188,6 +191,7 @@ export function Composer({
           duplicateStrategy: duplicate,
           includeHidden: hidden,
           priority,
+          volumeNumber: claimed?.number,
         };
         const task = await api.createTask(config);
         await api.startTask(task.id);
@@ -520,7 +524,9 @@ export function Composer({
                   <input
                     aria-label="任务名称"
                     placeholder={
-                      sources.length === 1
+                      mode === "project" && project
+                        ? `${project.volumePrefix || camera}${String(project.nextVolumeByDevice?.[camera] || 1).padStart(3, "0")}（确认开始后占用此卷号）`
+                        : sources.length === 1
                         ? leaf(sources[0].path)
                         : "默认使用各素材源文件夹名称"
                     }
@@ -588,7 +594,7 @@ export function Composer({
                       {d}
                       {mode === "mirror"
                         ? "/[原始目录结构]"
-                        : `/${mode === "project" ? `${project?.name}/${shootDate}/${camera}/` : ""}${name || "[素材源名称]"}_[时间戳]_[唯一标识]/`}
+                        : `/${mode === "project" ? `${project?.name}/${shootDate}/${camera}/` : ""}${name || (mode === "project" && project ? `${project.volumePrefix || camera}${String(project.nextVolumeByDevice?.[camera] || 1).padStart(3, "0")}` : "[素材源名称]")}_[时间戳]_[唯一标识]/`}
                     </p>
                   ))}
                 </div>

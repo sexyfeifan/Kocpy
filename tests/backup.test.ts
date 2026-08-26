@@ -256,4 +256,13 @@ describe("Real filesystem backup integrity", () => {
     expect(paused).toBe(true); expect(sawPhysicalBytes).toBe(true); expect(sawVerifyPhase).toBe(true);
     expect(task.copyProgress).toBe(100); expect(task.verifyProgress).toBe(100);
   });
+  it("isolates a destination preflight failure and completes the healthy target", async () => {
+    const blocker = path.join(root, "not-a-directory"); await fs.writeFile(blocker, "x");
+    const { task } = await run(config({ destinationPaths: [path.join(blocker, "bad"), d2] }));
+    expect(task.status).toBe("failed");
+    expect(task.destinations[0].available).toBe(false);
+    expect(task.destinations[0].error).toContain("预检失败");
+    expect(task.destinations[1].verified).toBe(true);
+    expect(await hashFile(path.join(d2, "DCIM", "片段.bin"), "sha256")).toBe(task.fileRecords.find((f) => f.name === "片段.bin")!.srcChecksum);
+  });
 });

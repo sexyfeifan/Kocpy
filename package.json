@@ -1,6 +1,6 @@
 {
   "name": "kocpy",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Kocpy 专业素材工作台 · 多目的地备份、独立校验与项目归档",
   "main": "out/main/index.js",
   "productName": "Kocpy",
@@ -17,7 +17,8 @@
     "pack:arm64": "npm run build && electron-builder --mac --arm64 --dir",
     "pack:x64": "npm run build && electron-builder --mac --x64 --dir",
     "dist:arm64": "npm run build && electron-builder --mac --arm64",
-    "dist:x64": "npm run build && electron-builder --mac --x64"
+    "dist:x64": "npm run build && electron-builder --mac --x64",
+    "test:hardware": "vitest run tests/hardware.integration.test.ts"
   },
   "dependencies": {
     "react": "^19.2.7",
@@ -54,6 +55,8 @@
     "mac": {
       "icon": "resources/icon.icns",
       "category": "public.app-category.video",
+      "hardenedRuntime": true,
+      "notarize": true,
       "target": [
         "dmg"
       ],

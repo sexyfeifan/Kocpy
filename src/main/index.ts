@@ -8,8 +8,9 @@ import {
   powerSaveBlocker,
 } from "electron";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
-import { BackupEngine } from "./backup/BackupEngine";
+import { BackupEngine, hashFile } from "./backup/BackupEngine";
 import {
   scan,
   validatePaths,
@@ -18,12 +19,12 @@ import {
   canonical,
 } from "./backup/safety";
 import { Storage, defaultSettings } from "./storage";
-import { listVolumes, driveInfo, ejectVolume } from "./system";
+import { listVolumes, driveInfo, ejectVolume, volumeIdentity } from "./system";
 import { makeProxy } from "./proxy";
 import { inspectMedia } from "./media";
-import { generateReport } from "./backup/ReportGenerator";
-import { generateMhl } from "./backup/ManifestGenerator";
-import type { BackupTask, ProjectConfig, TaskConfig } from "./types";
+import { generateReport, generateDailyReport } from "./backup/ReportGenerator";
+import { generateMhl, generateAscMhl } from "./backup/ManifestGenerator";
+import type { BackupTask, ProjectConfig, TaskConfig, ProxyJob } from "./types";
 
 app.setName("Kocpy");
 const appDataRoot = app.getPath("appData");
@@ -38,7 +39,8 @@ let main: BrowserWindow | null = null,
   quitReady = false,
   blocker: number | undefined,
   proxyBusy = false,
-  proxyController: AbortController | undefined;
+  proxyController: AbortController | undefined,
+  proxyJobs: ProxyJob[] = [];
 const persist = () =>
   store.write("tasks.json", engine.getAllTasks().slice().reverse());
 app.on("second-instance", () => {
@@ -49,6 +51,26 @@ app.on("second-instance", () => {
 });
 function handle(name: string, fn: (...args: any[]) => any) {
   ipcMain.handle(name, (_event, ...args) => fn(...args));
+}
+const persistProxyJobs = () => store.write("proxy-jobs.json", proxyJobs);
+const emitProxyJobs = () => { if (main && !main.isDestroyed()) main.webContents.send("proxy:jobs", proxyJobs); };
+async function syncReport(file: string) {
+  const settings = await store.read("settings.json", defaultSettings);
+  if (!settings.reportSyncPath) return;
+  await fs.mkdir(settings.reportSyncPath, { recursive: true });
+  const target = path.join(settings.reportSyncPath, path.basename(file));
+  if (path.resolve(target) !== path.resolve(file)) await fs.copyFile(file, target);
+}
+async function processProxyQueue() {
+  if (proxyBusy) return;
+  const job = proxyJobs.find((j) => j.status === "pending"); if (!job) return;
+  proxyBusy = true; proxyController = new AbortController(); Object.assign(job, { status: "running", progress: 0, startedAt: Date.now(), error: undefined });
+  emitProxyJobs(); await persistProxyJobs(); const lock = powerSaveBlocker.start("prevent-app-suspension");
+  try {
+    const result = await makeProxy(job.input, job.outputDir, job.format, job.resolution, { signal: proxyController.signal, onProgress: (progress) => { job.progress = progress; emitProxyJobs(); } });
+    Object.assign(job, { status: "completed", progress: 100, outputPath: result.outputPath, completedAt: Date.now() });
+  } catch (e: any) { Object.assign(job, { status: proxyController.signal.aborted ? "cancelled" : "failed", error: e.message || String(e), completedAt: Date.now() }); }
+  finally { proxyBusy = false; proxyController = undefined; powerSaveBlocker.stop(lock); await persistProxyJobs(); emitProxyJobs(); void processProxyQueue(); }
 }
 function createWindow() {
   main = new BrowserWindow({
@@ -82,16 +104,8 @@ function createWindow() {
   else main.loadFile(path.join(__dirname, "../renderer/index.html"));
 }
 app.whenReady().then(async () => {
-  // One-time, non-destructive migration from the previous app data folder.
-  if (!process.env.KOCPY_DATA_DIR) {
-    const legacy = path.join(appDataRoot, "New Kocpy");
-    await fs.mkdir(userDataPath, { recursive: true });
-    for (const file of ["tasks.json", "projects.json", "settings.json"]) {
-      const target = path.join(userDataPath, file);
-      const targetExists = await fs.access(target).then(() => true, () => false);
-      if (!targetExists) await fs.copyFile(path.join(legacy, file), target).catch((e) => { if (e.code !== "ENOENT") throw e; });
-    }
-  }
+  proxyJobs = await store.read<ProxyJob[]>("proxy-jobs.json", []);
+  for (const job of proxyJobs) if (job.status === "running") { job.status = "failed"; job.error = "上次转码被中断，可点击重试"; }
   const saved = await store.read<BackupTask[]>("tasks.json", []);
   for (const task of saved) {
     if (["pending", "running", "paused", "verifying"].includes(task.status)) {
@@ -111,6 +125,16 @@ app.whenReady().then(async () => {
   handle("tasks:create", async (config: TaskConfig) => {
     await validatePaths(config.sourcePath, config.destinationPaths);
     const task = engine.createTask(config);
+    const sourceIdentity = await volumeIdentity(config.sourcePath);
+    task.sourceVolumeId = sourceIdentity.id;
+    task.sourceVolumeUuid = sourceIdentity.uuid;
+    task.sourceVolumeName = sourceIdentity.name;
+    await Promise.all(task.destinations.map(async (destination) => {
+      const identity = await volumeIdentity(destination.path);
+      destination.volumeId = identity.id;
+      destination.volumeUuid = identity.uuid;
+      destination.volumeName = identity.name;
+    }));
     await persist();
     return task;
   });
@@ -126,6 +150,7 @@ app.whenReady().then(async () => {
   handle("tasks:pause", async (id: string) => { engine.pauseTask(id); await persist(); return true; });
   handle("tasks:resume", async (id: string) => { engine.resumeTask(id); await persist(); return true; });
   handle("tasks:reverify", async (id: string) => { const result = await engine.reverifyTask(id); await persist(); return result; });
+  handle("tasks:retry-failed", async (id: string) => { const task = engine.getTask(id); if (!task || !task.destinations.some((d) => !d.verified)) throw new Error("没有可重试的失败目标"); engine.startTask(id); await persist(); return true; });
   handle("tasks:delete", (id: string) => {
     engine.deleteTask(id);
     return persist();
@@ -171,10 +196,39 @@ app.whenReady().then(async () => {
         )
     )
       throw new Error("该磁盘有进行中或等待中的任务，请先取消任务");
-    if (proxyBusy) throw new Error("请等待代理转码完成后再推出设备");
+    if (proxyJobs.some((job) => ["pending", "running"].includes(job.status) && (inside(job.input, volume) || inside(job.outputDir, volume))))
+      throw new Error("该磁盘有等待中或进行中的代理任务，请先取消任务");
     return ejectVolume(volume);
   });
   handle("system:reveal", (file: string) => shell.showItemInFolder(file));
+  handle("migration:preview", async () => {
+    const sources = [] as Array<{path:string;tasks:number;projects:number;hasSettings:boolean}>;
+    for (const legacy of [path.join(appDataRoot, "New Kocpy"), path.join(appDataRoot, "KocardPro")]) {
+      const tasks = await new Storage(legacy).read<BackupTask[]>("tasks.json", []), projects = await new Storage(legacy).read<ProjectConfig[]>("projects.json", []), hasSettings = await fs.access(path.join(legacy, "settings.json")).then(() => true, () => false);
+      if (tasks.length || projects.length || hasSettings) sources.push({ path: legacy, tasks: tasks.length, projects: projects.length, hasSettings });
+    }
+    return sources;
+  });
+  handle("migration:import", async (legacy: string) => {
+    const allowed = [path.join(appDataRoot, "New Kocpy"), path.join(appDataRoot, "KocardPro")]; if (!allowed.includes(legacy)) throw new Error("不支持的迁移来源");
+    const sourceStore = new Storage(legacy), oldTasks = await sourceStore.read<BackupTask[]>("tasks.json", []), oldProjects = await sourceStore.read<ProjectConfig[]>("projects.json", []);
+    const backup = path.join(userDataPath, "migration-backups", String(Date.now())); await fs.mkdir(backup, { recursive: true });
+    for (const file of ["tasks.json", "projects.json", "settings.json"]) await fs.copyFile(path.join(userDataPath, file), path.join(backup, file)).catch((e) => { if (e.code !== "ENOENT") throw e; });
+    const existingIds = new Set(engine.getAllTasks().map((t) => t.id)); for (const task of oldTasks) if (!existingIds.has(task.id)) engine.loadTask(task); await persist();
+    const projects = await store.read<ProjectConfig[]>("projects.json", []), projectIds = new Set(projects.map((p) => p.id)); for (const project of oldProjects) if (!projectIds.has(project.id)) projects.push(project); await store.write("projects.json", projects);
+    const legacySettings = await sourceStore.read<typeof defaultSettings | null>("settings.json", null); if (legacySettings) await store.write("settings.json", { ...defaultSettings, ...legacySettings });
+    return { tasks: oldTasks.filter((t) => !existingIds.has(t.id)).length, projects: oldProjects.filter((p) => !projectIds.has(p.id)).length, backup };
+  });
+  handle("updates:check", async () => {
+    const response = await fetch("https://api.github.com/repos/sexyfeifan/Kocpy/releases/latest", { headers: { "Accept": "application/vnd.github+json", "User-Agent": `Kocpy/${app.getVersion()}` } });
+    if (!response.ok) throw new Error(`更新检查失败（HTTP ${response.status}）`);
+    const release = await response.json() as any, latest = String(release.tag_name || "").replace(/^v/, ""), current = app.getVersion();
+    const parts = (v:string) => v.split(".").map((n) => Number(n) || 0), a = parts(latest), b = parts(current);
+    let comparison = 0; for (let i = 0; i < Math.max(a.length, b.length); i++) { if ((a[i] || 0) !== (b[i] || 0)) { comparison = (a[i] || 0) > (b[i] || 0) ? 1 : -1; break; } }
+    const available = comparison > 0;
+    return { current, latest, available, url: release.html_url };
+  });
+  handle("updates:open", (url: string) => { if (!/^https:\/\/github\.com\/sexyfeifan\/Kocpy\/releases\//.test(url)) throw new Error("无效更新地址"); return shell.openExternal(url); });
   handle("settings:get", () => store.read("settings.json", defaultSettings));
   handle("settings:save", (settings: typeof defaultSettings) =>
     store.write("settings.json", settings),
@@ -192,19 +246,63 @@ app.whenReady().then(async () => {
     await store.write("projects.json", all);
     return all;
   });
-  handle("report:export", async (id: string, format: "pdf" | "json" | "mhl") => {
+  handle("projects:claim-volume", async (projectId: string, device: string) => {
+    const all = await store.read<ProjectConfig[]>("projects.json", []), project = all.find((p) => p.id === projectId);
+    if (!project) throw new Error("项目不存在");
+    project.nextVolumeByDevice ||= {};
+    const number = Math.max(1, project.nextVolumeByDevice[device] || 1);
+    project.nextVolumeByDevice[device] = number + 1;
+    await store.write("projects.json", all);
+    return { number, prefix: project.volumePrefix || device, project };
+  });
+  handle("report:daily", async (shootingDate: string, projectId?: string) => {
+    const tasks = engine.getAllTasks().filter((t) => (!projectId || t.projectId === projectId) && (t.shootingDate || new Date(t.completedAt || t.createdAt || 0).toLocaleDateString("sv-SE")) === shootingDate);
+    if (!tasks.length) throw new Error("所选拍摄日没有可汇总的任务");
+    const project = (await store.read<ProjectConfig[]>("projects.json", [])).find((p) => p.id === projectId);
+    const r = await dialog.showSaveDialog({ defaultPath: `Kocpy_${project?.name || "全部项目"}_${shootingDate}_汇总.pdf`, filters: [{ name: "PDF", extensions: ["pdf"] }] });
+    if (!r.filePath) return null;
+    const report = new BrowserWindow({ show: false, webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } });
+    try { await report.loadURL("data:text/html;charset=utf-8," + encodeURIComponent((await generateDailyReport(tasks, shootingDate, project?.name)).toString())); const pdf = await report.webContents.printToPDF({ printBackground: true, pageSize: "A4", margins: { top: 0.35, bottom: 0.35, left: 0.3, right: 0.3 } }); await fs.writeFile(r.filePath, pdf); }
+    finally { report.destroy(); }
+    await syncReport(r.filePath);
+    return r.filePath;
+  });
+  handle("report:resolve-csv", async (shootingDate: string, projectId?: string) => {
+    const tasks = engine.getAllTasks().filter((t) => (!projectId || t.projectId === projectId) && (t.shootingDate || new Date(t.completedAt || t.createdAt || 0).toLocaleDateString("sv-SE")) === shootingDate);
+    const videos = tasks.flatMap((task) => task.fileRecords.filter((file) => /\.(mov|mp4|mxf|mkv|avi|m4v)$/i.test(file.name)).map((file) => ({ task, file, mediaPath: file.destinations.find((destination) => destination.verified && destination.path)?.path }))).filter((row) => row.mediaPath);
+    if (!videos.length) throw new Error("所选拍摄日没有已校验的视频素材");
+    const result = await dialog.showSaveDialog({ defaultPath: `Kocpy_${shootingDate}_Resolve媒体池.csv`, filters: [{ name: "CSV", extensions: ["csv"] }] });
+    if (!result.filePath) return null;
+    const cell = (value: unknown) => { const raw = String(value ?? ""); const safe = /^[=+@-]/.test(raw) ? "'" + raw : raw; return '"' + safe.replace(/"/g, '""') + '"'; };
+    const rows = ["Media Path,Clip Name,Reel,Camera,Shooting Date,Kocpy Task"];
+    for (const row of videos) {
+      const metadata = await inspectMedia(row.mediaPath!, path.join(app.getPath("userData"), "thumbnails")).catch(() => ({} as any));
+      rows.push([row.mediaPath, row.file.name, row.task.devices[0] || "", metadata.camera || "", row.task.shootingDate || shootingDate, row.task.name].map(cell).join(","));
+    }
+    await fs.writeFile(result.filePath, "\ufeff" + rows.join("\n"), "utf8");
+    await syncReport(result.filePath);
+    return result.filePath;
+  });
+  handle("report:export", async (id: string, format: "pdf" | "json" | "mhl" | "ascmhl") => {
     const task = engine.getTask(id);
     if (!task) throw new Error("任务不存在");
-    if (["pending", "running", "verifying"].includes(task.status))
+    if (["pending", "running", "paused", "verifying"].includes(task.status))
       throw new Error("任务结束后才能导出完整报告");
     const r = await dialog.showSaveDialog({
-      defaultPath: `Kocpy_${task.name}_${id.slice(0, 6)}.${format}`,
-      filters: [{ name: format.toUpperCase(), extensions: [format] }],
+      defaultPath: `Kocpy_${task.name}_${id.slice(0, 6)}${format === "ascmhl" ? "_ASC.mhl" : `.${format}`}`,
+      filters: [{ name: format.toUpperCase(), extensions: [format === "ascmhl" ? "mhl" : format] }],
     });
     if (!r.filePath) return null;
     if (format === "json")
       await fs.writeFile(r.filePath, JSON.stringify(task, null, 2));
     else if (format === "mhl") await fs.writeFile(r.filePath, generateMhl(task));
+    else if (format === "ascmhl") {
+      for (const record of task.fileRecords) if (!record.ascMhlMd5) {
+        const readable = record.destinations.find((d) => d.verified && d.path)?.path || path.join(task.sourcePath, record.relativePath);
+        record.ascMhlMd5 = await hashFile(readable, "md5");
+      }
+      await fs.writeFile(r.filePath, generateAscMhl(task)); await persist();
+    }
     else {
       const report = new BrowserWindow({
         show: false,
@@ -229,6 +327,7 @@ app.whenReady().then(async () => {
         report.destroy();
       }
     }
+    await syncReport(r.filePath);
     return r.filePath;
   });
   handle("media:inspect", async (input: string) => {
@@ -236,39 +335,19 @@ app.whenReady().then(async () => {
     if (!tracked) throw new Error("只能预览已校验的素材副本");
     return inspectMedia(input, path.join(app.getPath("userData"), "thumbnails"));
   });
-  handle("proxy:cancel", () => { proxyController?.abort(new Error("用户取消代理任务")); return true; });
-  handle(
-    "proxy:create",
-    async (
-      input: string,
-      out: string,
-      format: "h264" | "prores",
-      res: "1080p" | "720p",
-    ) => {
-      if (proxyBusy) throw new Error("已有代理任务正在处理，请等待完成");
-      const tracked = engine
-        .getAllTasks()
-        .flatMap((t) => t.fileRecords)
-        .some((f) =>
-          f.destinations.some((d) => d.path === input && d.verified),
-        );
-      if (!tracked) throw new Error("只能为已校验的备份文件生成代理");
-      const canonicalOut = await canonical(out);
-      for (const task of engine.getAllTasks())
-        if (inside(canonicalOut, await canonical(task.sourcePath)))
-          throw new Error("代理不能写入素材源目录");
-      proxyBusy = true;
-      proxyController = new AbortController();
-      const lock = powerSaveBlocker.start("prevent-app-suspension");
-      try {
-        return await makeProxy(input, out, format, res, { signal: proxyController.signal, onProgress: (percent) => main?.webContents.send("proxy:progress", percent) });
-      } finally {
-        proxyBusy = false;
-        proxyController = undefined;
-        powerSaveBlocker.stop(lock);
-      }
-    },
-  );
+  handle("proxy:list", () => proxyJobs);
+  handle("proxy:enqueue", async (inputs: string[], out: string, format: "h264" | "prores", resolution: "1080p" | "720p") => {
+    if (!inputs.length) throw new Error("请选择至少一个视频");
+    const canonicalOut = await canonical(out);
+    for (const task of engine.getAllTasks()) if (inside(canonicalOut, await canonical(task.sourcePath))) throw new Error("代理不能写入素材源目录");
+    const tracked = new Set(engine.getAllTasks().flatMap((t) => t.fileRecords).flatMap((f) => f.destinations.filter((d) => d.verified).map((d) => d.path)));
+    for (const input of inputs) if (!tracked.has(input)) throw new Error("只能为已校验的备份文件生成代理");
+    const jobs = await Promise.all(inputs.map(async (input): Promise<ProxyJob> => { const metadata = await inspectMedia(input, path.join(app.getPath("userData"), "thumbnails")).catch(() => ({} as any)); return { id: randomUUID(), input, name: path.basename(input), outputDir: out, format, resolution, status: "pending", progress: 0, createdAt: Date.now(), timecode: metadata.timecode }; }));
+    proxyJobs.push(...jobs); await persistProxyJobs(); emitProxyJobs(); void processProxyQueue(); return jobs;
+  });
+  handle("proxy:cancel", async (id?: string) => { const job = id ? proxyJobs.find((j) => j.id === id) : proxyJobs.find((j) => j.status === "running"); if (!job) return false; if (job.status === "running") proxyController?.abort(new Error("用户取消代理任务")); else if (job.status === "pending") job.status = "cancelled"; await persistProxyJobs(); emitProxyJobs(); return true; });
+  handle("proxy:retry", async (id: string) => { const job = proxyJobs.find((j) => j.id === id); if (!job || !["failed", "cancelled"].includes(job.status)) throw new Error("该任务不能重试"); Object.assign(job, { status: "pending", progress: 0, error: undefined, completedAt: undefined }); await persistProxyJobs(); emitProxyJobs(); void processProxyQueue(); return true; });
+  handle("proxy:delete", async (id: string) => { const job = proxyJobs.find((j) => j.id === id); if (!job || ["running", "pending"].includes(job.status)) throw new Error("请先取消代理任务"); proxyJobs = proxyJobs.filter((j) => j.id !== id); await persistProxyJobs(); emitProxyJobs(); return true; });
   engine.on("progress", (payload) => {
     clearTimeout(persistTimer);
     persistTimer = setTimeout(() => void persist().catch(() => {}), 1000);
@@ -322,6 +401,7 @@ app.whenReady().then(async () => {
     ]),
   );
   createWindow();
+  emitProxyJobs(); void processProxyQueue();
   app.on("activate", () => {
     if (!main || main.isDestroyed()) createWindow();
     else main.show();

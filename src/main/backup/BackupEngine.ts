@@ -3,12 +3,18 @@ import { promises as fs, constants, createReadStream } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 import type { BackupTask, TaskConfig, HashAlgorithm, FileRecord, Destination } from "../types";
-import { canonical, scan, segment, safeChild, validatePaths } from "./safety";
+import { canonical, inside, scan, segment, safeChild } from "./safety";
+import { volumeIdentity } from "../system";
 
 export async function hashFile(file: string, algorithm: HashAlgorithm, signal?: AbortSignal): Promise<string> {
   const hash = createHash(algorithm);
   for await (const chunk of createReadStream(file, { highWaterMark: 4 * 1024 * 1024, signal })) hash.update(chunk);
   return hash.digest("hex");
+}
+async function hashSource(file: string, algorithm: HashAlgorithm, signal?: AbortSignal) {
+  const primary = createHash(algorithm), md5 = algorithm === "md5" ? primary : createHash("md5");
+  for await (const chunk of createReadStream(file, { highWaterMark: 4 * 1024 * 1024, signal })) { primary.update(chunk); if (md5 !== primary) md5.update(chunk); }
+  const digest = primary.digest("hex"); return { primary: digest, md5: md5 === primary ? digest : md5.digest("hex") };
 }
 
 class SpeedMeter {
@@ -78,14 +84,14 @@ export class BackupEngine extends EventEmitter {
     const folder = `${name}_${timestamp}_${id.slice(0, 4)}`;
     const projectFolder = config.projectName ? path.join(segment(config.projectName), segment(config.shootingDate || new Date().toLocaleDateString("sv-SE")), ...config.devices.slice(0, 1).map(segment)) : "";
     const task: BackupTask = {
-      id, name, sourcePath: config.sourcePath, devices: config.devices || [], projectId: config.projectId,
+      id, name, sourcePath: config.sourcePath, devices: config.devices || [], projectId: config.projectId, shootingDate: config.shootingDate,
       createdAt: Date.now(), hashAlgorithm: config.hashAlgorithm, namingTemplate: folder,
       shootingDateFolder: projectFolder, copyMode: config.copyMode || "normal", status: "pending",
       totalFiles: 0, completedFiles: 0, totalBytes: 0, transferredBytes: 0,
       physicalWrittenBytes: 0, verifiedBytes: 0, copyProgress: 0, verifyProgress: 0,
       speedBps: 0, aggregateSpeedBps: 0, eta: 0, currentFile: "", verifyLog: [], fileRecords: [],
       priority: config.priority || false, duplicateStrategy: config.duplicateStrategy || "skip",
-      includeHidden: config.includeHidden ?? true,
+      includeHidden: config.includeHidden ?? true, volumeNumber: config.volumeNumber,
       destinations: config.destinationPaths.map((p) => ({ id: randomUUID(), path: p, label: path.basename(p), verified: false, bytesWritten: 0, copiedBytes: 0, verifiedBytes: 0, copyProgress: 0, verifyProgress: 0, speedBps: 0 })),
     };
     this.tasks.set(id, task);
@@ -150,28 +156,55 @@ export class BackupEngine extends EventEmitter {
     const id = this.queue.shift()!, controller = new AbortController(); this.active.set(id, controller);
     void this.run(id, controller.signal).finally(() => this.processQueue());
   }
-  private async fanout(task: BackupTask, sourcePath: string, size: number, targets: CopyTarget[], signal: AbortSignal, meter: SpeedMeter) {
+  private async fanout(task: BackupTask, sourcePath: string, size: number, targets: CopyTarget[], signal: AbortSignal, meter: SpeedMeter, destinationMeters: Map<string, SpeedMeter>) {
     const groups = new Map<number, CopyTarget[]>();
     for (const target of targets) groups.set(target.offset, [...(groups.get(target.offset) || []), target]);
     for (const [offset, group] of groups) {
-      const source = await fs.open(sourcePath, "r"), outputs = await Promise.all(group.map((t) => fs.open(t.tempPath, t.offset ? "r+" : "w")));
+      const source = await fs.open(sourcePath, "r");
+      const states: Array<{ target: CopyTarget; handle: Awaited<ReturnType<typeof fs.open>>; position: number; active: boolean; pending?: Promise<void> }> = [];
+      for (const target of group) {
+        try { states.push({ target, handle: await fs.open(target.tempPath, target.offset ? "r+" : "w"), position: offset, active: true }); }
+        catch (e: any) { target.destination.available = false; target.destination.error = `无法打开断点文件：${e.message}`; }
+      }
       try {
-        let position = offset; const buffer = Buffer.allocUnsafe(4 * 1024 * 1024);
+        let position = offset;
         while (position < size) {
           await this.waitIfPaused(task.id, signal);
+          if (!states.some((state) => state.active)) break;
+          const buffer = Buffer.allocUnsafe(Math.min(4 * 1024 * 1024, size - position));
           const { bytesRead } = await source.read(buffer, 0, Math.min(buffer.length, size - position), position);
           if (!bytesRead) throw new Error("读取源文件时意外结束");
           const chunk = buffer.subarray(0, bytesRead);
-          await Promise.all(outputs.map((handle) => handle.write(chunk, 0, bytesRead, position)));
+          const active = states.filter((state) => state.active);
+          const written = (state: (typeof states)[number]) => {
+            const d = state.target.destination, own = destinationMeters.get(d.id)!; own.add(bytesRead);
+            d.bytesWritten += bytesRead; d.copiedBytes = Math.min(size, (d.copiedBytes || 0) + bytesRead); d.speedBps = own.rate();
+            state.position = position + bytesRead; task.physicalWrittenBytes = (task.physicalWrittenBytes || 0) + bytesRead; meter.add(bytesRead);
+          };
+          await Promise.all(active.map(async (state) => {
+            const actual = state.handle.write(chunk, 0, bytesRead, position).then(() => written(state)).catch((e: any) => { state.active = false; state.target.destination.available = false; state.target.destination.error = `写入失败：${e.message}`; });
+            if (active.length === 1) { await actual; return; }
+            const result = await Promise.race([actual.then(() => "done" as const), new Promise<"slow">((resolve) => setTimeout(() => resolve("slow"), 2000))]);
+            if (result === "slow") { state.active = false; state.pending = actual; task.volumeWarnings?.push(`${state.target.destination.label} 写入响应较慢，已从快速扇出分离，健康目标会先完成`); }
+          }));
           position += bytesRead;
-          for (const target of group) { target.destination.bytesWritten += bytesRead; target.destination.copiedBytes = Math.min(size, (target.destination.copiedBytes || 0) + bytesRead); target.destination.speedBps = meter.rate(); }
-          task.physicalWrittenBytes = (task.physicalWrittenBytes || 0) + bytesRead * group.length;
-          meter.add(bytesRead * group.length); task.aggregateSpeedBps = meter.rate(); task.speedBps = task.aggregateSpeedBps / Math.max(1, task.destinations.length);
+          task.aggregateSpeedBps = meter.rate(); task.speedBps = task.aggregateSpeedBps / Math.max(1, task.destinations.filter((d) => d.available !== false).length);
           task.eta = Math.max(0, (task.totalBytes - task.transferredBytes + size - position) / Math.max(1, task.speedBps));
           this.emitProgress(task);
         }
-        await Promise.all(outputs.map((handle) => handle.sync()));
-      } finally { await source.close(); await Promise.all(outputs.map((handle) => handle.close())); }
+        await Promise.all(states.filter((state) => state.active).map((state) => state.handle.sync()));
+      } finally {
+        await source.close();
+        await Promise.all(states.filter((state) => state.active).map((state) => state.handle.close().catch(() => {})));
+      }
+      for (const state of states.filter((state) => !state.active && state.pending)) {
+        await state.pending; await state.handle.sync().catch(() => {}); await state.handle.close().catch(() => {});
+        if (state.target.destination.available !== false && state.position < size) {
+          state.target.offset = state.position;
+          await this.fanout(task, sourcePath, size, [state.target], signal, meter, destinationMeters);
+        }
+      }
+      await Promise.all(states.filter((state) => !state.active && !state.pending).map((state) => state.handle.close().catch(() => {})));
     }
   }
   private async publish(temp: string, finalPath: string) {
@@ -183,12 +216,14 @@ export class BackupEngine extends EventEmitter {
     await fs.unlink(temp).catch(() => {});
   }
   private async verifyRecords(task: BackupTask, signal: AbortSignal) {
-    task.status = "verifying"; task.verifyTotalFiles = task.fileRecords.length * task.destinations.length;
-    const totalVerifyBytes = task.totalBytes * task.destinations.length;
+    const availableCount = task.destinations.filter((d) => d.available !== false).length;
+    task.status = "verifying"; task.verifyTotalFiles = task.fileRecords.length * availableCount;
+    const totalVerifyBytes = task.totalBytes * availableCount;
     for (const record of task.fileRecords) {
       for (const [index, result] of record.destinations.entries()) {
         await this.waitIfPaused(task.id, signal); task.status = "verifying"; task.currentFile = record.relativePath; this.emitProgress(task);
         const destination = task.destinations[index];
+        if (destination.available === false) continue;
         if (!result.path) { destination.error ||= `${record.relativePath}: 没有可校验的副本`; continue; }
         try {
           const checksum = await hashFile(result.path, task.hashAlgorithm, signal), verified = checksum === record.srcChecksum;
@@ -203,43 +238,76 @@ export class BackupEngine extends EventEmitter {
         task.verifyLog = task.verifyLog.slice(-200); this.emitProgress(task);
       }
     }
-    for (const [index, d] of task.destinations.entries()) d.verified = !d.error && task.fileRecords.length === task.totalFiles && task.fileRecords.every((r) => r.destinations[index]?.verified);
+    for (const [index, d] of task.destinations.entries()) d.verified = d.available !== false && !d.error && task.fileRecords.length === task.totalFiles && task.fileRecords.every((r) => r.destinations[index]?.verified);
   }
   private async run(id: string, signal: AbortSignal) {
     const task = this.tasks.get(id)!;
     Object.assign(task, { status: "running", startedAt: Date.now(), completedAt: undefined, completedFiles: 0, transferredBytes: 0, physicalWrittenBytes: 0, verifiedBytes: 0, copyProgress: 0, verifyProgress: 0, fileRecords: [], verifyLog: [], verifyCompletedFiles: 0, verifyTotalFiles: 0, speedBps: 0, aggregateSpeedBps: 0, volumeWarnings: [] });
-    for (const d of task.destinations) Object.assign(d, { verified: false, error: undefined, bytesWritten: 0, copiedBytes: 0, verifiedBytes: 0, copyProgress: 0, verifyProgress: 0, speedBps: 0 });
-    this.emitProgress(task); const meter = new SpeedMeter();
+    for (const d of task.destinations) Object.assign(d, { verified: false, error: undefined, available: true, resolvedPath: undefined, bytesWritten: 0, copiedBytes: 0, verifiedBytes: 0, copyProgress: 0, verifyProgress: 0, speedBps: 0 });
+    this.emitProgress(task); const meter = new SpeedMeter(), destinationMeters = new Map(task.destinations.map((d) => [d.id, new SpeedMeter()]));
     try {
-      const { src, dests } = await validatePaths(task.sourcePath, task.destinations.map((d) => d.path));
-      const currentSourceVolume = String((await fs.stat(src)).dev);
-      if (task.sourceVolumeId && task.sourceVolumeId !== currentSourceVolume) throw new Error("素材源磁盘身份已变化，请新建任务以避免误读同名挂载点");
-      task.sourceVolumeId = currentSourceVolume;
+      const src = await canonical(task.sourcePath);
+      if (!(await fs.stat(src)).isDirectory()) throw new Error("素材源必须是文件夹");
+      const dests = await Promise.all(task.destinations.map(async (d) => {
+        try { return await canonical(d.path); }
+        catch (e: any) { d.available = false; d.error = `预检失败：${e.message}`; return d.path; }
+      }));
+      for (let i = 0; i < dests.length; i++) {
+        if (task.destinations[i].available === false) continue;
+        if (inside(dests[i], src) || inside(src, dests[i])) { task.destinations[i].available = false; task.destinations[i].error = "预检失败：素材源与目的地不能相同或互相包含"; continue; }
+        for (let prior = 0; prior < i; prior++) if (task.destinations[prior].available !== false && (inside(dests[i], dests[prior]) || inside(dests[prior], dests[i]))) { task.destinations[i].available = false; task.destinations[i].error = "预检失败：目的地重复或互相包含"; break; }
+      }
+      const sourceIdentity = await volumeIdentity(src);
+      if (task.sourceVolumeUuid && sourceIdentity.uuid && task.sourceVolumeUuid !== sourceIdentity.uuid) throw new Error("素材源磁盘 UUID 已变化，请新建任务以避免误读同名挂载点");
+      if (!task.sourceVolumeUuid && task.sourceVolumeId && task.sourceVolumeId !== sourceIdentity.id) throw new Error("素材源磁盘身份已变化，请新建任务以避免误读同名挂载点");
+      task.sourceVolumeId = sourceIdentity.id; task.sourceVolumeUuid = sourceIdentity.uuid; task.sourceVolumeName = sourceIdentity.name;
       const inventory = await scan(src, task.includeHidden, signal); if (!inventory.files.length) throw new Error("素材源没有可备份的文件");
       task.totalFiles = inventory.files.length; task.totalBytes = inventory.totalBytes; task.skippedFiles = inventory.skipped; task.verifyTotalFiles = task.totalFiles * task.destinations.length;
-      const volumeNeeds = new Map<string, { free: number; need: number; labels: string[] }>();
+      const volumeNeeds = new Map<string, { free: number; need: number; largest: number; labels: string[] }>();
       for (const [i, d] of task.destinations.entries()) {
-        const root = task.copyMode === "mirror" ? dests[i] : path.join(dests[i], task.shootingDateFolder || "", task.namingTemplate);
-        await safeChild(dests[i], path.relative(dests[i], root));
-        if (dests[i].startsWith("/Volumes/")) await fs.access("/Volumes/" + dests[i].split("/")[2]);
-        await fs.mkdir(root, { recursive: true }); d.resolvedPath = await canonical(root);
-        const stat = await fs.stat(root), space = await fs.statfs(root), currentVolumeId = String(stat.dev);
-        if (d.volumeId && d.volumeId !== currentVolumeId) throw new Error(`目的地磁盘身份已变化：${d.label}`);
-        d.volumeId = currentVolumeId;
-        const previous = volumeNeeds.get(d.volumeId) || { free: space.bavail * space.bsize, need: 0, labels: [] };
-        previous.need += task.totalBytes; previous.labels.push(d.label); volumeNeeds.set(d.volumeId, previous);
-        for (const rel of inventory.directories) await fs.mkdir(await safeChild(d.resolvedPath, rel), { recursive: true });
+        if (d.available === false) continue;
+        try {
+          const root = task.copyMode === "mirror" ? dests[i] : path.join(dests[i], task.shootingDateFolder || "", task.namingTemplate);
+          await safeChild(dests[i], path.relative(dests[i], root));
+          if (dests[i].startsWith("/Volumes/")) await fs.access("/Volumes/" + dests[i].split("/")[2]);
+          const identity = await volumeIdentity(dests[i]);
+          if (d.volumeUuid && identity.uuid && d.volumeUuid !== identity.uuid) throw new Error("磁盘 UUID 与任务记录不一致");
+          if (!d.volumeUuid && d.volumeId && d.volumeId !== identity.id) throw new Error("磁盘身份与任务记录不一致");
+          d.volumeId = identity.id; d.volumeUuid = identity.uuid; d.volumeName = identity.name;
+          await fs.mkdir(root, { recursive: true }); d.resolvedPath = await canonical(root);
+          const space = await fs.statfs(root);
+          let required = 0, largest = 0;
+          for (const file of inventory.files) {
+            const finalPath = await safeChild(d.resolvedPath, file.relativePath);
+            const finalExists = await fs.access(finalPath).then(() => true, () => false);
+            if (finalExists && task.duplicateStrategy !== "suffix") continue;
+            const partial = finalPath + `.kocpy-${id}.partial`;
+            const partialSize = await fs.stat(partial).then((s) => Math.min(file.size, s.size), () => 0);
+            const remaining = Math.max(0, file.size - partialSize); required += remaining; largest = Math.max(largest, remaining);
+          }
+          const previous = volumeNeeds.get(identity.id) || { free: space.bavail * space.bsize, need: 0, largest: 0, labels: [] };
+          previous.need += required; previous.largest = Math.max(previous.largest, largest); previous.labels.push(d.label); volumeNeeds.set(identity.id, previous);
+          for (const rel of inventory.directories) await fs.mkdir(await safeChild(d.resolvedPath, rel), { recursive: true });
+        } catch (e: any) {
+          d.available = false; d.resolvedPath = undefined; d.error = `预检失败：${e.message || String(e)}`; task.verifyLog.push(`✗ ${d.label} · ${d.error}`);
+        }
       }
-      for (const [, volume] of volumeNeeds) {
-        if (volume.need > volume.free) throw new Error(`目的地总空间不足：${volume.labels.join("、")} 共需 ${volume.need} 字节`);
+      for (const [volumeId, volume] of volumeNeeds) {
+        const requiredWithPublishReserve = volume.need + volume.largest;
+        if (requiredWithPublishReserve > volume.free) {
+          for (const d of task.destinations.filter((d) => d.volumeId === volumeId)) { d.available = false; d.resolvedPath = undefined; d.error = `空间不足：需 ${requiredWithPublishReserve} 字节（含发布临时余量）`; }
+          continue;
+        }
         if (volume.labels.length > 1) task.volumeWarnings!.push(`${volume.labels.join("、")} 位于同一物理卷，不能抵御该磁盘故障`);
       }
+      if (!task.destinations.some((d) => d.available !== false)) throw new Error("所有目的地均未通过预检，请检查磁盘连接、身份和可用空间");
       for (const file of inventory.files) {
         await this.waitIfPaused(id, signal); task.status = "running"; task.currentFile = file.relativePath; this.emitProgress(task);
-        const srcHash = await hashFile(file.absolutePath, task.hashAlgorithm, signal);
-        const record: FileRecord = { name: file.name, relativePath: file.relativePath, size: file.size, srcChecksum: srcHash, destinations: [] };
+        const sourceHashes = await hashSource(file.absolutePath, task.hashAlgorithm, signal), srcHash = sourceHashes.primary;
+        const record: FileRecord = { name: file.name, relativePath: file.relativePath, size: file.size, srcChecksum: srcHash, ascMhlMd5: sourceHashes.md5, destinations: [] };
         const targets: CopyTarget[] = [];
         for (const d of task.destinations) {
+          if (d.available === false || !d.resolvedPath) { record.destinations.push({ path: "", checksum: "", verified: false }); continue; }
           let finalPath = await safeChild(d.resolvedPath!, file.relativePath); await fs.mkdir(path.dirname(finalPath), { recursive: true });
           let exists = await fs.lstat(finalPath).then(() => true, (e) => { if (e.code === "ENOENT") return false; throw e; });
           if (exists) {
@@ -259,8 +327,8 @@ export class BackupEngine extends EventEmitter {
           record.destinations.push({ path: finalPath, checksum: "", verified: false }); d.copiedBytes = (d.copiedBytes || 0) + tempSize;
           targets.push({ destination: d, finalPath, tempPath, offset: tempSize });
         }
-        await this.fanout(task, file.absolutePath, file.size, targets, signal, meter);
-        for (const target of targets) await this.publish(target.tempPath, target.finalPath);
+        await this.fanout(task, file.absolutePath, file.size, targets, signal, meter, destinationMeters);
+        for (const target of targets) if (target.destination.available !== false) await this.publish(target.tempPath, target.finalPath);
         task.transferredBytes += file.size; task.completedFiles++; task.copyProgress = Math.min(100, (task.transferredBytes / Math.max(1, task.totalBytes)) * 100);
         for (const d of task.destinations) d.copyProgress = Math.min(100, ((d.copiedBytes || 0) / Math.max(1, task.totalBytes)) * 100);
         task.fileRecords.push(record);

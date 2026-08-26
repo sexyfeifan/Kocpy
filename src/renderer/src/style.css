@@ -456,6 +456,11 @@ small {
   color: var(--muted);
   font-size: 10px;
 }
+.operational-panel { display:flex; align-items:center; justify-content:space-between; gap:28px; padding:28px 31px; margin-bottom:22px; border:1px solid var(--border); border-radius:13px; background:linear-gradient(120deg,#a99aff12,var(--panel) 56%,#81c9aa0b); }
+.operational-panel h2 { font-size:21px; margin:10px 0 8px; }
+.operational-panel p { color:var(--muted); font-size:11px; }
+.operational-actions { display:flex; gap:10px; }
+.alert-dot { width:6px;height:6px;border-radius:50%;background:var(--danger);display:inline-block;box-shadow:0 0 10px var(--danger); }
 .welcome-panel {
   display: grid;
   grid-template-columns: 1fr 1.06fr;
@@ -1374,6 +1379,8 @@ small {
 .media-preview strong { font-size:14px; }
 .media-preview p { color:var(--muted); font-size:10px; margin-top:7px; overflow-wrap:anywhere; }
 .media-preview-close { position:absolute; z-index:2; right:10px; top:10px; border:1px solid #ffffff22; background:#090a0dcc; color:white; width:30px; height:30px; border-radius:50%; display:grid; place-items:center; }
+.proxy-job { display:flex;align-items:center;gap:15px;padding:17px 20px;border-bottom:1px solid var(--border); }
+.proxy-job:last-child{border:0}.proxy-job-main{flex:1;min-width:0}.proxy-job-main strong{font-size:12px}.proxy-job-main p{font-size:10px;color:var(--muted);margin:7px 0 10px}.proxy-job-main .progress-track{height:3px}.proxy-job-main small{display:block;margin-top:8px}.badge.running{color:var(--purple);background:#a99aff12}.badge.completed{color:var(--green);background:#81c9aa12}.badge.cancelled{color:var(--muted);background:var(--panel2)}
 .proxy-progress-block { display:grid !important; grid-template-columns:auto 1fr; }
 .proxy-progress-block .progress-track { grid-column:1/-1; width:100%; }
 .settings-layout {
@@ -2046,6 +2053,9 @@ small {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.completion-conclusion { display:flex; gap:11px; align-items:flex-start; padding:13px 15px; margin-top:15px; border:1px solid #81c9aa28; border-radius:8px; color:var(--green); background:#81c9aa0a; }
+.completion-conclusion strong { display:block; font-size:11px; }
+.completion-conclusion span { display:block; color:var(--muted); font-size:9px; margin-top:5px; }
 .detail-label {
   font-size: 11px;
   color: var(--sub);

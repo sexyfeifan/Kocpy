@@ -53,4 +53,5 @@ export const defaultSettings = {
   includeHidden: true,
   operator: "",
   theme: "dark",
+  reportSyncPath: "",
 };

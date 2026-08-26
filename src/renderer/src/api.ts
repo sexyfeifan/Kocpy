@@ -1,5 +1,5 @@
-import type { BackupTask, TaskConfig, ProjectConfig } from "../../main/types";
-export type { BackupTask, TaskConfig, ProjectConfig };
+import type { BackupTask, TaskConfig, ProjectConfig, ProxyJob } from "../../main/types";
+export type { BackupTask, TaskConfig, ProjectConfig, ProxyJob };
 export interface Volume {
   name: string;
   path: string;
@@ -8,6 +8,11 @@ export interface Volume {
   used: number;
   deviceType: string;
   canEject: boolean;
+  identity?: { id: string; uuid?: string; deviceNode?: string; name: string; device: string };
+  isNetwork?: boolean;
+  protocol?: string;
+  latencyMs?: number;
+  writable?: boolean;
 }
 export interface Settings {
   defaultHash: "sha256" | "md5" | "sha1";
@@ -15,6 +20,7 @@ export interface Settings {
   includeHidden: boolean;
   operator: string;
   theme: "dark" | "light";
+  reportSyncPath: string;
 }
 export interface Scan {
   totalFiles: number;
@@ -31,6 +37,7 @@ export interface API {
   pauseTask(id: string): Promise<void>;
   resumeTask(id: string): Promise<void>;
   reverifyTask(id: string): Promise<BackupTask>;
+  retryFailedDestinations(id: string): Promise<void>;
   deleteTask(id: string): Promise<void>;
   setPriority(id: string, value: boolean): Promise<void>;
   scanSource(path: string, includeHidden?: boolean): Promise<Scan>;
@@ -40,20 +47,30 @@ export interface API {
   ): Promise<{ total: number; free: number; used: number }>;
   ejectVolume(path: string): Promise<void>;
   reveal(path: string): Promise<void>;
+  previewMigration(): Promise<Array<{path:string;tasks:number;projects:number;hasSettings:boolean}>>;
+  importMigration(path:string): Promise<{tasks:number;projects:number;backup:string}>;
+  checkUpdates(): Promise<{current:string;latest:string;available:boolean;url:string}>;
+  openUpdate(url:string): Promise<void>;
   getSettings(): Promise<Settings>;
   saveSettings(settings: Settings): Promise<void>;
   getProjects(): Promise<ProjectConfig[]>;
   saveProject(project: ProjectConfig): Promise<ProjectConfig[]>;
-  exportReport(id: string, format: "pdf" | "json" | "mhl"): Promise<string | null>;
-  inspectMedia(path: string): Promise<{name:string;path:string;size:number;modifiedAt:number;duration?:string;video?:string;audio?:string;thumbnail?:string}>;
-  cancelProxy(): Promise<void>;
-  onProxyProgress(callback: (percent: number) => void): () => void;
-  createProxy(
-    input: string,
+  claimProjectVolume(projectId: string, device: string): Promise<{number:number;prefix:string;project:ProjectConfig}>;
+  exportReport(id: string, format: "pdf" | "json" | "mhl" | "ascmhl"): Promise<string | null>;
+  exportDailyReport(date: string, projectId?: string): Promise<string | null>;
+  exportResolveCsv(date: string, projectId?: string): Promise<string | null>;
+  inspectMedia(path: string): Promise<{name:string;path:string;size:number;modifiedAt:number;duration?:string;video?:string;audio?:string;timecode?:string;camera?:string;creationTime?:string;resolution?:string;frameRate?:string;thumbnail?:string}>;
+  getProxyJobs(): Promise<ProxyJob[]>;
+  enqueueProxy(
+    inputs: string[],
     out: string,
     format: "h264" | "prores",
     resolution: "1080p" | "720p",
-  ): Promise<{ outputPath: string; size: number }>;
+  ): Promise<ProxyJob[]>;
+  cancelProxy(id?: string): Promise<void>;
+  retryProxy(id: string): Promise<void>;
+  deleteProxy(id: string): Promise<void>;
+  onProxyJobs(callback: (jobs: ProxyJob[]) => void): () => void;
   onProgress(
     callback: (task: Partial<BackupTask> & { taskId: string }) => void,
   ): () => void;

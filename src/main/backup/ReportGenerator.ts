@@ -170,7 +170,7 @@ export async function generateReport(
 <div class="header">
   <div>
     <h1>Kocpy</h1>
-    <p>VERIFIED MEDIA TRANSFER REPORT · v0.0.1</p>
+    <p>VERIFIED MEDIA TRANSFER REPORT · v0.0.2</p>
     <p style="margin-top:8px;font-size:12px;color:#aaa">生成时间：${new Date().toLocaleString("zh-CN")}</p>
   </div>
   <div class="badge">${statusLabel}</div>
@@ -223,4 +223,12 @@ export async function generateReport(
 </html>`;
 
   return Buffer.from(html, "utf-8");
+}
+
+export async function generateDailyReport(tasks: BackupTask[], shootingDate: string, projectName = "全部项目"): Promise<Buffer> {
+  const safeTasks = tasks.filter((t) => t.fileRecords.length > 0);
+  const files = safeTasks.reduce((n, t) => n + t.totalFiles, 0), bytes = safeTasks.reduce((n, t) => n + t.totalBytes, 0);
+  const rows = safeTasks.map((t) => `<tr><td>${esc(t.name)}</td><td>${esc((t.devices || []).join(" / ") || "-")}</td><td>${t.totalFiles}</td><td>${formatBytes(t.totalBytes)}</td><td style="color:${t.status === "completed" ? "#21b76b" : "#d9545d"}">${t.status === "completed" ? "✓ 全部通过" : `⚠ ${esc(t.errorMessage || "需处理")}`}</td></tr>`).join("");
+  const destinationRows = safeTasks.flatMap((t) => t.destinations.map((d) => `<tr><td>${esc(t.name)}</td><td>${esc(d.volumeName || d.label)}</td><td>${esc(d.resolvedPath || d.path)}</td><td>${d.verified ? "✓ 通过" : `✗ ${esc(d.error || "未通过")}`}</td></tr>`)).join("");
+  return Buffer.from(`<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><style>*{box-sizing:border-box}body{font-family:-apple-system,"PingFang SC",sans-serif;color:#24212c;padding:30px;background:#f3f1f6;font-size:12px}.cover{padding:30px;border-radius:18px;color:white;background:linear-gradient(135deg,#111216,#332b54);display:flex;justify-content:space-between}.cover h1{font-size:27px;margin:0}.cover p{color:#aaa4b8}.date{font-size:18px;color:#b5a6ff}.cards{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:18px 0}.cards div,.section{background:white;border:1px solid #e8e5ed;border-radius:12px;padding:18px}.cards strong{display:block;font-size:21px}.cards span{font-size:9px;color:#8b8593}.section{margin-top:14px}.section h2{font-size:12px;color:#77717e;border-bottom:1px solid #eee;padding-bottom:10px}table{width:100%;border-collapse:collapse;table-layout:fixed}th{background:#282331;color:white;text-align:left;padding:9px}td{padding:9px;border-bottom:1px solid #eee;overflow-wrap:anywhere}tr{break-inside:avoid}@media print{body{padding:0;background:white}}</style></head><body><div class="cover"><div><h1>Kocpy · 拍摄日汇总</h1><p>${esc(projectName)} · VERIFIED MEDIA DAY REPORT</p></div><div class="date">${esc(shootingDate)}</div></div><div class="cards"><div><strong>${safeTasks.length}</strong><span>BACKUPS / 备份任务</span></div><div><strong>${files}</strong><span>FILES / 文件</span></div><div><strong>${formatBytes(bytes)}</strong><span>MEDIA / 素材总量</span></div></div><div class="section"><h2>任务结论</h2><table><thead><tr><th>任务</th><th>机位</th><th>文件</th><th>大小</th><th>结论</th></tr></thead><tbody>${rows}</tbody></table></div><div class="section"><h2>目的地与校验</h2><table><thead><tr><th>任务</th><th>磁盘</th><th>路径</th><th>状态</th></tr></thead><tbody>${destinationRows}</tbody></table></div></body></html>`, "utf8");
 }

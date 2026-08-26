@@ -9,6 +9,11 @@ export type TaskStatus =
   | "cancelled";
 export type CopyMode = "normal" | "mirror";
 export type DuplicateStrategy = "skip" | "suffix";
+export type ProxyStatus = "pending" | "running" | "completed" | "failed" | "cancelled";
+export interface ProxyJob {
+  id: string; input: string; name: string; outputDir: string; format: "h264" | "prores"; resolution: "1080p" | "720p";
+  status: ProxyStatus; progress: number; createdAt: number; startedAt?: number; completedAt?: number; outputPath?: string; error?: string; timecode?: string;
+}
 
 export interface Destination {
   id: string;
@@ -24,6 +29,9 @@ export interface Destination {
   verifyProgress?: number;
   speedBps?: number;
   volumeId?: string;
+  volumeUuid?: string;
+  volumeName?: string;
+  available?: boolean;
   error?: string;
 }
 
@@ -32,6 +40,7 @@ export interface FileRecord {
   relativePath: string;
   size: number;
   srcChecksum: string;
+  ascMhlMd5?: string;
   destinations: Array<{
     path: string;
     checksum: string;
@@ -44,11 +53,14 @@ export interface FileRecord {
 
 export interface BackupTask {
   projectId?: string;
+  shootingDate?: string;
   createdAt?: number;
   id: string;
   name: string;
   sourcePath: string;
   sourceVolumeId?: string;
+  sourceVolumeUuid?: string;
+  sourceVolumeName?: string;
   devices: string[];
   destinations: Destination[];
   hashAlgorithm: HashAlgorithm;
@@ -84,6 +96,7 @@ export interface BackupTask {
   includeHidden?: boolean;
   thumbnailError?: string;
   incremental?: boolean;
+  volumeNumber?: number;
   unchangedFiles?: number;
   unchangedBytes?: number;
   pausedAt?: number;
@@ -109,6 +122,7 @@ export interface TaskConfig {
   fx3Rename?: boolean;
   includeHidden?: boolean;
   incremental?: boolean;
+  volumeNumber?: number;
 }
 
 export interface ProgressPayload {
@@ -150,6 +164,7 @@ export interface ProjectConfig {
   name: string;
   devices: string[];
   volumePrefix: string;
+  nextVolumeByDevice?: Record<string, number>;
   shootingDate?: string;
   shootingDateStart?: string;
   shootingDateEnd?: string;

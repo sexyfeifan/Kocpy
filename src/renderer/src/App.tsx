@@ -68,6 +68,7 @@ import {
   type Volume,
   type Settings,
   type Scan,
+  type ProxyJob,
 } from "./api";
 import { Composer } from "./Composer";
 import { ProjectEditor } from "./ProjectEditor";
@@ -77,6 +78,7 @@ type Page =
   | "transfers"
   | "projects"
   | "library"
+  | "processing"
   | "reports"
   | "storage"
   | "settings";
@@ -85,6 +87,7 @@ const navigation: [Page, string, typeof LayoutDashboard][] = [
   ["transfers", "传输队列", ArrowLeftRight],
   ["projects", "拍摄项目", FolderKanban],
   ["library", "素材库", Film],
+  ["processing", "代理队列", Activity],
   ["reports", "报告中心", FileCheck2],
   ["storage", "存储设备", HardDrive],
 ];
@@ -94,6 +97,7 @@ const defaults: Settings = {
   includeHidden: true,
   operator: "",
   theme: "dark",
+  reportSyncPath: "",
 };
 const duration = (seconds = 0) => {
   const value = Math.max(0, Math.round(seconds));
@@ -161,6 +165,7 @@ export function App() {
   const [page, setPage] = useState<Page>("overview"),
     [tasks, setTasks] = useState<BackupTask[]>([]),
     [projects, setProjects] = useState<ProjectConfig[]>([]),
+    [proxyJobs, setProxyJobs] = useState<ProxyJob[]>([]),
     [volumes, setVolumes] = useState<Volume[]>([]),
     [settings, setSettings] = useState<Settings>(defaults);
   const [composer, setComposer] = useState<{
@@ -180,7 +185,7 @@ export function App() {
       text: string;
       run: () => Promise<unknown>;
     } | null>(null),
-    [proxy, setProxy] = useState<{ path: string; name: string } | null>(null),
+    [proxy, setProxy] = useState<{ path: string; name: string; paths?: string[] } | null>(null),
     [proxyBusy, setProxyBusy] = useState(false);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
     undefined,
@@ -209,13 +214,15 @@ export function App() {
       api.getProjects(),
       api.getSettings(),
       api.listVolumes(),
+      api.getProxyJobs(),
     ])
-      .then(([t, p, s, v]) => {
+      .then(([t, p, s, v, jobs]) => {
         if (!stopped) {
           setTasks(t);
           setProjects(p);
           setSettings({ ...defaults, ...s });
           setVolumes(v);
+          setProxyJobs(jobs);
         }
       })
       .catch((e) => notify(String(e), true))
@@ -231,6 +238,7 @@ export function App() {
       if (["completed", "failed", "cancelled"].includes(payload.status || ""))
         void refresh().catch((e) => notify(String(e), true));
     });
+    const unsubProxy = api.onProxyJobs(setProxyJobs);
     const interval = setInterval(() => {
       void api
         .listVolumes()
@@ -242,6 +250,7 @@ export function App() {
     return () => {
       stopped = true;
       unsub();
+      unsubProxy();
       clearInterval(interval);
     };
   }, [notify, refresh]);
@@ -293,7 +302,7 @@ export function App() {
         t.status === filter),
   );
   const selected = tasks.find((t) => t.id === detail);
-  const exportReport = (id: string, format: "pdf" | "json" | "mhl") =>
+  const exportReport = (id: string, format: "pdf" | "json" | "mhl" | "ascmhl") =>
     act(async () => {
       const result = await api.exportReport(id, format);
       if (result) notify(`报告已保存：${result}`);
@@ -349,6 +358,8 @@ export function App() {
             ? "素材介质"
             : v.deviceType === "system"
               ? "内置磁盘"
+              : v.deviceType === "network"
+                ? "网络存储"
               : "外置 / 挂载存储"}
         </span>
       </div>
@@ -367,6 +378,7 @@ export function App() {
         <span>{bytes(v.free)} 可用</span>
         <span>{bytes(v.total)}</span>
       </div>
+      {v.isNetwork && <div className="row between small"><span>{v.protocol?.toUpperCase()} · {v.writable ? "可写" : "只读"}</span><span>{v.latencyMs} ms 响应</span></div>}
       <div className="volume-actions">
         <Button kind="subtle" onClick={() => setComposer({ source: v.path })}>
           <Plus size={13} />
@@ -412,7 +424,7 @@ export function App() {
           <img src="./icon.png" alt="Kocpy 图标" />
           <div>
             <strong>
-              Kocpy<span>0.0.1</span>
+              Kocpy<span>0.0.2</span>
             </strong>
             <small>素材工作台</small>
           </div>
@@ -456,7 +468,7 @@ export function App() {
           </button>
           <div className="sidebar-foot">
             <span className="live-dot" />
-            桌面版 · macOS <span>v0.0.1</span>
+            桌面版 · macOS <span>v0.0.2</span>
           </div>
         </div>
       </aside>
@@ -500,6 +512,7 @@ export function App() {
                     transfers: "TRANSFER CENTER",
                     projects: "PRODUCTION ORGANIZER",
                     library: "VERIFIED MEDIA",
+                    processing: "PROXY PROCESSING",
                     reports: "TRANSFER RECORDS",
                     storage: "CONNECTED STORAGE",
                     settings: "MAKE IT YOURS",
@@ -513,6 +526,7 @@ export function App() {
                     transfers: "传输队列",
                     projects: "拍摄项目",
                     library: "素材库",
+                    processing: "代理队列",
                     reports: "报告中心",
                     storage: "存储设备",
                     settings: "偏好设置",
@@ -526,6 +540,7 @@ export function App() {
                     transfers: "拷贝、校验与任务记录，在一个地方掌握。",
                     projects: "提前整理拍摄计划，让每一次备份自动归位。",
                     library: "浏览备份文件清单，从已校验的副本继续工作。",
+                    processing: "批量转码、进度、取消与失败重试。",
                     reports: "每一次传输都有据可查，每一份交付都有记录。",
                     storage: "识别已挂载的本地磁盘、素材卡和网络存储。",
                     settings: "为你的工作方式设定可靠的默认值。",
@@ -563,7 +578,20 @@ export function App() {
             <>
               {page === "overview" && (
                 <>
-                  <section className="welcome-panel">
+                  {tasks.length > 0 && (
+                    <section className="operational-panel">
+                      <div>
+                        <span className="mini-label"><span className={tasks.some((t) => t.status === "failed") ? "alert-dot" : "live-dot"} /> DAILY OPERATIONS</span>
+                        <h2>{current ? `${current.name} · ${statusText[current.status]}` : tasks.some((t) => t.status === "failed") ? `${tasks.filter((t) => t.status === "failed").length} 个任务需要处理` : "今日素材已妥善归档"}</h2>
+                        <p>{current ? `${current.currentFile || "正在准备"} · ${Math.round(current.status === "verifying" ? current.verifyProgress || 0 : current.copyProgress || 0)}%` : `最近完成 ${finished.length} 次校验备份，连接下一张素材卡即可继续。`}</p>
+                      </div>
+                      <div className="operational-actions">
+                        {tasks.some((t) => t.status === "failed") && <Button kind="danger" onClick={() => { go("transfers"); setFilter("failed"); }}><AlertTriangle size={15}/>查看异常</Button>}
+                        <Button kind="primary" onClick={() => setComposer({})}><Plus size={15}/>继续拷卡</Button>
+                      </div>
+                    </section>
+                  )}
+                  {!tasks.length && <section className="welcome-panel">
                     <div className="welcome-copy">
                       <span className="mini-label">
                         <span className="live-dot" />
@@ -647,7 +675,7 @@ export function App() {
                         </span>
                       </div>
                     </div>
-                  </section>
+                  </section>}
                   <div className="stats-grid">
                     <Stat
                       icon={ArrowLeftRight}
@@ -1014,11 +1042,7 @@ export function App() {
                   <section className="panel">
                     <div className="section-title">
                       <h2>任务报告</h2>
-                      <SearchBox
-                        value={query}
-                        onChange={setQuery}
-                        placeholder="搜索报告…"
-                      />
+                      <div className="row"><Button kind="subtle" onClick={() => void act(async () => { const result = await api.exportResolveCsv(today()); if (result) notify(`Resolve 媒体池清单已保存：${result}`); })}><Clapperboard size={14}/>Resolve CSV</Button><Button kind="subtle" onClick={() => void act(async () => { const result = await api.exportDailyReport(today()); if (result) notify(`拍摄日汇总已保存：${result}`); })}><CalendarDays size={14}/>导出今日汇总</Button><SearchBox value={query} onChange={setQuery} placeholder="搜索报告…" /></div>
                     </div>
                     {tasks.filter((t) => !active(t) && t.name.includes(query))
                       .length ? (
@@ -1052,6 +1076,7 @@ export function App() {
                               >
                                 <File size={16} />
                               </Button>
+                              <Button kind="icon" title="导出通过 ASC XSD 结构验证的 ASC MHL v2 清单" onClick={() => void exportReport(t.id, "ascmhl")}><ShieldCheck size={16}/></Button>
                             </div>
                           ))}
                       </div>
@@ -1074,6 +1099,7 @@ export function App() {
                   proxy={setProxy}
                 />
               )}
+              {page === "processing" && <ProxyQueue jobs={proxyJobs} act={act} refresh={async () => setProxyJobs(await api.getProxyJobs())} />}
               {page === "settings" && (
                 <SettingsPage
                   settings={settings}
@@ -1126,6 +1152,7 @@ export function App() {
           onClose={() => setComposer(null)}
           onCreated={async () => {
             await refresh();
+            setProjects(await api.getProjects());
             setComposer(null);
             go("transfers");
             notify("任务已加入传输队列");
@@ -1211,6 +1238,7 @@ export function App() {
                     ? "所有文件已完成拷贝与哈希比对"
                     : "等待或任务已停止")}
               </p>
+              {selected.status === "completed" && <div className="completion-conclusion"><CheckCircle2 size={17}/><div><strong>{selected.destinations.filter((d) => d.verified).length} 个目标均通过独立校验</strong><span>可以导出报告、定位副本或安全推出素材所在设备。</span></div></div>}
               {selected.errorMessage && (
                 <div className="error-box">
                   <AlertTriangle size={17} />
@@ -1244,9 +1272,10 @@ export function App() {
                     >
                       <FolderOpen size={16} />
                     </Button>
+                    {selected.status === "completed" && d.path.startsWith("/Volumes/") && <Button kind="icon" title="安全推出此磁盘" onClick={() => void act(() => api.ejectVolume(`/Volumes/${d.path.split("/")[2]}`), "设备已安全推出")}><Eject size={15}/></Button>}
                   </div>
                   <div className="destination-status">
-                    <span>拷贝 {Math.round(d.copyProgress || 0)}% · 校验 {Math.round(d.verifyProgress || 0)}% · {bytes(d.bytesWritten)} 写入</span>
+                    <span>拷贝 {Math.round(d.copyProgress || 0)}% · 校验 {Math.round(d.verifyProgress || 0)}% · {d.speedBps ? `${bytes(d.speedBps)}/s` : bytes(d.bytesWritten) + " 写入"}</span>
                     <span
                       className={
                         d.verified
@@ -1330,11 +1359,11 @@ export function App() {
                       <Button
                         kind="subtle"
                         onClick={() =>
-                          void act(() => api.startTask(selected.id))
+                          void act(() => selected.destinations.some((d) => d.verified) ? api.retryFailedDestinations(selected.id) : api.startTask(selected.id))
                         }
                       >
                         <RefreshCw size={14} />
-                        重新执行
+                        {selected.destinations.some((d) => d.verified) ? "重试失败目标" : "重新执行"}
                       </Button>
                     )}
                     {selected.fileRecords.length > 0 && (
@@ -1469,10 +1498,11 @@ function Library({
   query: string;
   setQuery: (s: string) => void;
   reveal: (p: string) => void;
-  proxy: (f: { path: string; name: string }) => void;
+  proxy: (f: { path: string; name: string; paths?: string[] }) => void;
 }) {
   const [kind, setKind] = useState("all"),
     [limit, setLimit] = useState(100),
+    [selectedPaths, setSelectedPaths] = useState<string[]>([]),
     [preview, setPreview] = useState<any>(null),
     [previewBusy, setPreviewBusy] = useState(false);
   const files = tasks.flatMap((t) =>
@@ -1483,11 +1513,13 @@ function Library({
     })),
   );
   const isVideo = (name: string) => /\.(mov|mp4|mxf|mkv|avi|m4v)$/i.test(name);
+  const isColor = (name: string) => /\.(cube|cdl|cc|ccc|clf)$/i.test(name);
   const filtered = files.filter(
     (f) =>
       f.name.toLowerCase().includes(query.toLowerCase()) &&
       (kind === "all" ||
         (kind === "video" && isVideo(f.name)) ||
+        (kind === "color" && isColor(f.name)) ||
         (kind === "image" &&
           /\.(jpg|jpeg|png|arw|cr3|nef|dng|raf|heic)$/i.test(f.name))),
   );
@@ -1499,6 +1531,7 @@ function Library({
             ["all", "全部文件"],
             ["video", "视频"],
             ["image", "照片 / RAW"],
+            ["color", "LUT / CDL"],
           ].map(([id, label]) => (
             <button
               key={id}
@@ -1512,14 +1545,14 @@ function Library({
             </button>
           ))}
         </div>
-        <SearchBox
+        <div className="row">{selectedPaths.length > 0 && <Button kind="primary" onClick={() => proxy({name:`${selectedPaths.length} 个视频`,path:selectedPaths[0],paths:selectedPaths})}><Activity size={14}/>批量代理 {selectedPaths.length}</Button>}<SearchBox
           value={query}
           onChange={(v) => {
             setQuery(v);
             setLimit(100);
           }}
           placeholder="搜索素材文件…"
-        />
+        /></div>
       </div>
       {filtered.length ? (
         <>
@@ -1535,6 +1568,7 @@ function Library({
             return (
               <div className="library-row" key={f.id}>
                 <div className="row">
+                  {isVideo(f.name) && p && <input type="checkbox" aria-label={`选择 ${f.name}`} checked={selectedPaths.includes(p)} onChange={(e) => setSelectedPaths((all) => e.target.checked ? [...new Set([...all,p])] : all.filter((x) => x !== p))}/>}
                   <span className="file-icon">
                     {isVideo(f.name) ? (
                       <Clapperboard size={20} />
@@ -1599,11 +1633,22 @@ function Library({
         <div className="media-preview" role="dialog" aria-label="媒体预览">
           <button className="media-preview-close" onClick={() => setPreview(null)}><X size={16}/></button>
           {preview.thumbnail ? <img src={preview.thumbnail} alt={preview.name}/> : <div className="preview-empty"><Clapperboard size={32}/></div>}
-          <div><strong>{preview.name}</strong><p>{preview.duration || "时长未知"} · {bytes(preview.size)}</p><p>{preview.video || "未识别视频参数"}</p>{preview.audio && <p>{preview.audio}</p>}</div>
+          <div><strong>{preview.name}</strong><p>{preview.camera || "摄影机型号未知"} · {preview.duration || "时长未知"} · {bytes(preview.size)}</p><p>{[preview.resolution, preview.frameRate && `${preview.frameRate} fps`, preview.timecode && `TC ${preview.timecode}`].filter(Boolean).join(" · ") || preview.video || "未识别视频参数"}</p>{preview.audio && <p>{preview.audio}</p>}{preview.creationTime && <p>拍摄时间 {preview.creationTime}</p>}</div>
         </div>
       )}
     </section>
   );
+}
+function ProxyQueue({ jobs, act, refresh }: { jobs: ProxyJob[]; act: (fn: () => Promise<unknown>, success?: string) => Promise<void>; refresh: () => Promise<void> }) {
+  const rows = [...jobs].reverse();
+  return <section className="panel">
+    <div className="section-title"><h2>代理处理队列 <span>{jobs.filter((j) => ["pending", "running"].includes(j.status)).length}</span></h2><span className="muted small">队列按顺序处理，应用重启后可继续重试</span></div>
+    {rows.length ? <div className="proxy-job-list">{rows.map((job) => <div className="proxy-job" key={job.id}>
+      <span className={`file-icon ${job.status === "completed" ? "green" : ""}`}><Clapperboard size={19}/></span>
+      <div className="proxy-job-main"><div className="row between"><strong>{job.name}</strong><span className={`badge ${job.status}`}>{({pending:"等待处理",running:"正在转码",completed:"已完成",failed:"失败",cancelled:"已取消"} as Record<string,string>)[job.status]}</span></div><p>{job.format.toUpperCase()} · {job.resolution}{job.timecode ? ` · TC ${job.timecode}` : ""}</p><div className="progress-track"><i style={{width:`${job.progress}%`}} /></div>{job.error && <small className="red-text">{job.error}</small>}</div>
+      <div className="row">{job.status === "running" || job.status === "pending" ? <Button kind="danger" onClick={() => void act(async () => { await api.cancelProxy(job.id); await refresh(); }, "代理任务已取消")}><Square size={12}/>取消</Button> : null}{["failed","cancelled"].includes(job.status) && <Button kind="subtle" onClick={() => void act(async () => { await api.retryProxy(job.id); await refresh(); }, "已重新加入队列")}><RefreshCw size={13}/>重试</Button>}{job.outputPath && <Button kind="icon" title="在 Finder 中显示" onClick={() => void api.reveal(job.outputPath!)}><FolderOpen size={15}/></Button>}{!["running","pending"].includes(job.status) && <Button kind="icon" title="删除队列记录" onClick={() => void act(async () => { await api.deleteProxy(job.id); await refresh(); })}><Trash2 size={15}/></Button>}</div>
+    </div>)}</div> : <Empty icon={Activity} title="代理队列为空" detail="在素材库中选择已校验的视频并加入队列，可连续处理多个代理任务。"/>}
+  </section>;
 }
 function SettingsPage({
   settings,
@@ -1615,7 +1660,10 @@ function SettingsPage({
   notify: (m: string, e?: boolean) => void;
 }) {
   const [draft, setDraft] = useState(settings),
-    [saving, setSaving] = useState(false);
+    [saving, setSaving] = useState(false),
+    [migration, setMigration] = useState<Array<{path:string;tasks:number;projects:number;hasSettings:boolean}>>([]),
+    [updateInfo, setUpdateInfo] = useState<{current:string;latest:string;available:boolean;url:string}|null>(null);
+  useEffect(() => { void api.previewMigration().then(setMigration).catch(() => {}); }, []);
   const save = async () => {
     setSaving(true);
     try {
@@ -1702,6 +1750,11 @@ function SettingsPage({
             <i />
           </button>
         </div>
+        <div className="setting-row"><div><h3>安全更新</h3><p>{updateInfo ? updateInfo.available ? `发现新版本 ${updateInfo.latest}，可前往项目官方 GitHub Release 下载。` : `当前 ${updateInfo.current} 已是最新版本。` : "只检查项目官方 GitHub Release，不静默下载或替换应用。"}</p></div><div className="row"><Button kind="subtle" onClick={() => void api.checkUpdates().then(setUpdateInfo).catch((e) => notify(String(e),true))}><RefreshCw size={14}/>检查更新</Button>{updateInfo?.available && <Button kind="primary" onClick={() => void api.openUpdate(updateInfo.url)}><ExternalLink size={14}/>打开下载页</Button>}</div></div>
+      </section>
+      <section className="panel settings-panel">
+        <div className="section-title"><h2><Archive size={18}/>旧版数据迁移</h2><span className="muted small">先预览，确认后导入；旧数据不会被删除</span></div>
+        {migration.length ? migration.map((source) => <div className="setting-row" key={source.path}><div><h3>{leaf(source.path)}</h3><p>{source.tasks} 条任务 · {source.projects} 个项目{source.hasSettings ? " · 含偏好设置" : ""}<br/><span className="mono">{source.path}</span></p></div><Button kind="subtle" onClick={() => void api.importMigration(source.path).then((r) => { notify(`已导入 ${r.tasks} 条任务和 ${r.projects} 个项目，当前数据已备份`); setTimeout(() => location.reload(), 500); }).catch((e) => notify(String(e),true))}><Download size={14}/>确认导入</Button></div>) : <div className="setting-row"><div><h3>没有发现可迁移的旧数据</h3><p>支持 New Kocpy 与 KocardPro 的本地任务、项目和偏好设置。</p></div><Check size={17}/></div>}
       </section>
       <section className="panel settings-panel">
         <div className="section-title">
@@ -1735,9 +1788,13 @@ function SettingsPage({
         <div className="setting-row">
           <div>
             <h3>数据与隐私</h3>
-            <p>无需账号，任务与项目保存在本机。不会上传素材。</p>
+            <p>无需账号，任务与项目保存在本机；只在你指定时镜像报告。</p>
           </div>
           <span className="small muted">独立于旧版 Kocpy</span>
+        </div>
+        <div className="setting-row">
+          <div><h3>云端报告镜像</h3><p>{draft.reportSyncPath || "可选择 iCloud Drive、Dropbox 或其他同步盘文件夹；只镜像导出的报告与清单，不复制素材。"}</p></div>
+          <div className="row"><Button kind="subtle" onClick={() => void api.selectDirectory().then((folder) => folder && setDraft({...draft, reportSyncPath: folder}))}><FolderOpen size={14}/>选择文件夹</Button>{draft.reportSyncPath && <Button kind="icon" title="关闭报告镜像" onClick={() => setDraft({...draft, reportSyncPath: ""})}><X size={14}/></Button>}</div>
         </div>
         <div className="setting-row">
           <div>
@@ -1761,7 +1818,7 @@ function SettingsPage({
         <img src="./icon.png" alt="Kocpy 图标" />
         <div>
           <h3>
-            Kocpy <span>0.0.1</span>
+            Kocpy <span>0.0.2</span>
           </h3>
           <p>
             融合 DiskHop 的轻量工作流与 Kocpy
@@ -1780,7 +1837,7 @@ function ProxyDialog({
   onClose,
   notify,
 }: {
-  file: { name: string; path: string };
+  file: { name: string; path: string; paths?: string[] };
   busy: boolean;
   setBusy: (b: boolean) => void;
   onClose: () => void;
@@ -1790,17 +1847,14 @@ function ProxyDialog({
     [format, setFormat] = useState<"h264" | "prores">("h264"),
     [res, setRes] = useState<"1080p" | "720p">("1080p"),
     [result, setResult] = useState(""),
-    [error, setError] = useState(""),
-    [progress, setProgress] = useState(0);
-  useEffect(() => api.onProxyProgress(setProgress), []);
+    [error, setError] = useState("");
   async function run() {
     setBusy(true);
-    setProgress(0);
     setError("");
     try {
-      const r = await api.createProxy(file.path, out, format, res);
-      setResult(r.outputPath);
-      notify("剪辑代理已生成");
+      await api.enqueueProxy(file.paths || [file.path], out, format, res);
+      setResult("已加入代理队列");
+      notify("视频已加入代理队列");
     } catch (e) {
       setError(String(e));
     } finally {
@@ -1891,24 +1945,16 @@ function ProxyDialog({
             保持原始宽高比、不放大小尺寸素材。生成期间请保持应用运行。编解码支持取决于内置
             FFmpeg，不保证专有 RAW 格式。
           </p>
-          {busy && (
-            <div className="notice proxy-progress-block">
-              <LoaderCircle size={17} className="spin" />
-              <span>正在处理视频 · {Math.round(progress)}%</span>
-              <div className="progress-track"><i style={{width:`${progress}%`}} /></div>
-            </div>
-          )}
           {result && (
             <div className="success-box">
               <CheckCircle2 size={17} />
-              已生成：{result}
+              {result}，可在「代理队列」查看进度、取消或重试。
             </div>
           )}
           {error && <div className="error-box">{error}</div>}
         </div>
         <div className="modal-footer">
           <span className="small muted">唯一文件名 · 不覆盖已有文件</span>
-          {busy && <Button kind="danger" onClick={() => void api.cancelProxy()}><Square size={13}/>取消转码</Button>}
           <Button
             kind="primary"
             disabled={busy || !out || !!result}

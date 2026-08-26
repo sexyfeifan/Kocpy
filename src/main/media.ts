@@ -19,8 +19,14 @@ export async function inspectMedia(input: string, cacheDir: string) {
     catch (e: any) { stderr = e.stderr || ""; }
   }
   const duration = stderr.match(/Duration:\s*([^,]+)/)?.[1]?.trim();
-  const video = stderr.match(/Video:\s*([^\n]+)/)?.[1]?.split(",").slice(0, 3).join(",").trim();
+  const videoLine = stderr.match(/Video:\s*([^\n]+)/)?.[1] || "";
+  const video = videoLine.split(",").slice(0, 4).join(",").trim();
   const audio = stderr.match(/Audio:\s*([^\n]+)/)?.[1]?.split(",").slice(0, 3).join(",").trim();
+  const timecode = stderr.match(/(?:timecode|TIMECODE)\s*:\s*([^\r\n]+)/)?.[1]?.trim();
+  const camera = stderr.match(/(?:com\.apple\.quicktime\.model|model|camera_model)\s*:\s*([^\r\n]+)/i)?.[1]?.trim();
+  const creationTime = stderr.match(/creation_time\s*:\s*([^\r\n]+)/i)?.[1]?.trim();
+  const resolution = videoLine.match(/(\d{3,5}x\d{3,5})/)?.[1];
+  const frameRate = videoLine.match(/([\d.]+)\s*fps/)?.[1];
   const data = await fs.readFile(thumbnail).then((b) => `data:image/jpeg;base64,${b.toString("base64")}`, () => undefined);
-  return { name: path.basename(input), path: input, size: stat.size, modifiedAt: stat.mtimeMs, duration, video, audio, thumbnail: data };
+  return { name: path.basename(input), path: input, size: stat.size, modifiedAt: stat.mtimeMs, duration, video, audio, timecode, camera, creationTime, resolution, frameRate, thumbnail: data };
 }

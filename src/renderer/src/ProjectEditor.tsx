@@ -12,6 +12,7 @@ export function ProjectEditor({
   onSave: (p: ProjectConfig) => Promise<void>;
 }) {
   const [name, setName] = useState(initial.name || ""),
+    [volumePrefix, setVolumePrefix] = useState(initial.volumePrefix || "CARD"),
     [start, setStart] = useState(initial.shootingDateStart || today()),
     [end, setEnd] = useState(initial.shootingDateEnd || today()),
     [devices, setDevices] = useState(initial.devices?.join("、") || "A机、B机"),
@@ -38,7 +39,7 @@ export function ProjectEditor({
               .filter(Boolean),
           ),
         ],
-        volumePrefix: "",
+        volumePrefix: volumePrefix.trim() || "CARD",
         shootingDateStart: start,
         shootingDateEnd: end,
         destinationPaths: dests,
@@ -111,6 +112,11 @@ export function ProjectEditor({
               placeholder="A机、B机、无人机"
             />
             <small>用顿号或逗号分隔，备份时可选择本次机位。</small>
+          </label>
+          <label>
+            素材卷号前缀
+            <input aria-label="素材卷号前缀" value={volumePrefix} onChange={(e) => setVolumePrefix(e.target.value)} placeholder="例如 CARD" />
+            <small>确认开始备份后按机位自动递增，例如 CARD001、CARD002。</small>
           </label>
           <label>
             常用备份目的地 <small>可在每次备份前调整</small>

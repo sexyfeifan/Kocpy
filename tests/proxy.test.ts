@@ -50,3 +50,13 @@ it("generates playable H.264 and ProRes proxy files with the bundled FFmpeg", as
     await fs.rm(root, { recursive: true, force: true });
   }
 });
+it("reports proxy progress and removes partial output after cancellation", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "kocpy-proxy-cancel-"));
+  try {
+    const input=path.join(root,"long.mp4"), out=path.join(root,"out");
+    await exec(ffmpeg!,["-f","lavfi","-i","testsrc2=size=1280x720:rate=30","-t","8","-c:v","libx264","-preset","ultrafast",input]);
+    const controller=new AbortController(); let progress=0;
+    await expect(makeProxy(input,out,"h264","720p",{signal:controller.signal,onProgress:(p)=>{progress=Math.max(progress,p);if(p>0)controller.abort(new Error("test cancel"));}})).rejects.toThrow();
+    expect(progress).toBeGreaterThan(0); expect(await fs.readdir(out)).not.toContain(expect.stringContaining(".partial."));
+  } finally { await fs.rm(root,{recursive:true,force:true}); }
+});
