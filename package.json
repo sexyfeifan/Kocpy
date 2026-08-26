@@ -1,0 +1,60 @@
+{
+  "name": "new-kocpy",
+  "version": "2.0.0",
+  "description": "Kocpy 素材工作台 · 安全备份与项目归档",
+  "main": "out/main/index.js",
+  "productName": "New Kocpy",
+  "author": "Kocpy",
+  "license": "MIT",
+  "scripts": {
+    "dev": "ELECTRON_RUN_AS_NODE= electron-vite dev",
+    "start": "npm run dev",
+    "build": "electron-vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "pack": "npm run build && electron-builder --mac --arm64 --dir",
+    "dist": "npm run build && electron-builder --mac --arm64"
+  },
+  "dependencies": {
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "lucide-react": "^0.475.0",
+    "ffmpeg-static": "^5.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^4.6.0",
+    "electron": "^28.3.3",
+    "electron-builder": "^24.13.3",
+    "electron-vite": "^2.0.0",
+    "typescript": "^5.3.0",
+    "vite": "^5.0.0",
+    "vitest": "^4.1.10"
+  },
+  "build": {
+    "appId": "com.kocpy.studio",
+    "productName": "New Kocpy",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "out/**/*",
+      "package.json"
+    ],
+    "asar": true,
+    "asarUnpack": [
+      "node_modules/ffmpeg-static/**"
+    ],
+    "mac": {
+      "icon": "resources/icon.icns",
+      "category": "public.app-category.video",
+      "identity": null,
+      "target": [
+        "dmg"
+      ],
+      "artifactName": "New-Kocpy-${version}-${arch}.${ext}"
+    }
+  }
+}
