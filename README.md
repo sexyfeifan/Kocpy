@@ -88,6 +88,14 @@ Time Machine 本地快照、隐藏挂载目录与系统备份卷不会出现在�
 
 打开 DMG，将 Kocpy 拖入“应用程序”文件夹即可。应用内置与处理器架构匹配的原生 FFmpeg，用于媒体检查、缩略图与代理生成。
 
+当前公开安装包尚未使用 Apple Developer ID 签名和公证。首次启动若被 Gatekeeper 阻止，请先在“系统设置 → 隐私与安全性”中选择“仍要打开”。如果 macOS 明确提示应用“已损坏”且不提供该按钮，请确认安装包来自本仓库的官方 Release，再在终端执行以下仅针对 Kocpy 的命令：
+
+```bash
+xattr -dr com.apple.quarantine "/Applications/Kocpy.app"
+```
+
+不要全局关闭 Gatekeeper。完成 Developer ID 签名与 Apple 公证后将不再需要此步骤。
+
 ## 技术与许可
 
 Kocpy 使用 Electron、React 与 TypeScript 构建，源码采用 MIT License。内置 FFmpeg 使用其随附的 GPL 许可。产品方向参考了 [Kocard](https://www.kocard.net/) 与公开仓库 [fdgjut797/kocard](https://github.com/fdgjut797/kocard)，界面、交互流程和实现均在本项目中重新设计。
