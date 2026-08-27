@@ -33,7 +33,7 @@ export class SpeedMeter {
     const raw = this.pending / Math.max(0.001, elapsed);
     this.pending = 0;
     this.lastSample = now;
-    const alpha = raw > 0 ? 0.32 : 0.45;
+    const alpha = raw > 0 ? 0.12 : 0.28;
     this.smoothed = this.smoothed ? this.smoothed * (1 - alpha) + raw * alpha : raw;
     if (this.smoothed < 1024) this.smoothed = 0;
     return this.smoothed;
@@ -65,6 +65,7 @@ export class BackupEngine extends EventEmitter {
   private active = new Map<string, AbortController>();
   private paused = new Set<string>();
   private pauseWaiters = new Map<string, Array<() => void>>();
+  private lastProgressEmit = new Map<string, number>();
   getTask(id: string) { return this.tasks.get(id); }
   getAllTasks() { return [...this.tasks.values()].reverse(); }
   loadTask(task: BackupTask) {
@@ -166,7 +167,12 @@ export class BackupEngine extends EventEmitter {
     }
     signal.throwIfAborted();
   }
-  private emitProgress(task: BackupTask) { task.lastCheckpointAt = Date.now(); this.emit("progress", { ...task, taskId: task.id, fileRecords: undefined }); }
+  private emitProgress(task: BackupTask, force = false) {
+    const now = Date.now(), previous = this.lastProgressEmit.get(task.id) || 0;
+    if (!force && now - previous < 300) return;
+    this.lastProgressEmit.set(task.id, now); task.lastCheckpointAt = now;
+    this.emit("progress", { ...task, taskId: task.id, fileRecords: undefined });
+  }
   private processQueue() {
     if (this.active.size || !this.queue.length) return;
     this.queue.sort((a, b) => Number(this.tasks.get(b)?.priority) - Number(this.tasks.get(a)?.priority));
@@ -196,7 +202,8 @@ export class BackupEngine extends EventEmitter {
           const written = (state: (typeof states)[number]) => {
             const d = state.target.destination, own = destinationMeters.get(d.id)!; own.add(bytesRead);
             d.bytesWritten += bytesRead; d.copiedBytes = Math.min(task.totalBytes, (d.copiedBytes || 0) + bytesRead);
-            state.position = position + bytesRead; task.physicalWrittenBytes = (task.physicalWrittenBytes || 0) + bytesRead; meter.add(bytesRead);
+            state.position = position + bytesRead; const firstWrite = !task.physicalWrittenBytes; task.physicalWrittenBytes = (task.physicalWrittenBytes || 0) + bytesRead; meter.add(bytesRead);
+            if (firstWrite) this.emitProgress(task, true);
           };
           await Promise.all(active.map(async (state) => {
             const actual = state.handle.write(chunk, 0, bytesRead, position).then(() => written(state)).catch((e: any) => { state.active = false; state.target.destination.available = false; state.target.destination.error = `写入失败：${e.message}`; });
@@ -232,6 +239,7 @@ export class BackupEngine extends EventEmitter {
   private async verifyRecords(task: BackupTask, signal: AbortSignal) {
     const availableCount = task.destinations.filter((d) => d.available !== false).length;
     task.status = "verifying"; task.verifyTotalFiles = task.fileRecords.length * availableCount;
+    this.emitProgress(task, true);
     const totalVerifyBytes = task.totalBytes * availableCount;
     const meter = new SpeedMeter(), destinationMeters = new Map(task.destinations.map((d) => [d.id, new SpeedMeter()]));
     let displayedEta = 0;
@@ -240,10 +248,10 @@ export class BackupEngine extends EventEmitter {
       task.verifySpeedBps = meter.sample();
       for (const d of task.destinations) d.verifySpeedBps = destinationMeters.get(d.id)?.sample() || 0;
       const rawEta = task.verifySpeedBps ? Math.max(0, totalVerifyBytes - (task.verifiedBytes || 0)) / task.verifySpeedBps : 0;
-      displayedEta = rawEta ? (displayedEta ? displayedEta * 0.75 + rawEta * 0.25 : rawEta) : 0;
+      displayedEta = rawEta ? (displayedEta ? displayedEta * 0.9 + rawEta * 0.1 : rawEta) : 0;
       task.verifyEta = displayedEta;
       this.emitProgress(task);
-    }, 500);
+    }, 1000);
     try { for (const record of task.fileRecords) {
       for (const [index, result] of record.destinations.entries()) {
         await this.waitIfPaused(task.id, signal); task.status = "verifying"; task.currentFile = record.relativePath; this.emitProgress(task);
@@ -283,8 +291,6 @@ export class BackupEngine extends EventEmitter {
       signal.throwIfAborted();
       const readable = record.destinations.find((destination) => destination.verified && destination.path)?.path;
       if (!readable) continue;
-      task.currentFile = `生成缩略图 · ${record.relativePath}`;
-      this.emitProgress(task);
       try {
         record.thumbnailPath = (await inspectMedia(readable, this.thumbnailDir)).thumbnailPath;
         if (!record.thumbnailPath) failures++;
@@ -296,6 +302,7 @@ export class BackupEngine extends EventEmitter {
   }
   private async run(id: string, signal: AbortSignal) {
     const task = this.tasks.get(id)!;
+    let completionNotified = false;
     Object.assign(task, { status: "running", startedAt: Date.now(), completedAt: undefined, completedFiles: 0, transferredBytes: 0, physicalWrittenBytes: 0, verifiedBytes: 0, copyProgress: 0, verifyProgress: 0, fileRecords: [], verifyLog: [], verifyCompletedFiles: 0, verifyTotalFiles: 0, speedBps: 0, aggregateSpeedBps: 0, verifySpeedBps: 0, verifyEta: 0, volumeWarnings: [] });
     for (const d of task.destinations) Object.assign(d, { verified: false, error: undefined, available: true, resolvedPath: undefined, bytesWritten: 0, copiedBytes: 0, verifiedBytes: 0, copyProgress: 0, verifyProgress: 0, speedBps: 0, verifySpeedBps: 0 });
     this.emitProgress(task); const meter = new SpeedMeter(), destinationMeters = new Map(task.destinations.map((d) => [d.id, new SpeedMeter()]));
@@ -305,13 +312,13 @@ export class BackupEngine extends EventEmitter {
       task.aggregateSpeedBps = meter.sample();
       for (const d of task.destinations) d.speedBps = destinationMeters.get(d.id)?.sample() || 0;
       const healthy = task.destinations.filter((d) => d.available !== false);
-      task.speedBps = task.aggregateSpeedBps / Math.max(1, healthy.length);
-      const copied = healthy.length ? Math.min(...healthy.map((d) => d.copiedBytes || 0)) : 0;
-      const rawEta = task.speedBps ? Math.max(0, task.totalBytes - copied) / task.speedBps : 0;
-      displayedEta = rawEta ? (displayedEta ? displayedEta * 0.75 + rawEta * 0.25 : rawEta) : 0;
+      const pending = healthy.filter((d) => (d.copiedBytes || 0) < task.totalBytes), rates = pending.map((d) => d.speedBps || 0);
+      task.speedBps = rates.length && rates.every((rate) => rate > 0) ? Math.min(...rates) : 0;
+      const rawEta = task.speedBps ? Math.max(...pending.map((d) => Math.max(0, task.totalBytes - (d.copiedBytes || 0)) / Math.max(1, d.speedBps || task.speedBps))) : 0;
+      displayedEta = rawEta ? (displayedEta ? displayedEta * 0.9 + rawEta * 0.1 : rawEta) : 0;
       task.eta = displayedEta;
       this.emitProgress(task);
-    }, 500);
+    }, 1000);
     try {
       const src = await canonical(task.sourcePath);
       if (!(await fs.stat(src)).isDirectory()) throw new Error("素材源必须是文件夹");
@@ -400,13 +407,18 @@ export class BackupEngine extends EventEmitter {
         for (const d of task.destinations) d.copyProgress = Math.min(100, ((d.copiedBytes || 0) / Math.max(1, task.totalBytes)) * 100);
         task.fileRecords.push(record);
         const after = await fs.stat(file.absolutePath); if (after.size !== file.size || after.mtimeMs !== file.mtimeMs) throw new Error(`备份期间素材发生变化：${file.relativePath}`);
-        this.emitProgress(task);
+        this.emitProgress(task, task.completedFiles === 1);
       }
       clearInterval(telemetry); task.speedBps = 0; task.aggregateSpeedBps = 0; task.eta = 0; for (const d of task.destinations) d.speedBps = 0; await this.verifyRecords(task, signal); signal.throwIfAborted();
-      await this.generateTaskThumbnails(task, signal);
       if (task.destinations.some((d) => !d.verified)) throw new Error("部分目的地未通过校验。成功的副本已保留，可单独重试失败目标。");
-      task.status = "completed"; task.lastVerifiedAt = Date.now();
+      task.status = "completed"; task.lastVerifiedAt = Date.now(); task.completedAt = Date.now(); task.currentFile = "";
+      task.speedBps = 0; task.aggregateSpeedBps = 0; task.verifySpeedBps = 0; task.eta = 0; task.verifyEta = 0;
+      this.emitProgress(task, true); this.emit("settled", task); completionNotified = true;
+      void this.generateTaskThumbnails(task, new AbortController().signal).then(() => {
+        this.emitProgress(task, true);
+        this.emit("metadata", task);
+      }).catch(() => {});
     } catch (e: any) { task.status = signal.aborted ? "cancelled" : "failed"; task.errorMessage = e.message || String(e); }
-    finally { clearInterval(telemetry); this.paused.delete(id); this.active.delete(id); task.completedAt = Date.now(); task.speedBps = 0; task.aggregateSpeedBps = 0; task.verifySpeedBps = 0; task.eta = 0; task.verifyEta = 0; task.currentFile = ""; for (const d of task.destinations) { d.speedBps = 0; d.verifySpeedBps = 0; } this.emitProgress(task); this.emit("settled", task); }
+    finally { clearInterval(telemetry); this.paused.delete(id); this.active.delete(id); task.completedAt ||= Date.now(); task.speedBps = 0; task.aggregateSpeedBps = 0; task.verifySpeedBps = 0; task.eta = 0; task.verifyEta = 0; task.currentFile = ""; for (const d of task.destinations) { d.speedBps = 0; d.verifySpeedBps = 0; } if (!completionNotified) { this.emitProgress(task, true); this.emit("settled", task); } }
   }
 }

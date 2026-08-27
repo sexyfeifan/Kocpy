@@ -153,9 +153,10 @@ app.whenReady().then(async () => {
     engine.loadTask(task);
   }
   await persist();
-  handle("dialog:directory", async () => {
+  handle("dialog:directory", async (defaultPath?: string) => {
     const r = await dialog.showOpenDialog({
       properties: ["openDirectory", "createDirectory"],
+      defaultPath: defaultPath && path.isAbsolute(defaultPath) ? defaultPath : undefined,
     });
     return r.canceled ? null : r.filePaths[0];
   });

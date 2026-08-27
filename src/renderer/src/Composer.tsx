@@ -80,7 +80,8 @@ export function Composer({
   const [clock, setClock] = useState(Date.now());
   const [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
-    [spaces, setSpaces] = useState<Record<string, number>>({});
+    [spaces, setSpaces] = useState<Record<string, number>>({}),
+    [detectedScans, setDetectedScans] = useState<Record<string, Scan | "loading" | "error">>({});
   const dialog = useRef<HTMLElement>(null);
   const project = projects.find((p) => p.id === projectId),
     total = sources.reduce((n, s) => n + (s.scan?.totalBytes || 0), 0),
@@ -138,6 +139,13 @@ export function Composer({
     return () => clearInterval(timer);
   }, []);
   useEffect(() => {
+    for (const volume of externalVolumes.filter((item) => item.deviceType === "source")) {
+      if (detectedScans[volume.path]) continue;
+      setDetectedScans((all) => ({ ...all, [volume.path]: "loading" }));
+      void api.scanSource(volume.path, hidden).then((scan) => setDetectedScans((all) => ({ ...all, [volume.path]: scan }))).catch(() => setDetectedScans((all) => ({ ...all, [volume.path]: "error" })));
+    }
+  }, [externalVolumes.map((volume) => `${volume.path}:${volume.deviceType}`).join("|"), hidden]);
+  useEffect(() => {
     if (!projectId) return;
     localStorage.setItem(`kocpy-project-choice-${projectId}`, JSON.stringify({ shootDate, camera, multiPosition, cameraPosition }));
   }, [projectId, shootDate, camera, multiPosition, cameraPosition]);
@@ -189,6 +197,7 @@ export function Composer({
           if (!scan.totalFiles)
             throw new Error(`${leaf(s.path)} 没有可备份文件`);
           scanned.push({ ...s, scan });
+          setDetectedScans((all) => ({ ...all, [s.path]: scan }));
         }
         setSources(scanned);
         setStep(1);
@@ -428,7 +437,9 @@ export function Composer({
                   <div className="detected-storage-heading"><span>已识别外接存储设备</span><span>{externalVolumes.length} 个本地卷</span></div>
                   {externalVolumes.length ? <div className="detected-storage-grid">{externalVolumes.map((volume) => {
                     const selected = sources.some((source) => source.path === volume.path);
-                    return <button key={volume.path} className={selected ? "selected" : ""} disabled={busy} onClick={() => selected ? setSources((all) => all.filter((source) => source.path !== volume.path)) : addSource(volume.path)}><MemoryStick size={16}/><span><strong>{volume.name}</strong><small>{volume.deviceType === "source" ? "素材卡" : "外接数据盘"} · 总容量 {bytes(volume.total)} · 可用 {bytes(volume.free)}</small></span>{selected ? <Check size={14}/> : <Plus size={14}/>}</button>;
+                    const selectedScan = sources.find((source) => source.path === volume.path)?.scan, detected = selectedScan || detectedScans[volume.path];
+                    const material = detected === "loading" ? "正在计算待备份素材…" : detected === "error" ? "素材大小读取失败，选择后重试" : detected ? `待备份 ${bytes(detected.totalBytes)} · ${detected.totalFiles} 个文件` : "选择后扫描实际素材";
+                    return <button key={volume.path} className={selected ? "selected" : ""} disabled={busy} onClick={() => selected ? setSources((all) => all.filter((source) => source.path !== volume.path)) : addSource(volume.path)}><MemoryStick size={16}/><span><strong>{volume.name}</strong><small>{volume.deviceType === "source" ? `素材卡 · ${material}` : `外接数据盘 · ${material}`}</small><em>总容量 {bytes(volume.total)} · 可用 {bytes(volume.free)}</em></span>{selected ? <Check size={14}/> : <Plus size={14}/>}</button>;
                   })}</div> : <div className="notice"><Info size={14}/>暂未检测到本地外接盘，连接后可返回此步骤刷新。</div>}
                 </div>
               </>
@@ -451,6 +462,7 @@ export function Composer({
                     <div className="project-breadcrumb"><span>{project?.projectFolderName}</span><ArrowRight size={12}/><span>{shootDate.replace(/-/g, "")}</span><ArrowRight size={12}/><span>{camera}</span>{multiPosition && <><ArrowRight size={12}/><strong>{cameraPosition}</strong></>}</div>
                   </div>
                 )}
+                <div className="destination-volume-picker"><div className="detected-storage-heading"><span>从外接磁盘选择目的地</span><span>点击磁盘后继续选择其中的目标文件夹</span></div><div>{externalVolumes.filter((volume) => volume.writable !== false && !sources.some((source) => source.path === volume.path)).map((volume) => <button key={volume.path} disabled={busy} onClick={() => void attempt(async () => { const selected = await api.selectDirectory(volume.path); if (selected) addDest(selected); })}><HardDrive size={17}/><span><strong>{volume.name}</strong><small>总容量 {bytes(volume.total)} · 可用 {bytes(volume.free)}</small></span><FolderOpen size={14}/></button>)}</div>{!externalVolumes.some((volume) => volume.writable !== false && !sources.some((source) => source.path === volume.path)) && <small className="muted">暂无可用外接目标盘，也可以使用下方“添加备份目的地”。</small>}</div>
                 <div className="dest-heading">
                   <span>备份目的地</span>
                   <span>{dests.length} / 4</span>

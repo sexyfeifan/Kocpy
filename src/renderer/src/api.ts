@@ -39,7 +39,7 @@ export interface UpdateInfo {
   archLabel: "Apple Silicon" | "Intel";
 }
 export interface API {
-  selectDirectory(): Promise<string | null>;
+  selectDirectory(defaultPath?: string): Promise<string | null>;
   getTasks(): Promise<BackupTask[]>;
   createTask(config: TaskConfig): Promise<BackupTask>;
   startTask(id: string): Promise<void>;

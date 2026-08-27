@@ -444,7 +444,7 @@ export function App() {
           <img src="./icon.png" alt="Kocpy 图标" />
           <div>
             <strong>
-              Kocpy<span>0.0.7</span>
+              Kocpy<span>0.0.8</span>
             </strong>
             <small>素材工作台</small>
           </div>
@@ -491,7 +491,7 @@ export function App() {
             <button className={`sidebar-update ${updateInfo?.available ? "available" : ""}`} title="检查 Kocpy 更新" onClick={() => void checkForUpdates()}>
               <RefreshCw size={13}/>
               <span>{updateInfo?.available ? `可升级 ${updateInfo.latest}` : "检查更新"}</span>
-              <b>v0.0.7</b>
+              <b>v0.0.8</b>
             </button>
             <div className="sidebar-author-links">
               <span><i className="live-dot"/>桌面版 · macOS</span>
@@ -1244,9 +1244,9 @@ export function App() {
                 </div>
                 <div>
                   <strong>
-                    {(selected.status === "verifying" ? selected.verifySpeedBps : selected.aggregateSpeedBps) ? bytes(selected.status === "verifying" ? selected.verifySpeedBps : selected.aggregateSpeedBps) + "/s" : "—"}
+                    {(selected.status === "verifying" ? selected.verifySpeedBps : selected.speedBps) ? bytes(selected.status === "verifying" ? selected.verifySpeedBps : selected.speedBps) + "/s" : "—"}
                   </strong>
-                  <span>{selected.status === "verifying" ? "校验回读速度" : "实时写入吞吐"}</span>
+                  <span>{selected.status === "verifying" ? "校验回读速度" : "实时传输速度"}</span>
                 </div>
                 <div>
                   <strong>
@@ -1875,7 +1875,7 @@ function SettingsPage({
         <img src="./icon.png" alt="Kocpy 图标" />
         <div>
           <h3>
-            Kocpy <span>0.0.7</span>
+            Kocpy <span>0.0.8</span>
           </h3>
           <p>
             融合 DiskHop 的轻量工作流与 Kocpy

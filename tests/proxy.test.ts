@@ -18,9 +18,11 @@ it("attaches a generated thumbnail to the verified backup file record", async ()
     const engine = new BackupEngine(thumbnails);
     const task = engine.createTask({ name: "thumb", sourcePath: source, destinationPaths: [destination], devices: [], hashAlgorithm: "sha256", namingTemplate: "thumb", shootingDate: "", copyMode: "mirror" });
     const settled = new Promise<any>((resolve) => engine.once("settled", resolve));
+    const metadata = new Promise<any>((resolve) => engine.once("metadata", resolve));
     engine.startTask(task.id);
     const result = await settled;
     expect(result.status).toBe("completed");
+    await metadata;
     expect(result.fileRecords[0].thumbnailPath).toMatch(/\.jpg$/);
     expect((await fs.stat(result.fileRecords[0].thumbnailPath)).size).toBeGreaterThan(0);
   } finally { await fs.rm(root, { recursive: true, force: true }); }
