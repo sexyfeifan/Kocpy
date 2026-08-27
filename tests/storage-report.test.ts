@@ -7,6 +7,7 @@ import { BackupEngine } from "../src/main/backup/BackupEngine";
 import { generateReport } from "../src/main/backup/ReportGenerator";
 import { generateMhl, generateAscMhl } from "../src/main/backup/ManifestGenerator";
 import { execFileSync } from "node:child_process";
+import { isTimeMachineVolume } from "../src/main/system";
 describe("Persistence and reports", () => {
   it("serializes concurrent writes and recovers the previous valid snapshot", async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "kocpy-store-"));
@@ -43,6 +44,25 @@ describe("Persistence and reports", () => {
     expect(html).toContain("&lt;script&gt;");
     expect(html).not.toContain("<script>");
     expect(html).toContain("备份失败");
+  });
+  it("embeds the matching media thumbnail in the PDF report HTML", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "kocpy-thumb-"));
+    const thumbnail = path.join(dir, "clip.jpg");
+    await fs.writeFile(thumbnail, Buffer.from([0xff, 0xd8, 0xff, 0xd9]));
+    try {
+      const t = new BackupEngine().createTask({ name: "thumb", namingTemplate: "thumb", sourcePath: "/tmp/source", destinationPaths: ["/tmp/dest"], devices: [], hashAlgorithm: "sha256", shootingDate: "" });
+      t.fileRecords = [{ name: "clip.mov", relativePath: "A/clip.mov", size: 42, srcChecksum: "abc", thumbnailPath: thumbnail, destinations: [{ path: "/tmp/dest/clip.mov", checksum: "abc", verified: true }] }];
+      const html = (await generateReport(t, { includeThumbnails: true })).toString();
+      expect(html).toContain("data:image/jpeg;base64,/9j/2Q==");
+      expect(html).toContain("file-table with-thumbnails");
+    } finally { await fs.rm(dir, { recursive: true, force: true }); }
+  });
+  it("excludes Time Machine snapshot and localized backup volume names", () => {
+    expect(isTimeMachineVolume("com.apple.TimeMachine.localsnapshots")).toBe(true);
+    expect(isTimeMachineVolume(".timemachine")).toBe(true);
+    expect(isTimeMachineVolume("周非凡的MacBook Pro的备份")).toBe(true);
+    expect(isTimeMachineVolume("MEDIA_MASTER")).toBe(false);
+    expect(isTimeMachineVolume("NAS", "", "//host/share on /Volumes/.timemachine")).toBe(true);
   });
   it("generates ASC MHL v2 that validates against the official ASC XSD", async () => {
     const t = new BackupEngine().createTask({ name: "asc", namingTemplate: "asc", sourcePath: "/tmp/source", destinationPaths: ["/tmp/dest"], devices: [], hashAlgorithm: "sha256", shootingDate: "" });

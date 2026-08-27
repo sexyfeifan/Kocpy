@@ -59,7 +59,7 @@ export interface API {
   exportReport(id: string, format: "pdf" | "json" | "mhl" | "ascmhl"): Promise<string | null>;
   exportDailyReport(date: string, projectId?: string): Promise<string | null>;
   exportResolveCsv(date: string, projectId?: string): Promise<string | null>;
-  inspectMedia(path: string): Promise<{name:string;path:string;size:number;modifiedAt:number;duration?:string;video?:string;audio?:string;timecode?:string;camera?:string;creationTime?:string;resolution?:string;frameRate?:string;thumbnail?:string}>;
+  inspectMedia(path: string): Promise<{name:string;path:string;size:number;modifiedAt:number;duration?:string;video?:string;audio?:string;timecode?:string;camera?:string;creationTime?:string;resolution?:string;frameRate?:string;thumbnail?:string;thumbnailPath?:string}>;
   getProxyJobs(): Promise<ProxyJob[]>;
   enqueueProxy(
     inputs: string[],
@@ -71,6 +71,7 @@ export interface API {
   retryProxy(id: string): Promise<void>;
   deleteProxy(id: string): Promise<void>;
   onProxyJobs(callback: (jobs: ProxyJob[]) => void): () => void;
+  onTaskSettled(callback: (task: BackupTask) => void): () => void;
   onProgress(
     callback: (task: Partial<BackupTask> & { taskId: string }) => void,
   ): () => void;

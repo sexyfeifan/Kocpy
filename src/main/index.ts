@@ -6,6 +6,7 @@ import {
   shell,
   Menu,
   powerSaveBlocker,
+  Notification,
 } from "electron";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -21,7 +22,7 @@ import {
 import { Storage, defaultSettings } from "./storage";
 import { listVolumes, driveInfo, ejectVolume, volumeIdentity } from "./system";
 import { makeProxy } from "./proxy";
-import { inspectMedia } from "./media";
+import { inspectMedia, isThumbnailMedia } from "./media";
 import { generateReport, generateDailyReport } from "./backup/ReportGenerator";
 import { generateMhl, generateAscMhl } from "./backup/ManifestGenerator";
 import type { BackupTask, ProjectConfig, TaskConfig, ProxyJob } from "./types";
@@ -32,7 +33,7 @@ const userDataPath = process.env.KOCPY_DATA_DIR || path.join(appDataRoot, "Kocpy
 app.setPath("userData", userDataPath);
 if (!app.requestSingleInstanceLock()) app.exit(0);
 
-const engine = new BackupEngine(),
+const engine = new BackupEngine(path.join(app.getPath("userData"), "thumbnails")),
   store = new Storage(app.getPath("userData"));
 let main: BrowserWindow | null = null,
   persistTimer: ReturnType<typeof setTimeout> | undefined,
@@ -304,6 +305,13 @@ app.whenReady().then(async () => {
       await fs.writeFile(r.filePath, generateAscMhl(task)); await persist();
     }
     else {
+      for (const record of task.fileRecords) {
+        if (record.thumbnailPath || !isThumbnailMedia(record.name)) continue;
+        const readable = record.destinations.find((destination) => destination.verified && destination.path)?.path;
+        if (!readable) continue;
+        record.thumbnailPath = await inspectMedia(readable, path.join(app.getPath("userData"), "thumbnails")).then((media) => media.thumbnailPath, () => undefined);
+      }
+      await persist();
       const report = new BrowserWindow({
         show: false,
         webPreferences: {
@@ -315,7 +323,7 @@ app.whenReady().then(async () => {
       try {
         await report.loadURL(
           "data:text/html;charset=utf-8," +
-            encodeURIComponent((await generateReport(task)).toString()),
+            encodeURIComponent((await generateReport(task, { includeThumbnails: true })).toString()),
         );
         const pdf = await report.webContents.printToPDF({
           printBackground: true,
@@ -359,7 +367,7 @@ app.whenReady().then(async () => {
     )
       blocker = powerSaveBlocker.start("prevent-app-suspension");
   });
-  engine.on("settled", () => {
+  engine.on("settled", (task: BackupTask) => {
     clearTimeout(persistTimer);
     void persist().catch((e) =>
       dialog.showErrorBox("任务记录保存失败", String(e)),
@@ -367,6 +375,15 @@ app.whenReady().then(async () => {
     if (blocker !== undefined) {
       powerSaveBlocker.stop(blocker);
       blocker = undefined;
+    }
+    if (main && !main.isDestroyed()) main.webContents.send("tasks:settled", task);
+    if (task.status === "completed" && Notification.isSupported()) {
+      const passed = task.destinations.filter((destination) => destination.verified).length;
+      new Notification({
+        title: "备份与校验完成",
+        body: `${task.name} · ${task.totalFiles} 个文件 · ${passed} 个目标通过校验`,
+        silent: false,
+      }).show();
     }
   });
   Menu.setApplicationMenu(

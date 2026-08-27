@@ -39,6 +39,7 @@ contextBridge.exposeInMainWorld("api", {
   retryProxy: call("proxy:retry"),
   deleteProxy: call("proxy:delete"),
   onProxyJobs: (callback: (jobs: unknown) => void) => { const listener = (_event: unknown, jobs: unknown) => callback(jobs); ipcRenderer.on("proxy:jobs", listener); return () => ipcRenderer.removeListener("proxy:jobs", listener); },
+  onTaskSettled: (callback: (task: unknown) => void) => { const listener = (_event: unknown, task: unknown) => callback(task); ipcRenderer.on("tasks:settled", listener); return () => ipcRenderer.removeListener("tasks:settled", listener); },
   onProgress: (callback: (payload: unknown) => void) => {
     const listener = (_event: unknown, payload: unknown) => callback(payload);
     ipcRenderer.on("tasks:progress", listener);

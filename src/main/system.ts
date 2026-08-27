@@ -2,6 +2,15 @@ import { promises as fs, constants } from "node:fs";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 const exec = promisify(execFile);
+export function isTimeMachineVolume(name: string, diskInfo = "", mountLine = "") {
+  return (
+    name === ".timemachine" ||
+    /^com\.apple\.TimeMachine(?:\.|$)/i.test(name) ||
+    /Backups\.backupdb/i.test(name) ||
+    /的备份$/.test(name) ||
+    /(?:\/\.timemachine|com\.apple\.TimeMachine|Time Machine|Role:\s*Backup)/i.test(diskInfo + " " + mountLine)
+  );
+}
 export async function volumeIdentity(dir: string) {
   const stat = await fs.stat(dir);
   let output = "";
@@ -24,7 +33,7 @@ export async function listVolumes() {
   const names = await fs.readdir("/Volumes");
   const roots = [
     "/",
-    ...names.filter((n) => n !== "Macintosh HD").map((n) => "/Volumes/" + n),
+    ...names.filter((n) => n !== "Macintosh HD" && !isTimeMachineVolume(n)).map((n) => "/Volumes/" + n),
   ];
   const rows = await Promise.all(
     roots.map(async (p) => {
@@ -36,7 +45,8 @@ export async function listVolumes() {
         try { stdout = (await exec("/usr/sbin/diskutil", ["info", p], { timeout: 6000 })).stdout; } catch { /* Network filesystems may not have diskutil metadata. */ }
         const mountOutput = await exec("/sbin/mount", [], { timeout: 6000 }).then((result) => result.stdout, () => "");
         const escaped = p.replace(/[.*+?^\${}()|[\]\\]/g, "\\$&");
-        const mountLine = mountOutput.split("\n").find((line) => new RegExp(` on \${escaped} \\\(`).test(line)) || "";
+        const mountLine = mountOutput.split("\n").find((line) => new RegExp(` on ${escaped} \\\(`).test(line)) || "";
+        if (isTimeMachineVolume(pathName(p), stdout, mountLine)) return null;
         const protocol = mountLine.match(/\(([^,\s]+)/)?.[1] || (/Protocol:\s*(.+)/i.exec(stdout)?.[1]?.trim()) || "local";
         const isNetwork = /smbfs|nfs|afpfs|webdav|cifs/i.test(protocol + " " + mountLine);
         const writable = await fs.access(p, constants.W_OK).then(() => true, () => false);
@@ -67,6 +77,9 @@ export async function listVolumes() {
     }),
   );
   return rows.filter((v): v is NonNullable<typeof v> => v !== null);
+}
+function pathName(value: string) {
+  return value.split("/").filter(Boolean).pop() || value;
 }
 export async function ejectVolume(volume: string) {
   const volumes = await listVolumes();

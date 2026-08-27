@@ -47,7 +47,7 @@ export async function generateReport(
       (d) => `
     <tr>
       <td>${esc(d.resolvedPath || d.path)}</td>
-      <td>${formatBytes(d.bytesWritten)}</td>
+      <td>${formatBytes(d.copiedBytes ?? (d.verified ? task.totalBytes : d.bytesWritten))}<small style="display:block;color:#96919d;margin-top:2px">本次写入 ${formatBytes(d.bytesWritten)}</small></td>
       <td style="color:${d.verified ? "#22c55e" : d.error ? "#ef4444" : "#888"}">
         ${d.verified ? "✓ 通过" : d.error ? `✗ ${esc(d.error)}` : "未知"}
       </td>
@@ -143,6 +143,11 @@ export async function generateReport(
   .file-table th:nth-child(2) { width: 14%; }
   .file-table th:nth-child(3) { width: 42%; }
   .file-table th:nth-child(4) { width: 15%; }
+  .file-table.with-thumbnails th:nth-child(1) { width: 24%; }
+  .file-table.with-thumbnails th:nth-child(2) { width: 11%; }
+  .file-table.with-thumbnails th:nth-child(3) { width: 34%; }
+  .file-table.with-thumbnails th:nth-child(4) { width: 16%; }
+  .file-table.with-thumbnails th:nth-child(5) { width: 15%; }
   .file-table .mono { font-size: 9px; overflow-wrap: anywhere; }
   .dest-table th:first-child { width: 62%; }
   .dest-table td:last-child { white-space: normal; }
@@ -170,7 +175,7 @@ export async function generateReport(
 <div class="header">
   <div>
     <h1>Kocpy</h1>
-    <p>VERIFIED MEDIA TRANSFER REPORT · v0.0.2</p>
+    <p>VERIFIED MEDIA TRANSFER REPORT · v0.0.3</p>
     <p style="margin-top:8px;font-size:12px;color:#aaa">生成时间：${new Date().toLocaleString("zh-CN")}</p>
   </div>
   <div class="badge">${statusLabel}</div>
@@ -203,7 +208,7 @@ export async function generateReport(
 <div class="section">
   <h2>备份目的地</h2>
   <table class="dest-table">
-    <thead><tr><th>目的地路径</th><th>写入数据</th><th>校验状态</th></tr></thead>
+    <thead><tr><th>目的地路径</th><th>已保存 / 本次写入</th><th>校验状态</th></tr></thead>
     <tbody>${destRows}</tbody>
   </table>
 </div>
@@ -211,7 +216,7 @@ export async function generateReport(
 <div class="section">
   <h2>文件清单</h2>
   <p style="font-size:10px;color:#777;margin-bottom:12px">本报告记录任务执行时的校验结果，不代表当前磁盘状态。总计 ${task.totalFiles} 个文件，已处理 ${task.completedFiles} 个。</p>
-  <table class="file-table">
+  <table class="file-table${options.includeThumbnails ? " with-thumbnails" : ""}">
     <thead><tr><th>文件路径</th><th>大小</th><th>源校验值</th><th>校验结果</th>${options.includeThumbnails ? "<th>首帧缩略图</th>" : ""}</tr></thead>
     <tbody>${fileRows}</tbody>
   </table>

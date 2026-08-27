@@ -77,6 +77,7 @@ describe("Real filesystem backup integrity", () => {
       before.mtimeMs,
     );
     expect(task.transferredBytes).toBe(task.totalBytes);
+    expect(task.destinations.every((d) => d.copiedBytes === task.totalBytes)).toBe(true);
     expect(task.verifyCompletedFiles).toBe(4);
   });
   it("verifies existing files on first destination without stalling the second destination", async () => {

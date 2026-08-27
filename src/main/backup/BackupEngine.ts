@@ -5,6 +5,7 @@ import path from "node:path";
 import type { BackupTask, TaskConfig, HashAlgorithm, FileRecord, Destination } from "../types";
 import { canonical, inside, scan, segment, safeChild } from "./safety";
 import { volumeIdentity } from "../system";
+import { inspectMedia, isThumbnailMedia } from "../media";
 
 export async function hashFile(file: string, algorithm: HashAlgorithm, signal?: AbortSignal): Promise<string> {
   const hash = createHash(algorithm);
@@ -52,6 +53,7 @@ async function validPrefix(sourcePath: string, partialPath: string, size: number
 type CopyTarget = { destination: Destination; finalPath: string; tempPath: string; offset: number };
 
 export class BackupEngine extends EventEmitter {
+  constructor(private readonly thumbnailDir?: string) { super(); }
   private tasks = new Map<string, BackupTask>();
   private queue: string[] = [];
   private active = new Map<string, AbortController>();
@@ -92,6 +94,7 @@ export class BackupEngine extends EventEmitter {
       speedBps: 0, aggregateSpeedBps: 0, eta: 0, currentFile: "", verifyLog: [], fileRecords: [],
       priority: config.priority || false, duplicateStrategy: config.duplicateStrategy || "skip",
       includeHidden: config.includeHidden ?? true, volumeNumber: config.volumeNumber,
+      generateThumbnails: config.generateThumbnails ?? true,
       destinations: config.destinationPaths.map((p) => ({ id: randomUUID(), path: p, label: path.basename(p), verified: false, bytesWritten: 0, copiedBytes: 0, verifiedBytes: 0, copyProgress: 0, verifyProgress: 0, speedBps: 0 })),
     };
     this.tasks.set(id, task);
@@ -238,7 +241,29 @@ export class BackupEngine extends EventEmitter {
         task.verifyLog = task.verifyLog.slice(-200); this.emitProgress(task);
       }
     }
-    for (const [index, d] of task.destinations.entries()) d.verified = d.available !== false && !d.error && task.fileRecords.length === task.totalFiles && task.fileRecords.every((r) => r.destinations[index]?.verified);
+    for (const [index, d] of task.destinations.entries()) {
+      d.verified = d.available !== false && !d.error && task.fileRecords.length === task.totalFiles && task.fileRecords.every((r) => r.destinations[index]?.verified);
+      if (d.verified) d.copiedBytes = task.totalBytes;
+    }
+  }
+  private async generateTaskThumbnails(task: BackupTask, signal: AbortSignal) {
+    if (!task.generateThumbnails || !this.thumbnailDir) return;
+    let failures = 0;
+    for (const record of task.fileRecords) {
+      if (!isThumbnailMedia(record.name) || record.thumbnailPath) continue;
+      signal.throwIfAborted();
+      const readable = record.destinations.find((destination) => destination.verified && destination.path)?.path;
+      if (!readable) continue;
+      task.currentFile = `生成缩略图 · ${record.relativePath}`;
+      this.emitProgress(task);
+      try {
+        record.thumbnailPath = (await inspectMedia(readable, this.thumbnailDir)).thumbnailPath;
+        if (!record.thumbnailPath) failures++;
+      } catch {
+        failures++;
+      }
+    }
+    task.thumbnailError = failures ? `${failures} 个媒体文件未能生成缩略图，不影响备份与校验结果` : undefined;
   }
   private async run(id: string, signal: AbortSignal) {
     const task = this.tasks.get(id)!;
@@ -336,6 +361,7 @@ export class BackupEngine extends EventEmitter {
         this.emitProgress(task);
       }
       task.speedBps = 0; task.aggregateSpeedBps = 0; task.eta = 0; await this.verifyRecords(task, signal); signal.throwIfAborted();
+      await this.generateTaskThumbnails(task, signal);
       if (task.destinations.some((d) => !d.verified)) throw new Error("部分目的地未通过校验。成功的副本已保留，可单独重试失败目标。");
       task.status = "completed"; task.lastVerifiedAt = Date.now();
     } catch (e: any) { task.status = signal.aborted ? "cancelled" : "failed"; task.errorMessage = e.message || String(e); }

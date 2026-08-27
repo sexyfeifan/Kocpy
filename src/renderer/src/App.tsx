@@ -186,7 +186,8 @@ export function App() {
       run: () => Promise<unknown>;
     } | null>(null),
     [proxy, setProxy] = useState<{ path: string; name: string; paths?: string[] } | null>(null),
-    [proxyBusy, setProxyBusy] = useState(false);
+    [proxyBusy, setProxyBusy] = useState(false),
+    [completion, setCompletion] = useState<BackupTask | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
     undefined,
   );
@@ -239,6 +240,9 @@ export function App() {
         void refresh().catch((e) => notify(String(e), true));
     });
     const unsubProxy = api.onProxyJobs(setProxyJobs);
+    const unsubSettled = api.onTaskSettled((task) => {
+      if (task.status === "completed") setCompletion(task);
+    });
     const interval = setInterval(() => {
       void api
         .listVolumes()
@@ -251,6 +255,7 @@ export function App() {
       stopped = true;
       unsub();
       unsubProxy();
+      unsubSettled();
       clearInterval(interval);
     };
   }, [notify, refresh]);
@@ -424,7 +429,7 @@ export function App() {
           <img src="./icon.png" alt="Kocpy 图标" />
           <div>
             <strong>
-              Kocpy<span>0.0.2</span>
+              Kocpy<span>0.0.3</span>
             </strong>
             <small>素材工作台</small>
           </div>
@@ -468,7 +473,7 @@ export function App() {
           </button>
           <div className="sidebar-foot">
             <span className="live-dot" />
-            桌面版 · macOS <span>v0.0.2</span>
+            桌面版 · macOS <span>v0.0.3</span>
           </div>
         </div>
       </aside>
@@ -1275,7 +1280,7 @@ export function App() {
                     {selected.status === "completed" && d.path.startsWith("/Volumes/") && <Button kind="icon" title="安全推出此磁盘" onClick={() => void act(() => api.ejectVolume(`/Volumes/${d.path.split("/")[2]}`), "设备已安全推出")}><Eject size={15}/></Button>}
                   </div>
                   <div className="destination-status">
-                    <span>拷贝 {Math.round(d.copyProgress || 0)}% · 校验 {Math.round(d.verifyProgress || 0)}% · {d.speedBps ? `${bytes(d.speedBps)}/s` : bytes(d.bytesWritten) + " 写入"}</span>
+                    <span>拷贝 {Math.round(d.copyProgress || 0)}% · 校验 {Math.round(d.verifyProgress || 0)}% · {d.speedBps ? `${bytes(d.speedBps)}/s` : `已保存 ${bytes(d.copiedBytes || 0)} · 本次写入 ${bytes(d.bytesWritten)}`}</span>
                     <span
                       className={
                         d.verified
@@ -1417,6 +1422,24 @@ export function App() {
                 确认
               </Button>
             </div>
+          </section>
+        </div>
+      )}
+      {completion && (
+        <div className="modal-backdrop top-layer">
+          <section className="completion-modal" role="dialog" aria-modal="true" aria-label="备份完成">
+            <span className="completion-icon"><CheckCheck size={30}/></span>
+            <span className="eyebrow">TRANSFER COMPLETE</span>
+            <h2>备份与校验已完成</h2>
+            <p>{completion.name}</p>
+            <div className="completion-summary">
+              <div><strong>{completion.totalFiles}</strong><span>文件</span></div>
+              <div><strong>{bytes(completion.totalBytes)}</strong><span>素材大小</span></div>
+              <div><strong>{completion.destinations.filter((destination) => destination.verified).length}</strong><span>校验通过目标</span></div>
+              <div><strong>{duration(((completion.completedAt || Date.now()) - (completion.startedAt || completion.createdAt || Date.now())) / 1000)}</strong><span>总用时</span></div>
+            </div>
+            {completion.thumbnailError && <p className="muted small">{completion.thumbnailError}</p>}
+            <div className="row justify-end"><Button kind="subtle" onClick={() => setCompletion(null)}>关闭</Button><Button kind="primary" onClick={() => { setDetail(completion.id); setCompletion(null); }}><FileCheck2 size={15}/>查看任务详情</Button></div>
           </section>
         </div>
       )}
@@ -1818,7 +1841,7 @@ function SettingsPage({
         <img src="./icon.png" alt="Kocpy 图标" />
         <div>
           <h3>
-            Kocpy <span>0.0.2</span>
+            Kocpy <span>0.0.3</span>
           </h3>
           <p>
             融合 DiskHop 的轻量工作流与 Kocpy
