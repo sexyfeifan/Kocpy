@@ -1,7 +1,12 @@
-import { useState } from "react";
-import { X, Plus, FolderOpen, Check, LoaderCircle, Info } from "lucide-react";
+import { useMemo, useState } from "react";
+import { X, Plus, FolderOpen, Check, LoaderCircle, Info, Camera, CalendarDays } from "lucide-react";
 import { api, today, type ProjectConfig } from "./api";
 import { Button } from "./App";
+
+export const DEVICE_SUGGESTIONS = ["FX3", "FX5", "FX6", "A7R5", "A7CR", "POCKET", "LUNA", "MAVIC"];
+const cleanPrefix = (value: string) => value.trim().replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_");
+const projectFolder = (date: string, name: string) => `${date.replace(/-/g, "")}_${name.trim().replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_")}`;
+
 export function ProjectEditor({
   initial,
   onClose,
@@ -11,35 +16,50 @@ export function ProjectEditor({
   onClose: () => void;
   onSave: (p: ProjectConfig) => Promise<void>;
 }) {
+  const initialDevices = initial.devices?.length ? initial.devices : ["FX3"];
   const [name, setName] = useState(initial.name || ""),
-    [volumePrefix, setVolumePrefix] = useState(initial.volumePrefix || "CARD"),
     [start, setStart] = useState(initial.shootingDateStart || today()),
-    [end, setEnd] = useState(initial.shootingDateEnd || today()),
-    [devices, setDevices] = useState(initial.devices?.join("、") || "A机、B机"),
+    [end, setEnd] = useState(initial.shootingDateEnd || initial.shootingDateStart || today()),
+    [devices, setDevices] = useState(initialDevices),
+    [prefixes, setPrefixes] = useState<Record<string, string>>(() =>
+      Object.fromEntries(initialDevices.map((device) => [device, initial.volumePrefixByDevice?.[device] || (initial.volumePrefix && initialDevices.length === 1 ? initial.volumePrefix : `${device}_`)])),
+    ),
+    [customDevice, setCustomDevice] = useState(""),
     [dests, setDests] = useState(initial.destinationPaths || []),
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
+  const folderName = useMemo(() => projectFolder(start, name || "项目名"), [start, name]);
+
+  function addDevice(raw: string) {
+    const device = raw.trim();
+    if (!device || devices.includes(device)) return;
+    if (devices.length >= 10) return setError("一个项目最多保留 10 个常用设备或机位");
+    setDevices((all) => [...all, device]);
+    setPrefixes((all) => ({ ...all, [device]: `${device}_` }));
+    setCustomDevice("");
+    setError("");
+  }
+  function removeDevice(device: string) {
+    setDevices((all) => all.filter((value) => value !== device));
+    setPrefixes((all) => { const next = { ...all }; delete next[device]; return next; });
+  }
   async function save() {
     setError("");
     if (!name.trim()) return setError("请输入项目名称");
-    if (!start || !end || end < start)
-      return setError("请填写有效的拍摄日期范围");
-    if (!devices.trim()) return setError("请至少添加一个机位");
+    if (!start || !end || end < start) return setError("请填写有效的拍摄日期范围");
+    if (!devices.length) return setError("请至少选择一个设备或机位");
+    if (!dests.length) return setError("请至少添加一个备份根目录");
     setBusy(true);
     try {
+      const volumePrefixByDevice = Object.fromEntries(devices.map((device) => [device, cleanPrefix(prefixes[device] || `${device}_`)]));
       await onSave({
         ...initial,
         id: initial.id || crypto.randomUUID(),
         name: name.trim(),
-        devices: [
-          ...new Set(
-            devices
-              .split(/[、,，]/)
-              .map((d) => d.trim())
-              .filter(Boolean),
-          ),
-        ],
-        volumePrefix: volumePrefix.trim() || "CARD",
+        devices,
+        volumePrefix: volumePrefixByDevice[devices[0]],
+        volumePrefixByDevice,
+        projectFolderName: folderName,
         shootingDateStart: start,
         shootingDateEnd: end,
         destinationPaths: dests,
@@ -47,132 +67,43 @@ export function ProjectEditor({
         createdAt: initial.createdAt || Date.now(),
       });
     } catch (e) {
-      setError(String(e));
+      setError(String(e).replace(/^Error: /, ""));
     } finally {
       setBusy(false);
     }
   }
   return (
-    <div className="modal-backdrop">
-      <section
-        className="form-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-label={initial.id ? "编辑项目" : "新建项目"}
-      >
+    <div className="modal-backdrop top-layer">
+      <section className="form-modal project-editor-modal" role="dialog" aria-modal="true" aria-label={initial.id ? "编辑项目" : "新建项目"}>
         <div className="modal-header">
-          <div>
-            <span className="eyebrow">PRODUCTION PROJECT</span>
-            <h2>{initial.id ? "编辑拍摄项目" : "为下一次拍摄做好准备"}</h2>
-          </div>
-          <Button
-            kind="icon"
-            title="关闭项目编辑"
-            disabled={busy}
-            onClick={onClose}
-          >
-            <X size={20} />
-          </Button>
+          <div><span className="eyebrow">PRODUCTION PROJECT</span><h2>{initial.id ? "编辑拍摄项目" : "建立拍摄项目"}</h2></div>
+          <Button kind="icon" title="关闭项目编辑" disabled={busy} onClick={onClose}><X size={20} /></Button>
         </div>
         <div className="form-body">
-          <label>
-            项目名称
-            <input
-              autoFocus
-              aria-label="项目名称"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="例如：山海之间 · 品牌短片"
-            />
-          </label>
+          <div className="form-section-title"><h3>01 · 项目与拍摄周期</h3><p>项目根目录由开始日期和项目名称自动生成。</p></div>
+          <label>项目名称<input autoFocus aria-label="项目名称" value={name} onChange={(e) => setName(e.target.value)} placeholder="例如：山海之间品牌短片" /></label>
           <div className="form-grid">
-            <label>
-              开始日期
-              <input
-                type="date"
-                value={start}
-                onChange={(e) => setStart(e.target.value)}
-              />
-            </label>
-            <label>
-              结束日期
-              <input
-                type="date"
-                value={end}
-                onChange={(e) => setEnd(e.target.value)}
-              />
-            </label>
+            <label>项目开始日期<input type="date" value={start} onChange={(e) => setStart(e.target.value)} /></label>
+            <label>预计结束日期<input type="date" value={end} min={start} onChange={(e) => setEnd(e.target.value)} /></label>
           </div>
-          <label>
-            拍摄机位
-            <input
-              aria-label="拍摄机位"
-              value={devices}
-              onChange={(e) => setDevices(e.target.value)}
-              placeholder="A机、B机、无人机"
-            />
-            <small>用顿号或逗号分隔，备份时可选择本次机位。</small>
-          </label>
-          <label>
-            素材卷号前缀
-            <input aria-label="素材卷号前缀" value={volumePrefix} onChange={(e) => setVolumePrefix(e.target.value)} placeholder="例如 CARD" />
-            <small>确认开始备份后按机位自动递增，例如 CARD001、CARD002。</small>
-          </label>
-          <label>
-            常用备份目的地 <small>可在每次备份前调整</small>
-          </label>
-          {dests.map((p) => (
-            <div className="chosen-path" key={p}>
-              <FolderOpen size={18} />
-              <span className="mono path">{p}</span>
-              <Button
-                kind="icon"
-                title="移除此目的地"
-                onClick={() => setDests((d) => d.filter((x) => x !== p))}
-              >
-                <X size={15} />
-              </Button>
-            </div>
-          ))}
-          {dests.length < 4 && (
-            <Button
-              kind="subtle"
-              onClick={() =>
-                void api
-                  .selectDirectory()
-                  .then((p) => {
-                    if (p) setDests((d) => (d.includes(p) ? d : [...d, p]));
-                  })
-                  .catch((e) => setError(String(e)))
-              }
-            >
-              <Plus size={15} />
-              添加目的地
-            </Button>
-          )}
-          <div className="notice">
-            <Info size={16} />
-            保存项目只记录配置；首次备份时才在目的地创建项目 / 日期 / 机位目录。
+          <div className="project-path-preview"><CalendarDays size={17}/><div><span>项目文件夹</span><strong className="mono">{folderName}</strong></div></div>
+
+          <div className="form-section-title"><h3>02 · 常用设备与素材卷</h3><p>最多保存 10 个设备或机位；每个设备拥有独立卷号序列。</p></div>
+          <div className="device-suggestions">
+            {DEVICE_SUGGESTIONS.map((device) => <button key={device} disabled={devices.includes(device) || devices.length >= 10} onClick={() => addDevice(device)}><Camera size={14}/>{device}{devices.includes(device) ? <Check size={12}/> : <Plus size={12}/>}</button>)}
           </div>
-          {error && (
-            <div role="alert" className="error-box">
-              {error}
-            </div>
-          )}
+          <div className="manual-path"><input value={customDevice} onChange={(e) => setCustomDevice(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") addDevice(customDevice); }} placeholder="自定义设备或机位，例如 A机" /><Button kind="icon" title="添加设备" disabled={!customDevice.trim() || devices.length >= 10} onClick={() => addDevice(customDevice)}><Plus size={16}/></Button></div>
+          <div className="device-profile-list">
+            {devices.map((device) => <div className="device-profile" key={device}><span><Camera size={16}/><strong>{device}</strong></span><label>素材卷前缀<input aria-label={`${device} 素材卷前缀`} value={prefixes[device] || ""} onChange={(e) => setPrefixes((all) => ({ ...all, [device]: e.target.value }))} placeholder={`${device}_`} /></label><small>{cleanPrefix(prefixes[device] || `${device}_`)}001</small><Button kind="icon" title={`移除 ${device}`} onClick={() => removeDevice(device)}><X size={14}/></Button></div>)}
+          </div>
+
+          <div className="form-section-title"><h3>03 · 项目备份根目录</h3><p>每次拷卡会在这些根目录下创建相同的项目层级。</p></div>
+          {dests.map((p) => <div className="chosen-path" key={p}><FolderOpen size={18}/><span className="mono path">{p}</span><Button kind="icon" title="移除此目的地" onClick={() => setDests((all) => all.filter((value) => value !== p))}><X size={15}/></Button></div>)}
+          {dests.length < 4 && <Button kind="subtle" onClick={() => void api.selectDirectory().then((p) => p && setDests((all) => all.includes(p) ? all : [...all, p])).catch((e) => setError(String(e)))}><Plus size={15}/>添加备份根目录</Button>}
+          <div className="notice"><Info size={16}/><span>实际路径示例：<span className="mono">备份根目录/{folderName}/{today().replace(/-/g, "")}/{devices[0] || "设备"}/{cleanPrefix(prefixes[devices[0]] || "CARD")}001/</span></span></div>
+          {error && <div role="alert" className="error-box">{error}</div>}
         </div>
-        <div className="modal-footer">
-          <Button kind="subtle" onClick={onClose} disabled={busy}>
-            取消
-          </Button>
-          <Button kind="primary" disabled={busy} onClick={() => void save()}>
-            {busy ? (
-              <LoaderCircle size={16} className="spin" />
-            ) : (
-              <Check size={16} />
-            )}
-            保存项目
-          </Button>
-        </div>
+        <div className="modal-footer"><Button kind="subtle" onClick={onClose} disabled={busy}>取消</Button><Button kind="primary" disabled={busy} onClick={() => void save()}>{busy ? <LoaderCircle size={16} className="spin"/> : <Check size={16}/>}保存项目</Button></div>
       </section>
     </div>
   );

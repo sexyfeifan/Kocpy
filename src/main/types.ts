@@ -53,6 +53,7 @@ export interface FileRecord {
 
 export interface BackupTask {
   projectId?: string;
+  projectFolderName?: string;
   shootingDate?: string;
   createdAt?: number;
   id: string;
@@ -115,6 +116,8 @@ export interface TaskConfig {
   namingTemplate: string;
   shootingDate: string;
   projectName?: string;
+  projectStartDate?: string;
+  projectFolderName?: string;
   copyMode?: CopyMode;
   duplicateStrategy?: DuplicateStrategy;
   generateThumbnails?: boolean;
@@ -164,6 +167,8 @@ export interface ProjectConfig {
   name: string;
   devices: string[];
   volumePrefix: string;
+  volumePrefixByDevice?: Record<string, string>;
+  projectFolderName?: string;
   nextVolumeByDevice?: Record<string, number>;
   shootingDate?: string;
   shootingDateStart?: string;

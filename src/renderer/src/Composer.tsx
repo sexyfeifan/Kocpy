@@ -11,10 +11,7 @@ import {
   ShieldCheck,
   LoaderCircle,
   Info,
-  Trash2,
   FolderKanban,
-  SlidersHorizontal,
-  Copy,
   Play,
   AlertTriangle,
 } from "lucide-react";
@@ -40,6 +37,7 @@ export function Composer({
   settings,
   onClose,
   onCreated,
+  onCreateProject,
 }: {
   initial: { source?: string; project?: ProjectConfig };
   volumes: Volume[];
@@ -47,6 +45,7 @@ export function Composer({
   settings: Settings;
   onClose: () => void;
   onCreated: () => Promise<void>;
+  onCreateProject: () => void;
 }) {
   const [step, setStep] = useState(0),
     [sources, setSources] = useState<Source[]>(
@@ -57,7 +56,7 @@ export function Composer({
     [dests, setDests] = useState<string[]>(
       initial.project?.destinationPaths || [],
     );
-  const [mode, setMode] = useState<"card" | "project" | "mirror">(
+  const [mode, setMode] = useState<"card" | "project">(
       initial.project ? "project" : "card",
     ),
     [projectId, setProjectId] = useState(initial.project?.id || ""),
@@ -96,6 +95,17 @@ export function Composer({
     dialog.current?.addEventListener("keydown", trap);
     return () => dialog.current?.removeEventListener("keydown", trap);
   }, []);
+  useEffect(() => {
+    if (!initial.project?.id) return;
+    setMode("project");
+    setProjectId(initial.project.id);
+    setDests(initial.project.destinationPaths || []);
+    setCamera(initial.project.devices[0] || "FX3");
+    const start = initial.project.shootingDateStart || today();
+    const end = initial.project.shootingDateEnd || start;
+    const now = today();
+    setShootDate(now >= start && now <= end ? now : start);
+  }, [initial.project]);
   async function attempt(fn: () => Promise<void>) {
     setError("");
     setBusy(true);
@@ -137,8 +147,7 @@ export function Composer({
     await attempt(async () => {
       if (step === 0) {
         if (!sources.length) throw new Error("请先添加素材源");
-        if (mode === "mirror" && sources.length > 1)
-          throw new Error("目录备份一次只接受一个源，以避免文件名冲突");
+        if (mode === "project" && !project) throw new Error("请先选择或新建拍摄项目");
         const scanned: Source[] = [];
         for (const s of sources) {
           const scan = await api.scanSource(s.path, hidden);
@@ -185,9 +194,10 @@ export function Composer({
           devices: mode === "project" ? [camera] : [],
           shootingDate: mode === "project" ? shootDate : "",
           projectName: mode === "project" ? project?.name : undefined,
+          projectStartDate: mode === "project" ? project?.shootingDateStart : undefined,
+          projectFolderName: mode === "project" ? project?.projectFolderName : undefined,
           projectId: mode === "project" ? project?.id : undefined,
-          copyMode:
-            mode === "mirror" ? ("mirror" as const) : ("normal" as const),
+          copyMode: "normal" as const,
           duplicateStrategy: duplicate,
           includeHidden: hidden,
           priority,
@@ -204,7 +214,9 @@ export function Composer({
     const p = projects.find((p) => p.id === id);
     if (p) {
       setDests(p.destinationPaths || []);
-      setCamera(p.devices[0] || "A机");
+      setCamera(p.devices[0] || "FX3");
+      const start = p.shootingDateStart || today(), end = p.shootingDateEnd || start, now = today();
+      setShootDate(now >= start && now <= end ? now : start);
     }
   }
   return (
@@ -268,13 +280,7 @@ export function Composer({
                       "每个源建立独立备份文件夹",
                       MemoryStick,
                     ],
-                    [
-                      "project",
-                      "项目备份",
-                      "按项目 / 日期 / 机位整理",
-                      FolderKanban,
-                    ],
-                    ["mirror", "目录备份", "直接保留相对目录结构", Copy],
+                    ["project", "项目备份", "按项目 / 拍摄日 / 设备 / 素材卷整理", FolderKanban],
                   ].map(([id, title, desc, Icon]) => {
                     const I = Icon as typeof MemoryStick;
                     return (
@@ -292,6 +298,19 @@ export function Composer({
                     );
                   })}
                 </div>
+                {mode === "project" && (
+                  <div className="project-picker">
+                    <div className="dest-heading"><span>选择拍摄项目</span><Button kind="subtle" onClick={onCreateProject}><Plus size={14}/>新建项目</Button></div>
+                    <div className="project-choice-grid">
+                      {projects.filter((item) => item.status !== "archived").map((item) => (
+                        <button key={item.id} className={projectId === item.id ? "selected" : ""} onClick={() => chooseProject(item.id)}>
+                          <FolderKanban size={18}/><span><strong>{item.name}</strong><small>{item.projectFolderName || `${(item.shootingDateStart || "").replace(/-/g, "")}_${item.name}`} · {item.devices.length} 个设备</small></span>{projectId === item.id && <Check size={14}/>}
+                        </button>
+                      ))}
+                    </div>
+                    {!projects.some((item) => item.status !== "archived") && <div className="notice"><Info size={15}/>还没有拍摄项目。请先在这里新建，保存后即可继续选择素材源。</div>}
+                  </div>
+                )}
                 <div
                   className="source-drop"
                   onDragOver={(e) => e.preventDefault()}
@@ -308,7 +327,7 @@ export function Composer({
                     <FolderOpen size={26} />
                   </span>
                   <h3>选择或拖入素材文件夹</h3>
-                  <p>支持素材卡、硬盘目录；可添加多个素材源</p>
+                  <p>支持素材卡和待归档目录；每个来源建立独立素材卷任务</p>
                   <Button
                     kind="subtle"
                     disabled={busy}
@@ -382,12 +401,6 @@ export function Composer({
                       ))}
                   </div>
                 )}
-                {mode === "mirror" && (
-                  <div className="notice">
-                    <Info size={15} />
-                    目录备份不会删除目的地额外文件，不是破坏性的同步镜像。
-                  </div>
-                )}
               </>
             )}
             {step === 1 && (
@@ -398,29 +411,15 @@ export function Composer({
                 </div>
                 {mode === "project" && (
                   <div className="project-form">
-                    <label>
-                      关联拍摄项目
-                      <select
-                        aria-label="关联拍摄项目"
-                        value={projectId}
-                        onChange={(e) => chooseProject(e.target.value)}
-                      >
-                        <option value="">请选择项目</option>
-                        {projects
-                          .filter((p) => p.status !== "archived")
-                          .map((p) => (
-                            <option key={p.id} value={p.id}>
-                              {p.name}
-                            </option>
-                          ))}
-                      </select>
-                    </label>
+                    <div className="selected-project"><FolderKanban size={20}/><div><span>当前项目</span><strong>{project?.name}</strong><small className="mono">{project?.projectFolderName || `${(project?.shootingDateStart || "").replace(/-/g, "")}_${project?.name}`}</small></div><Button kind="subtle" onClick={() => setStep(0)}>更换项目</Button></div>
                     <div className="form-grid">
                       <label>
                         拍摄日期
                         <input
                           type="date"
                           value={shootDate}
+                          min={project?.shootingDateStart}
+                          max={project?.shootingDateEnd}
                           onChange={(e) => setShootDate(e.target.value)}
                           required
                         />
@@ -433,18 +432,14 @@ export function Composer({
                         >
                           {(project?.devices.length
                             ? project.devices
-                            : ["A机"]
+                            : ["FX3"]
                           ).map((d) => (
                             <option key={d}>{d}</option>
                           ))}
                         </select>
                       </label>
                     </div>
-                    {!projects.length && (
-                      <div className="notice">
-                        请先关闭此窗口，在「拍摄项目」创建一个项目，或切换到素材卡备份。
-                      </div>
-                    )}
+                    <div className="notice"><Info size={15}/><span>本次素材将保存到 <span className="mono">{project?.projectFolderName}/{shootDate.replace(/-/g, "")}/{camera}/素材卷/</span></span></div>
                   </div>
                 )}
                 <div className="dest-heading">
@@ -592,9 +587,9 @@ export function Composer({
                   {dests.map((d) => (
                     <p className="mono" key={d}>
                       {d}
-                      {mode === "mirror"
-                        ? "/[原始目录结构]"
-                        : `/${mode === "project" ? `${project?.name}/${shootDate}/${camera}/` : ""}${name || (mode === "project" && project ? `${project.volumePrefix || camera}${String(project.nextVolumeByDevice?.[camera] || 1).padStart(3, "0")}` : "[素材源名称]")}_[时间戳]_[唯一标识]/`}
+                      {mode === "project"
+                        ? `/${project?.projectFolderName || `${(project?.shootingDateStart || "").replace(/-/g, "")}_${project?.name}`}/${shootDate.replace(/-/g, "")}/${camera}/${name || `${project?.volumePrefixByDevice?.[camera] || project?.volumePrefix || `${camera}_`}${String(project?.nextVolumeByDevice?.[camera] || 1).padStart(3, "0")}`}/`
+                        : `/${name || "[素材源名称]"}_[时间戳]_[唯一标识]/`}
                     </p>
                   ))}
                 </div>
@@ -634,7 +629,6 @@ export function Composer({
                     {
                       card: "素材卡备份",
                       project: "项目备份",
-                      mirror: "目录备份",
                     }[mode]
                   }
                 </dd>

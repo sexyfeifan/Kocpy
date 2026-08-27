@@ -26,6 +26,8 @@ import { inspectMedia, isThumbnailMedia } from "./media";
 import { generateReport, generateDailyReport } from "./backup/ReportGenerator";
 import { generateMhl, generateAscMhl } from "./backup/ManifestGenerator";
 import type { BackupTask, ProjectConfig, TaskConfig, ProxyJob } from "./types";
+import { compareVersions, selectMacAsset, type GitHubRelease } from "./update";
+import { makeProjectFolderName } from "./project-path";
 
 app.setName("Kocpy");
 const appDataRoot = app.getPath("appData");
@@ -35,6 +37,18 @@ if (!app.requestSingleInstanceLock()) app.exit(0);
 
 const engine = new BackupEngine(path.join(app.getPath("userData"), "thumbnails")),
   store = new Storage(app.getPath("userData"));
+const normalizeProject = (project: ProjectConfig): ProjectConfig => {
+  const shootingDateStart = project.shootingDateStart || project.shootingDate || new Date().toLocaleDateString("sv-SE");
+  const devices = project.devices?.length ? project.devices.slice(0, 10) : ["FX3"];
+  return {
+    ...project,
+    devices,
+    shootingDateStart,
+    shootingDateEnd: project.shootingDateEnd || shootingDateStart,
+    projectFolderName: project.projectFolderName || makeProjectFolderName(shootingDateStart, project.name),
+    volumePrefixByDevice: Object.fromEntries(devices.map((device) => [device, project.volumePrefixByDevice?.[device] || project.volumePrefix || `${device}_`])),
+  };
+};
 let main: BrowserWindow | null = null,
   persistTimer: ReturnType<typeof setTimeout> | undefined,
   quitReady = false,
@@ -223,24 +237,28 @@ app.whenReady().then(async () => {
   handle("updates:check", async () => {
     const response = await fetch("https://api.github.com/repos/sexyfeifan/Kocpy/releases/latest", { headers: { "Accept": "application/vnd.github+json", "User-Agent": `Kocpy/${app.getVersion()}` } });
     if (!response.ok) throw new Error(`更新检查失败（HTTP ${response.status}）`);
-    const release = await response.json() as any, latest = String(release.tag_name || "").replace(/^v/, ""), current = app.getVersion();
-    const parts = (v:string) => v.split(".").map((n) => Number(n) || 0), a = parts(latest), b = parts(current);
-    let comparison = 0; for (let i = 0; i < Math.max(a.length, b.length); i++) { if ((a[i] || 0) !== (b[i] || 0)) { comparison = (a[i] || 0) > (b[i] || 0) ? 1 : -1; break; } }
-    const available = comparison > 0;
-    return { current, latest, available, url: release.html_url };
+    const release = await response.json() as GitHubRelease, latest = String(release.tag_name || "").replace(/^v/, ""), current = app.getVersion();
+    if (!latest || !release.html_url) throw new Error("GitHub Release 没有可用版本");
+    const asset = selectMacAsset(release, process.arch);
+    return { current, latest, available: compareVersions(latest, current) > 0, releaseUrl: release.html_url, ...asset };
   });
-  handle("updates:open", (url: string) => { if (!/^https:\/\/github\.com\/sexyfeifan\/Kocpy\/releases\//.test(url)) throw new Error("无效更新地址"); return shell.openExternal(url); });
+  handle("updates:open", (url: string) => { if (!/^https:\/\/github\.com\/sexyfeifan\/Kocpy\/releases\/(?:tag|download)\//.test(url)) throw new Error("无效更新地址"); return shell.openExternal(url); });
   handle("settings:get", () => store.read("settings.json", defaultSettings));
   handle("settings:save", (settings: typeof defaultSettings) =>
     store.write("settings.json", settings),
   );
-  handle("projects:list", () =>
-    store.read<ProjectConfig[]>("projects.json", []),
-  );
+  handle("projects:list", async () => (await store.read<ProjectConfig[]>("projects.json", [])).map(normalizeProject));
   handle("projects:save", async (project: ProjectConfig) => {
     project.name = segment(project.name);
-    project.devices = project.devices.map(segment);
-    const all = await store.read<ProjectConfig[]>("projects.json", []),
+    if (!project.shootingDateStart) throw new Error("请设置项目开始日期");
+    if (project.shootingDateEnd && project.shootingDateEnd < project.shootingDateStart) throw new Error("项目结束日期不能早于开始日期");
+    project.devices = [...new Set(project.devices.map(segment))].slice(0, 10);
+    if (!project.devices.length) throw new Error("请至少选择一个设备或机位");
+    if (!project.destinationPaths?.length || project.destinationPaths.length > 4 || project.destinationPaths.some((value) => !path.isAbsolute(value))) throw new Error("请选择 1–4 个有效备份根目录");
+    project.projectFolderName = makeProjectFolderName(project.shootingDateStart, project.name);
+    project.volumePrefixByDevice = Object.fromEntries(project.devices.map((device) => [device, segment(project.volumePrefixByDevice?.[device] || `${device}_`)]));
+    project = normalizeProject(project);
+    const all = (await store.read<ProjectConfig[]>("projects.json", [])).map(normalizeProject),
       idx = all.findIndex((p) => p.id === project.id);
     if (idx < 0) all.push(project);
     else all[idx] = project;
@@ -248,13 +266,13 @@ app.whenReady().then(async () => {
     return all;
   });
   handle("projects:claim-volume", async (projectId: string, device: string) => {
-    const all = await store.read<ProjectConfig[]>("projects.json", []), project = all.find((p) => p.id === projectId);
+    const all = (await store.read<ProjectConfig[]>("projects.json", [])).map(normalizeProject), project = all.find((p) => p.id === projectId);
     if (!project) throw new Error("项目不存在");
     project.nextVolumeByDevice ||= {};
     const number = Math.max(1, project.nextVolumeByDevice[device] || 1);
     project.nextVolumeByDevice[device] = number + 1;
     await store.write("projects.json", all);
-    return { number, prefix: project.volumePrefix || device, project };
+    return { number, prefix: project.volumePrefixByDevice?.[device] || project.volumePrefix || `${device}_`, project };
   });
   handle("report:daily", async (shootingDate: string, projectId?: string) => {
     const tasks = engine.getAllTasks().filter((t) => (!projectId || t.projectId === projectId) && (t.shootingDate || new Date(t.completedAt || t.createdAt || 0).toLocaleDateString("sv-SE")) === shootingDate);

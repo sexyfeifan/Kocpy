@@ -69,6 +69,7 @@ import {
   type Settings,
   type Scan,
   type ProxyJob,
+  type UpdateInfo,
 } from "./api";
 import { Composer } from "./Composer";
 import { ProjectEditor } from "./ProjectEditor";
@@ -187,7 +188,8 @@ export function App() {
     } | null>(null),
     [proxy, setProxy] = useState<{ path: string; name: string; paths?: string[] } | null>(null),
     [proxyBusy, setProxyBusy] = useState(false),
-    [completion, setCompletion] = useState<BackupTask | null>(null);
+    [completion, setCompletion] = useState<BackupTask | null>(null),
+    [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
     undefined,
   );
@@ -251,6 +253,7 @@ export function App() {
         })
         .catch(() => {});
     }, 7000);
+    void api.checkUpdates().then((info) => { if (!stopped) setUpdateInfo(info); }).catch(() => {});
     return () => {
       stopped = true;
       unsub();
@@ -418,6 +421,7 @@ export function App() {
   );
   const saveProject = async (p: ProjectConfig) => {
     setProjects(await api.saveProject(p));
+    setComposer((current) => current ? { ...current, project: p } : current);
     setEditor(null);
     notify("项目已保存");
   };
@@ -429,7 +433,7 @@ export function App() {
           <img src="./icon.png" alt="Kocpy 图标" />
           <div>
             <strong>
-              Kocpy<span>0.0.3</span>
+              Kocpy<span>0.0.4</span>
             </strong>
             <small>素材工作台</small>
           </div>
@@ -470,10 +474,11 @@ export function App() {
           >
             <Settings2 size={18} />
             <span>偏好设置</span>
+            {updateInfo?.available && <b title={`发现 Kocpy ${updateInfo.latest}`}>1</b>}
           </button>
           <div className="sidebar-foot">
             <span className="live-dot" />
-            桌面版 · macOS <span>v0.0.3</span>
+            桌面版 · macOS <span>v0.0.4</span>
           </div>
         </div>
       </aside>
@@ -874,6 +879,7 @@ export function App() {
                             </Button>
                           </div>
                           <h2>{p.name}</h2>
+                          <small className="mono muted">{p.projectFolderName}</small>
                           <p>
                             <CalendarDays size={13} />
                             {p.shootingDateStart || "未设置日期"}{" "}
@@ -1114,6 +1120,8 @@ export function App() {
                     notify("偏好设置已保存");
                   }}
                   notify={notify}
+                  updateInfo={updateInfo}
+                  setUpdateInfo={setUpdateInfo}
                 />
               )}
             </>
@@ -1162,6 +1170,7 @@ export function App() {
             go("transfers");
             notify("任务已加入传输队列");
           }}
+          onCreateProject={() => setEditor({})}
         />
       )}
       {editor && (
@@ -1677,15 +1686,18 @@ function SettingsPage({
   settings,
   onSave,
   notify,
+  updateInfo,
+  setUpdateInfo,
 }: {
   settings: Settings;
   onSave: (s: Settings) => Promise<void>;
   notify: (m: string, e?: boolean) => void;
+  updateInfo: UpdateInfo | null;
+  setUpdateInfo: (info: UpdateInfo | null) => void;
 }) {
   const [draft, setDraft] = useState(settings),
     [saving, setSaving] = useState(false),
-    [migration, setMigration] = useState<Array<{path:string;tasks:number;projects:number;hasSettings:boolean}>>([]),
-    [updateInfo, setUpdateInfo] = useState<{current:string;latest:string;available:boolean;url:string}|null>(null);
+    [migration, setMigration] = useState<Array<{path:string;tasks:number;projects:number;hasSettings:boolean}>>([]);
   useEffect(() => { void api.previewMigration().then(setMigration).catch(() => {}); }, []);
   const save = async () => {
     setSaving(true);
@@ -1773,7 +1785,7 @@ function SettingsPage({
             <i />
           </button>
         </div>
-        <div className="setting-row"><div><h3>安全更新</h3><p>{updateInfo ? updateInfo.available ? `发现新版本 ${updateInfo.latest}，可前往项目官方 GitHub Release 下载。` : `当前 ${updateInfo.current} 已是最新版本。` : "只检查项目官方 GitHub Release，不静默下载或替换应用。"}</p></div><div className="row"><Button kind="subtle" onClick={() => void api.checkUpdates().then(setUpdateInfo).catch((e) => notify(String(e),true))}><RefreshCw size={14}/>检查更新</Button>{updateInfo?.available && <Button kind="primary" onClick={() => void api.openUpdate(updateInfo.url)}><ExternalLink size={14}/>打开下载页</Button>}</div></div>
+        <div className="setting-row"><div><h3>软件更新</h3><p>{updateInfo ? updateInfo.available ? `发现 Kocpy ${updateInfo.latest} · ${updateInfo.archLabel} 安装包。` : `当前 ${updateInfo.current} 已是最新版本 · ${updateInfo.archLabel} Mac。` : "启动后自动检查官方 GitHub Release，也可以手动检查。"}</p>{updateInfo?.available && !updateInfo.downloadUrl && <small className="red-text">当前版本尚未上传与你的 Mac 架构匹配的安装包。</small>}</div><div className="row"><Button kind="subtle" onClick={() => void api.checkUpdates().then(setUpdateInfo).catch((e) => notify(String(e),true))}><RefreshCw size={14}/>检查更新</Button>{updateInfo?.available && <Button kind="primary" onClick={() => void api.openUpdate(updateInfo.downloadUrl || updateInfo.releaseUrl)}><Download size={14}/>升级到 {updateInfo.latest}</Button>}{updateInfo && <Button kind="icon" title="查看 GitHub Release" onClick={() => void api.openUpdate(updateInfo.releaseUrl)}><ExternalLink size={14}/></Button>}</div></div>
       </section>
       <section className="panel settings-panel">
         <div className="section-title"><h2><Archive size={18}/>旧版数据迁移</h2><span className="muted small">先预览，确认后导入；旧数据不会被删除</span></div>
@@ -1841,7 +1853,7 @@ function SettingsPage({
         <img src="./icon.png" alt="Kocpy 图标" />
         <div>
           <h3>
-            Kocpy <span>0.0.3</span>
+            Kocpy <span>0.0.4</span>
           </h3>
           <p>
             融合 DiskHop 的轻量工作流与 Kocpy

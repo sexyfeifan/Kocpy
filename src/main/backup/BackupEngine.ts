@@ -6,6 +6,7 @@ import type { BackupTask, TaskConfig, HashAlgorithm, FileRecord, Destination } f
 import { canonical, inside, scan, segment, safeChild } from "./safety";
 import { volumeIdentity } from "../system";
 import { inspectMedia, isThumbnailMedia } from "../media";
+import { makeProjectDayPath, makeProjectFolderName } from "../project-path";
 
 export async function hashFile(file: string, algorithm: HashAlgorithm, signal?: AbortSignal): Promise<string> {
   const hash = createHash(algorithm);
@@ -83,10 +84,15 @@ export class BackupEngine extends EventEmitter {
     const id = randomUUID();
     const timestamp = new Date().toLocaleString("sv-SE", { hour12: false }).replace(/[^0-9]/g, "").slice(0, 14);
     const name = segment(config.namingTemplate || config.name || path.basename(config.sourcePath));
-    const folder = `${name}_${timestamp}_${id.slice(0, 4)}`;
-    const projectFolder = config.projectName ? path.join(segment(config.projectName), segment(config.shootingDate || new Date().toLocaleDateString("sv-SE")), ...config.devices.slice(0, 1).map(segment)) : "";
+    const folder = config.projectId ? name : `${name}_${timestamp}_${id.slice(0, 4)}`;
+    const projectFolderName = config.projectId
+      ? config.projectFolderName || makeProjectFolderName(config.projectStartDate || config.shootingDate, config.projectName || "项目")
+      : undefined;
+    const projectFolder = projectFolderName
+      ? makeProjectDayPath(projectFolderName, config.shootingDate, config.devices[0] || "未指定设备")
+      : "";
     const task: BackupTask = {
-      id, name, sourcePath: config.sourcePath, devices: config.devices || [], projectId: config.projectId, shootingDate: config.shootingDate,
+      id, name, sourcePath: config.sourcePath, devices: config.devices || [], projectId: config.projectId, projectFolderName, shootingDate: config.shootingDate,
       createdAt: Date.now(), hashAlgorithm: config.hashAlgorithm, namingTemplate: folder,
       shootingDateFolder: projectFolder, copyMode: config.copyMode || "normal", status: "pending",
       totalFiles: 0, completedFiles: 0, totalBytes: 0, transferredBytes: 0,

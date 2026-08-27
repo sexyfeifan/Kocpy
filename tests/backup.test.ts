@@ -196,10 +196,11 @@ describe("Real filesystem backup integrity", () => {
       "valuable",
     );
   });
-  it("creates project/date/camera hierarchy and unique card folders", async () => {
+  it("creates the stable project-start/day/device/card hierarchy", async () => {
     const cfg = config({
       copyMode: "normal",
       projectName: "品牌短片",
+      projectStartDate: "2026-08-27",
       shootingDate: "2026-08-27",
       devices: ["A机"],
       projectId: "project",
@@ -207,10 +208,10 @@ describe("Real filesystem backup integrity", () => {
     const { task } = await run(cfg);
     expect(task.status).toBe("completed");
     expect(task.destinations[0].resolvedPath).toContain(
-      "品牌短片/2026-08-27/A机/A001_",
+      "20260827_品牌短片/20260827/A机/A001",
     );
     const second = new BackupEngine().createTask(cfg);
-    expect(second.namingTemplate).not.toBe(task.namingTemplate);
+    expect(second.namingTemplate).toBe(task.namingTemplate);
   });
   it("does not mark empty source directories as verified backups", async () => {
     const empty = path.join(root, "nothing");

@@ -28,6 +28,16 @@ export interface Scan {
   skipped: number;
   sample: string[];
 }
+export interface UpdateInfo {
+  current: string;
+  latest: string;
+  available: boolean;
+  releaseUrl: string;
+  downloadUrl?: string;
+  assetName?: string;
+  arch: "arm64" | "x64";
+  archLabel: "Apple Silicon" | "Intel";
+}
 export interface API {
   selectDirectory(): Promise<string | null>;
   getTasks(): Promise<BackupTask[]>;
@@ -49,7 +59,7 @@ export interface API {
   reveal(path: string): Promise<void>;
   previewMigration(): Promise<Array<{path:string;tasks:number;projects:number;hasSettings:boolean}>>;
   importMigration(path:string): Promise<{tasks:number;projects:number;backup:string}>;
-  checkUpdates(): Promise<{current:string;latest:string;available:boolean;url:string}>;
+  checkUpdates(): Promise<UpdateInfo>;
   openUpdate(url:string): Promise<void>;
   getSettings(): Promise<Settings>;
   saveSettings(settings: Settings): Promise<void>;
