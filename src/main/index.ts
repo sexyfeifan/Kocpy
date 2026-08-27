@@ -28,7 +28,7 @@ import { generateReport, generateDailyReport } from "./backup/ReportGenerator";
 import { generateMhl, generateAscMhl } from "./backup/ManifestGenerator";
 import type { BackupTask, ProjectConfig, TaskConfig, ProxyJob } from "./types";
 import { compareVersions, selectMacAsset, type GitHubRelease } from "./update";
-import { claimTimestampedVolume, formatVolumeTimestamp, makeProjectFolderName } from "./project-path";
+import { claimTimestampedVolume, createProjectDateFolders, formatVolumeTimestamp, makeProjectFolderName } from "./project-path";
 
 app.setName("Kocpy");
 const appDataRoot = app.getPath("appData");
@@ -48,6 +48,10 @@ const normalizeProject = (project: ProjectConfig): ProjectConfig => {
     shootingDateEnd: project.shootingDateEnd || shootingDateStart,
     projectFolderName: project.projectFolderName || makeProjectFolderName(shootingDateStart, project.name),
     volumePrefixByDevice: Object.fromEntries(devices.map((device) => [device, project.volumePrefixByDevice?.[device] || project.volumePrefix || `${device}_`])),
+    devicePositions: Object.fromEntries(devices.flatMap((device) => {
+      const positions = (project.devicePositions?.[device] || []).filter((value) => /^[A-E]$/.test(value)).slice(0, 5);
+      return positions.length ? [[device, positions]] : [];
+    })),
   };
 };
 let main: BrowserWindow | null = null,
@@ -270,7 +274,12 @@ app.whenReady().then(async () => {
     if (!project.destinationPaths?.length || project.destinationPaths.length > 4 || project.destinationPaths.some((value) => !path.isAbsolute(value))) throw new Error("请选择 1–4 个有效备份根目录");
     project.projectFolderName = makeProjectFolderName(project.shootingDateStart, project.name);
     project.volumePrefixByDevice = Object.fromEntries(project.devices.map((device) => [device, segment(project.volumePrefixByDevice?.[device] || `${device}_`)]));
+    project.devicePositions = Object.fromEntries(project.devices.flatMap((device) => {
+      const positions = [...new Set(project.devicePositions?.[device] || [])].filter((value) => /^[A-E]$/.test(value)).slice(0, 5);
+      return positions.length ? [[device, positions]] : [];
+    }));
     project = normalizeProject(project);
+    await createProjectDateFolders(project.destinationPaths!, project.projectFolderName!, project.shootingDateStart!);
     const all = (await store.read<ProjectConfig[]>("projects.json", [])).map(normalizeProject),
       idx = all.findIndex((p) => p.id === project.id);
     if (idx < 0) all.push(project);

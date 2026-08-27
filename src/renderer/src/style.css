@@ -395,6 +395,7 @@ small {
 .sidebar-author-links > span { display:flex; align-items:center; gap:6px; margin-right:auto; }
 .sidebar-author-links button { width:27px; height:27px; padding:0; display:grid; place-items:center; border:0; border-radius:6px; background:transparent; color:var(--muted); }
 .sidebar-author-links button:hover { color:var(--text); background:var(--hover); }
+.sidebar-author-links button img { width:17px; height:17px; border-radius:5px; object-fit:cover; }
 .sidebar-author-links .live-dot { flex-shrink: 0; }
 .live-dot {
   display: inline-block;
@@ -1978,11 +1979,35 @@ small {
 .device-suggestions button { display: flex; align-items: center; gap: 6px; padding: 7px 10px; border: 1px solid var(--border); border-radius: 20px; background: var(--panel); color: var(--sub); font-size: 10px; }
 .device-suggestions button:disabled { color: var(--green); opacity: .72; }
 .device-profile-list { display: grid; gap: 8px; margin-top: 13px; }
+.device-profile-card { border: 1px solid var(--border); border-radius: 9px; background: var(--panel); overflow: hidden; }
 .device-profile { display: grid; grid-template-columns: 100px minmax(180px, 1fr) 90px 32px; gap: 10px; align-items: center; padding: 10px 12px; border: 1px solid var(--border); border-radius: 9px; background: var(--panel); }
+.device-profile-card .device-profile { border: 0; border-radius: 0; }
 .device-profile > span { display: flex; gap: 7px; align-items: center; }
 .device-profile label { margin: 0; display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 8px; font-size: 9px; }
 .device-profile input { min-width: 0; padding: 7px 9px; }
 .device-profile small { color: var(--purple); font-family: monospace; }
+.position-config { display:flex; align-items:center; gap:14px; padding:9px 12px; border-top:1px solid var(--border); background:var(--panel2); }
+.position-config label { flex-direction:row; align-items:center; gap:7px; margin:0; font-size:9px; white-space:nowrap; }
+.position-config label:nth-child(2) { margin-left:auto; }
+.position-config input[type="checkbox"] { width:14px; }
+.position-config select { width:128px; padding:6px 8px; font-size:9px; }
+.position-config small { color:var(--muted); margin-left:auto; }
+.multi-position-control { display:flex; align-items:center; gap:14px; padding:13px 14px; margin-top:13px; border:1px solid var(--border); border-radius:9px; background:var(--panel2); }
+.multi-position-control > label { flex-direction:row; align-items:center; margin:0; gap:8px; }
+.position-buttons { display:flex; gap:6px; margin-left:auto; }
+.position-buttons button { width:30px; height:28px; border:1px solid var(--border); border-radius:6px; background:var(--panel); color:var(--muted); }
+.position-buttons button.selected { color:var(--primary-ink); background:var(--primary); border-color:transparent; }
+.detected-storage { margin-top:16px; padding:12px; border:1px solid var(--border); border-radius:9px; background:var(--panel); }
+.detected-storage-heading { display:flex; justify-content:space-between; color:var(--muted); font-size:9px; margin-bottom:9px; }
+.detected-storage-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:7px; }
+.detected-storage-grid button { display:flex; align-items:center; gap:8px; min-width:0; padding:9px; border:1px solid var(--border); border-radius:7px; background:var(--panel2); color:var(--sub); text-align:left; }
+.detected-storage-grid button.selected { border-color:#81c9aa55; color:var(--green); }
+.detected-storage-grid button > span { flex:1; min-width:0; }
+.detected-storage-grid strong,.detected-storage-grid small { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.detected-storage-grid strong { font-size:10px; }
+.detected-storage-grid small { color:var(--muted); font-size:8px; margin-top:3px; }
+.final-path-list { display:grid; gap:7px; margin-top:10px; }
+.final-path-list p { opacity:1; padding:9px 10px; border:1px solid var(--border); border-radius:7px; background:var(--panel2); color:var(--sub); overflow-wrap:anywhere; }
 .option-checks {
   background: var(--panel);
   border: 1px solid var(--border);

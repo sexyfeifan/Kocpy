@@ -1,4 +1,5 @@
 import path from "node:path";
+import { promises as fs } from "node:fs";
 import { segment } from "./backup/safety";
 
 export function compactDate(value: string): string {
@@ -15,8 +16,28 @@ export function makeProjectDayPath(
   projectFolderName: string,
   shootingDate: string,
   device: string,
+  cameraPosition?: string,
 ): string {
-  return path.join(segment(projectFolderName), compactDate(shootingDate), segment(device));
+  return path.join(
+    makeProjectDatePath(projectFolderName, shootingDate),
+    segment(device),
+    ...(cameraPosition ? [segment(cameraPosition)] : []),
+  );
+}
+
+export function makeProjectDatePath(projectFolderName: string, shootingDate: string): string {
+  return path.join(segment(projectFolderName), compactDate(shootingDate));
+}
+
+export async function createProjectDateFolders(
+  destinations: string[],
+  projectFolderName: string,
+  shootingDate: string,
+): Promise<string[]> {
+  const relative = makeProjectDatePath(projectFolderName, shootingDate);
+  const created = destinations.map((destination) => path.join(destination, relative));
+  await Promise.all(created.map((folder) => fs.mkdir(folder, { recursive: true })));
+  return created;
 }
 
 export function formatVolumeTimestamp(value = new Date()): string {

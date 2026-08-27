@@ -79,6 +79,7 @@ export class BackupEngine extends EventEmitter {
   hasActive() { return this.active.size > 0; }
   createTask(config: TaskConfig): BackupTask {
     if (!["sha256", "sha1", "md5"].includes(config.hashAlgorithm)) throw new Error("不支持的哈希算法");
+    if (config.cameraPosition && !/^[A-E]$/.test(config.cameraPosition)) throw new Error("机位只能选择 A–E");
     if (!config.destinationPaths?.length || config.destinationPaths.length > 4) throw new Error("请选择 1–4 个目的地");
     if (!path.isAbsolute(config.sourcePath) || config.destinationPaths.some((p) => !path.isAbsolute(p))) throw new Error("请选择有效的文件夹路径");
     const id = randomUUID();
@@ -89,10 +90,10 @@ export class BackupEngine extends EventEmitter {
       ? config.projectFolderName || makeProjectFolderName(config.projectStartDate || config.shootingDate, config.projectName || "项目")
       : undefined;
     const projectFolder = projectFolderName
-      ? makeProjectDayPath(projectFolderName, config.shootingDate, config.devices[0] || "未指定设备")
+      ? makeProjectDayPath(projectFolderName, config.shootingDate, config.devices[0] || "未指定设备", config.cameraPosition)
       : "";
     const task: BackupTask = {
-      id, name, sourcePath: config.sourcePath, devices: config.devices || [], projectId: config.projectId, projectFolderName, shootingDate: config.shootingDate,
+      id, name, sourcePath: config.sourcePath, devices: config.devices || [], projectId: config.projectId, projectFolderName, shootingDate: config.shootingDate, cameraPosition: config.cameraPosition,
       createdAt: Date.now(), hashAlgorithm: config.hashAlgorithm, namingTemplate: folder,
       shootingDateFolder: projectFolder, copyMode: config.copyMode || "normal", status: "pending",
       totalFiles: 0, completedFiles: 0, totalBytes: 0, transferredBytes: 0,

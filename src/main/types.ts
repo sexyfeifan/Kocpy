@@ -55,6 +55,7 @@ export interface BackupTask {
   projectId?: string;
   projectFolderName?: string;
   shootingDate?: string;
+  cameraPosition?: string;
   createdAt?: number;
   id: string;
   name: string;
@@ -115,6 +116,7 @@ export interface TaskConfig {
   hashAlgorithm: HashAlgorithm;
   namingTemplate: string;
   shootingDate: string;
+  cameraPosition?: string;
   projectName?: string;
   projectStartDate?: string;
   projectFolderName?: string;
