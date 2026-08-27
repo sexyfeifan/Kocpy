@@ -21,4 +21,4 @@ The UI reports two rates. `aggregateSpeedBps` is physical bytes written across a
 
 ## Compatibility
 
-Kocpy ships separate native FFmpeg binaries for Apple Silicon and Intel. The app automatically imports previous `New Kocpy` task, project and settings JSON on the first launch without deleting the old data.
+Kocpy ships separate native FFmpeg binaries for Apple Silicon and Intel. All tasks, projects, preferences, thumbnails, and proxy records remain in the Kocpy local data directory.

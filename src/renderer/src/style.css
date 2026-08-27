@@ -14,6 +14,7 @@
   --primary-ink: #201a39;
   --green: #81c9aa;
   --danger: #ef999b;
+  --amber: #d6a35f;
   --input: #15161a;
   --shadow: 0 24px 100px #0008;
   --overlay: #050509b8;
@@ -44,6 +45,7 @@
   --primary-ink: #fff;
   --green: #25865e;
   --danger: #bb4b50;
+  --amber: #a86b17;
   --input: #faf9fc;
   --shadow: 0 24px 100px #33234f30;
   --overlay: #2f29374d;
@@ -164,6 +166,9 @@ small {
 }
 .green-text {
   color: var(--green);
+}
+.amber-text {
+  color: var(--amber);
 }
 .red-text {
   color: var(--danger);
@@ -2172,6 +2177,22 @@ small {
 .project-day-progress { border-top:1px solid var(--line); border-bottom:1px solid var(--line); padding:10px 0; margin:10px 0; display:grid; gap:6px; }
 .project-day-progress > strong { color:var(--muted); font-size:9px; letter-spacing:.07em; }
 .project-day-progress > div { display:flex; justify-content:space-between; font-size:10px; }
+.project-insights { margin-top:18px; }
+.project-insights .section-title > div:first-child { display:grid; gap:5px; }
+.project-total-cards { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; margin:16px 0; }
+.project-total-cards > div { padding:14px; border:1px solid var(--border); border-radius:10px; background:var(--panel2); }
+.project-total-cards strong,.project-total-cards span { display:block; }
+.project-total-cards strong { color:var(--text); font-size:18px; }
+.project-total-cards span { margin-top:5px; color:var(--muted); font-size:9px; }
+.project-matrix { overflow:hidden; border:1px solid var(--border); border-radius:10px; }
+.project-matrix-head,.project-matrix-row { display:grid; grid-template-columns:1.15fr 1.1fr .7fr .7fr .9fr 1.2fr; gap:8px; align-items:center; padding:9px 12px; font-size:10px; }
+.project-matrix-head { background:var(--panel2); color:var(--muted); font-size:8px; letter-spacing:.06em; }
+.project-matrix-row { border-top:1px solid var(--line); color:var(--sub); }
+.project-matrix-row strong { color:var(--text); font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+.project-task-breakdown { display:grid; gap:0; margin-top:15px; border:1px solid var(--border); border-radius:10px; overflow:hidden; }
+.project-task-breakdown > strong { padding:10px 12px; background:var(--panel2); color:var(--muted); font-size:9px; }
+.project-task-breakdown > div { display:grid; grid-template-columns:1.2fr 1.4fr 1fr auto; gap:12px; align-items:center; padding:9px 12px; border-top:1px solid var(--line); font-size:10px; }
+.project-task-breakdown small { color:var(--muted); }
 
 .phase-head { display:flex; justify-content:space-between; color:var(--muted); font-size:10px; margin:0 0 9px; }
 .current-file {

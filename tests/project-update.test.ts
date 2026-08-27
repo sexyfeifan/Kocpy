@@ -5,8 +5,21 @@ import os from "node:os";
 import path from "node:path";
 import { claimTimestampedVolume, compactDate, createProjectDateFolders, createProjectStructure, expectedProjectPaths, formatVolumeTimestamp, inspectProjectStructure, makeProjectDatePath, makeProjectDayPath, makeProjectFolderName, projectShootingDates } from "../src/main/project-path";
 import { compareVersions, selectMacAsset } from "../src/main/update";
+import { generateProjectReport } from "../src/main/backup/ReportGenerator";
 
 describe("project backup workflow", () => {
+  it("exports a complete project matrix and file detail report", async () => {
+    const project = { id: "report", name: "山海之间", devices: ["FX3", "MAVIC"], volumePrefix: "FX3_", shootingDateStart: "2026-08-27", shootingDateEnd: "2026-08-28", destinationPaths: ["/Volumes/MASTER"] };
+    const task = new BackupEngine().createTask({ projectId: project.id, projectName: project.name, projectStartDate: project.shootingDateStart, name: "FX3_202608271200", namingTemplate: "FX3_202608271200", sourcePath: "/Volumes/CARD", destinationPaths: project.destinationPaths, devices: ["FX3"], shootingDate: "2026-08-27", hashAlgorithm: "sha256" });
+    Object.assign(task, { status: "completed", totalFiles: 1, totalBytes: 4096, completedFiles: 1, fileRecords: [{ name: "A001.mov", relativePath: "DCIM/A001.mov", size: 4096, srcChecksum: "abc", destinations: [{ path: "/Volumes/MASTER/A001.mov", checksum: "abc", verified: true }] }] });
+    task.destinations[0].verified = true;
+    const html = (await generateProjectReport(project, [task])).toString();
+    expect(html).toContain("日期 × 设备素材完成情况");
+    expect(html).toContain("2026-08-28");
+    expect(html).toContain("MAVIC");
+    expect(html).toContain("DCIM/A001.mov");
+    expect(html).toContain("4 KB");
+  });
   it("builds the project/start-day/device/card hierarchy", () => {
     const folder = makeProjectFolderName("2026-08-27", "山海之间");
     expect(folder).toBe("20260827_山海之间");

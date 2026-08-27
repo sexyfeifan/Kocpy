@@ -24,7 +24,7 @@ import { Storage, defaultSettings } from "./storage";
 import { listVolumes, driveInfo, ejectVolume, volumeIdentity } from "./system";
 import { makeProxy } from "./proxy";
 import { inspectMedia, isThumbnailMedia } from "./media";
-import { generateReport, generateDailyReport } from "./backup/ReportGenerator";
+import { generateReport, generateDailyReport, generateProjectReport } from "./backup/ReportGenerator";
 import { generateMhl, generateAscMhl } from "./backup/ManifestGenerator";
 import type { BackupTask, ProjectConfig, TaskConfig, ProxyJob } from "./types";
 import { compareVersions, selectMacAsset, type GitHubRelease } from "./update";
@@ -240,24 +240,6 @@ app.whenReady().then(async () => {
     return ejectVolume(volume);
   });
   handle("system:reveal", (file: string) => shell.showItemInFolder(file));
-  handle("migration:preview", async () => {
-    const sources = [] as Array<{path:string;tasks:number;projects:number;hasSettings:boolean}>;
-    for (const legacy of [path.join(appDataRoot, "New Kocpy"), path.join(appDataRoot, "KocardPro")]) {
-      const tasks = await new Storage(legacy).read<BackupTask[]>("tasks.json", []), projects = await new Storage(legacy).read<ProjectConfig[]>("projects.json", []), hasSettings = await fs.access(path.join(legacy, "settings.json")).then(() => true, () => false);
-      if (tasks.length || projects.length || hasSettings) sources.push({ path: legacy, tasks: tasks.length, projects: projects.length, hasSettings });
-    }
-    return sources;
-  });
-  handle("migration:import", async (legacy: string) => {
-    const allowed = [path.join(appDataRoot, "New Kocpy"), path.join(appDataRoot, "KocardPro")]; if (!allowed.includes(legacy)) throw new Error("不支持的迁移来源");
-    const sourceStore = new Storage(legacy), oldTasks = await sourceStore.read<BackupTask[]>("tasks.json", []), oldProjects = await sourceStore.read<ProjectConfig[]>("projects.json", []);
-    const backup = path.join(userDataPath, "migration-backups", String(Date.now())); await fs.mkdir(backup, { recursive: true });
-    for (const file of ["tasks.json", "projects.json", "settings.json"]) await fs.copyFile(path.join(userDataPath, file), path.join(backup, file)).catch((e) => { if (e.code !== "ENOENT") throw e; });
-    const existingIds = new Set(engine.getAllTasks().map((t) => t.id)); for (const task of oldTasks) if (!existingIds.has(task.id)) engine.loadTask(task); await persist();
-    const projects = await store.read<ProjectConfig[]>("projects.json", []), projectIds = new Set(projects.map((p) => p.id)); for (const project of oldProjects) if (!projectIds.has(project.id)) projects.push(project); await store.write("projects.json", projects);
-    const legacySettings = await sourceStore.read<typeof defaultSettings | null>("settings.json", null); if (legacySettings) await store.write("settings.json", { ...defaultSettings, ...legacySettings });
-    return { tasks: oldTasks.filter((t) => !existingIds.has(t.id)).length, projects: oldProjects.filter((p) => !projectIds.has(p.id)).length, backup };
-  });
   handle("updates:check", async () => {
     const response = await fetch("https://api.github.com/repos/sexyfeifan/Kocpy/releases/latest", { headers: { "Accept": "application/vnd.github+json", "User-Agent": `Kocpy/${app.getVersion()}` } });
     if (!response.ok) throw new Error(`更新检查失败（HTTP ${response.status}）`);
@@ -320,6 +302,23 @@ app.whenReady().then(async () => {
     finally { report.destroy(); }
     await syncReport(r.filePath);
     return r.filePath;
+  });
+  handle("report:project", async (projectId: string, format: "pdf" | "json") => {
+    const project = (await store.read<ProjectConfig[]>("projects.json", [])).map(normalizeProject).find((item) => item.id === projectId);
+    if (!project) throw new Error("项目不存在");
+    const tasks = engine.getAllTasks().filter((task) => task.projectId === projectId);
+    if (!tasks.length) throw new Error("当前项目还没有可导出的备份记录");
+    const extension = format === "json" ? "json" : "pdf";
+    const result = await dialog.showSaveDialog({ defaultPath: `Kocpy_${project.name}_项目完整报告.${extension}`, filters: [{ name: format === "json" ? "JSON" : "PDF", extensions: [extension] }] });
+    if (!result.filePath) return null;
+    if (format === "json") await fs.writeFile(result.filePath, JSON.stringify({ generatedAt: new Date().toISOString(), project, tasks }, null, 2));
+    else {
+      const report = new BrowserWindow({ show: false, webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } });
+      try { await report.loadURL("data:text/html;charset=utf-8," + encodeURIComponent((await generateProjectReport(project, tasks)).toString())); const pdf = await report.webContents.printToPDF({ printBackground: true, pageSize: "A4", margins: { top: 0.35, bottom: 0.35, left: 0.3, right: 0.3 } }); await fs.writeFile(result.filePath, pdf); }
+      finally { report.destroy(); }
+    }
+    await syncReport(result.filePath);
+    return result.filePath;
   });
   handle("report:resolve-csv", async (shootingDate: string, projectId?: string) => {
     const tasks = engine.getAllTasks().filter((t) => (!projectId || t.projectId === projectId) && (t.shootingDate || new Date(t.completedAt || t.createdAt || 0).toLocaleDateString("sv-SE")) === shootingDate);

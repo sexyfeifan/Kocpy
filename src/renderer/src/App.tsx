@@ -93,6 +93,11 @@ const navigation: [Page, string, typeof LayoutDashboard][] = [
   ["reports", "报告中心", FileCheck2],
   ["storage", "存储设备", HardDrive],
 ];
+const projectDates = (project: ProjectConfig, tasks: BackupTask[]) => {
+  const result: string[] = [], start = project.shootingDateStart, end = project.shootingDateEnd || start;
+  if (start && end) for (let cursor = new Date(`${start}T12:00:00`), finish = new Date(`${end}T12:00:00`); cursor <= finish && result.length < 1000; cursor.setDate(cursor.getDate() + 1)) result.push(cursor.toLocaleDateString("sv-SE"));
+  return [...new Set([...result, ...tasks.map((task) => task.shootingDate).filter(Boolean) as string[]])].sort();
+};
 const defaults: Settings = {
   defaultHash: "sha256",
   defaultDuplicateStrategy: "skip",
@@ -175,7 +180,8 @@ export function App() {
       project?: ProjectConfig;
     } | null>(null),
     [editor, setEditor] = useState<Partial<ProjectConfig> | null>(null),
-    [detail, setDetail] = useState<string | null>(null);
+    [detail, setDetail] = useState<string | null>(null),
+    [projectDetailId, setProjectDetailId] = useState<string | null>(null);
   const [toast, setToast] = useState<{
       message: string;
       error: boolean;
@@ -436,6 +442,8 @@ export function App() {
       notify(String(error).replace(/^Error: /, ""), true);
     }
   };
+  const projectDetail = projects.find((project) => project.id === projectDetailId);
+  const projectDetailTasks = tasks.filter((task) => task.projectId === projectDetailId);
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -444,7 +452,7 @@ export function App() {
           <img src="./icon.png" alt="Kocpy 图标" />
           <div>
             <strong>
-              Kocpy<span>0.0.8</span>
+              Kocpy<span>0.0.9</span>
             </strong>
             <small>素材工作台</small>
           </div>
@@ -491,10 +499,10 @@ export function App() {
             <button className={`sidebar-update ${updateInfo?.available ? "available" : ""}`} title="检查 Kocpy 更新" onClick={() => void checkForUpdates()}>
               <RefreshCw size={13}/>
               <span>{updateInfo?.available ? `可升级 ${updateInfo.latest}` : "检查更新"}</span>
-              <b>v0.0.8</b>
+              <b>v0.0.9</b>
             </button>
             <div className="sidebar-author-links">
-              <span><i className="live-dot"/>桌面版 · macOS</span>
+              <span><i className="live-dot"/><b>@sexyfeifan</b></span>
               <button title="作者 GitHub 主页" aria-label="打开作者 GitHub 主页" onClick={() => void api.openAuthor("https://github.com/sexyfeifan")}><Github size={15}/></button>
               <button title="作者小红书主页" aria-label="打开作者小红书主页" onClick={() => void api.openAuthor("https://www.xiaohongshu.com/user/profile/5d24d2ca000000001103fe97")}><img src="./xiaohongshu.png" alt=""/></button>
             </div>
@@ -925,15 +933,9 @@ export function App() {
                               次备份完成
                             </span>
                           </div>
-                          <div className="project-day-progress"><strong>今日素材进度</strong>{p.devices.map((device) => { const deviceTasks = tasks.filter((task) => task.projectId === p.id && task.shootingDate === today() && task.devices.includes(device)); const verified = deviceTasks.filter((task) => task.status === "completed").length; return <div key={device}><span>{device}</span><small className={verified ? "green-text" : "muted"}>{deviceTasks.length ? `${verified} / ${deviceTasks.length} 已校验` : "尚未备份"}</small></div>; })}</div>
+                          <div className="project-day-progress"><strong>项目素材进度</strong>{p.devices.map((device) => { const deviceTasks = tasks.filter((task) => task.projectId === p.id && task.devices.includes(device)); const verified = deviceTasks.filter((task) => task.status === "completed").length, size = deviceTasks.reduce((sum, task) => sum + task.totalBytes, 0); return <div key={device}><span>{device}</span><small className={verified && verified === deviceTasks.length ? "green-text" : "muted"}>{deviceTasks.length ? `${verified} / ${deviceTasks.length} 已校验 · ${bytes(size)}` : "尚未备份"}</small></div>; })}</div>
                           <div className="row between">
-                            <Button
-                              kind="subtle"
-                              onClick={() => setComposer({ project: p })}
-                            >
-                              使用此项目
-                              <ArrowRight size={14} />
-                            </Button>
+                            <div className="row"><Button kind="subtle" onClick={() => setProjectDetailId(projectDetailId === p.id ? null : p.id)}><Activity size={14}/>项目详情</Button><Button kind="subtle" onClick={() => setComposer({ project: p })}>使用此项目<ArrowRight size={14}/></Button></div>
                             <Button
                               kind="icon"
                               title={
@@ -963,6 +965,12 @@ export function App() {
                         </section>
                       ))}
                   </div>
+                  {projectDetail && <section className="panel project-insights">
+                    <div className="section-title"><div><h2><Activity size={18}/>{projectDetail.name} · 项目全周期</h2><span className="muted small">按拍摄日期与设备汇总素材卷、文件、容量和独立校验状态</span></div><div className="row"><Button kind="subtle" onClick={() => void act(async () => { const result = await api.exportProjectReport(projectDetail.id, "json"); if (result) notify(`项目完整数据已保存：${result}`); })}><Download size={14}/>完整 JSON</Button><Button kind="primary" onClick={() => void act(async () => { const result = await api.exportProjectReport(projectDetail.id, "pdf"); if (result) notify(`项目完整报告已保存：${result}`); })}><FileCheck2 size={14}/>项目 PDF</Button><Button kind="icon" title="关闭项目详情" onClick={() => setProjectDetailId(null)}><X size={15}/></Button></div></div>
+                    <div className="project-total-cards"><div><strong>{projectDetailTasks.length}</strong><span>素材卷任务</span></div><div><strong>{projectDetailTasks.filter((task) => task.status === "completed").length} / {projectDetailTasks.length}</strong><span>已完成校验</span></div><div><strong>{projectDetailTasks.reduce((sum, task) => sum + task.totalFiles, 0)}</strong><span>项目文件</span></div><div><strong>{bytes(projectDetailTasks.reduce((sum, task) => sum + task.totalBytes, 0))}</strong><span>项目总素材</span></div></div>
+                    <div className="project-matrix"><div className="project-matrix-head"><span>拍摄日期</span><span>设备 / 机位</span><span>素材卷</span><span>文件</span><span>素材量</span><span>完成情况</span></div>{projectDates(projectDetail, projectDetailTasks).flatMap((shootingDate) => projectDetail.devices.map((device) => { const rows = projectDetailTasks.filter((task) => task.shootingDate === shootingDate && task.devices.includes(device)), complete = rows.filter((task) => task.status === "completed").length; return <div className="project-matrix-row" key={`${shootingDate}-${device}`}><strong>{shootingDate.replace(/-/g, "")}</strong><span>{device}</span><span>{rows.length}</span><span>{rows.reduce((sum, task) => sum + task.totalFiles, 0)}</span><span>{bytes(rows.reduce((sum, task) => sum + task.totalBytes, 0))}</span><span className={rows.length && complete === rows.length ? "green-text" : rows.length ? "amber-text" : "muted"}>{rows.length ? `${complete} / ${rows.length} 已校验` : "尚未备份"}</span></div>; }))}</div>
+                    {projectDetailTasks.length > 0 && <div className="project-task-breakdown"><strong>素材卷明细</strong>{[...projectDetailTasks].sort((a,b) => (a.shootingDate || "").localeCompare(b.shootingDate || "") || (a.startedAt || 0) - (b.startedAt || 0)).map((task) => <div key={task.id}><span>{task.shootingDate?.replace(/-/g, "") || "未标日期"} · {task.devices.join("/")}{task.cameraPosition ? ` · ${task.cameraPosition}` : ""}</span><b>{task.name}</b><small>{task.totalFiles} 个文件 · {bytes(task.totalBytes)}</small><Badge status={task.status}/></div>)}</div>}
+                  </section>}
                   {!projects.filter((p) =>
                     filter === "archived"
                       ? p.status === "archived"
@@ -1714,9 +1722,7 @@ function SettingsPage({
   setUpdateInfo: (info: UpdateInfo | null) => void;
 }) {
   const [draft, setDraft] = useState(settings),
-    [saving, setSaving] = useState(false),
-    [migration, setMigration] = useState<Array<{path:string;tasks:number;projects:number;hasSettings:boolean}>>([]);
-  useEffect(() => { void api.previewMigration().then(setMigration).catch(() => {}); }, []);
+    [saving, setSaving] = useState(false);
   useEffect(() => {
     document.documentElement.dataset.theme = draft.theme;
     void api.previewTheme(draft.theme).catch(() => {});
@@ -1810,10 +1816,6 @@ function SettingsPage({
         <div className="setting-row"><div><h3>软件更新</h3><p>{updateInfo ? updateInfo.available ? `发现 Kocpy ${updateInfo.latest} · ${updateInfo.archLabel} 安装包。` : `当前 ${updateInfo.current} 已是最新版本 · ${updateInfo.archLabel} Mac。` : "启动后自动检查官方 GitHub Release，也可以手动检查。"}</p>{updateInfo?.available && !updateInfo.downloadUrl && <small className="red-text">当前版本尚未上传与你的 Mac 架构匹配的安装包。</small>}</div><div className="row"><Button kind="subtle" onClick={() => void api.checkUpdates().then(setUpdateInfo).catch((e) => notify(String(e),true))}><RefreshCw size={14}/>检查更新</Button>{updateInfo?.available && <Button kind="primary" onClick={() => void api.openUpdate(updateInfo.downloadUrl || updateInfo.releaseUrl)}><Download size={14}/>升级到 {updateInfo.latest}</Button>}{updateInfo && <Button kind="icon" title="查看 GitHub Release" onClick={() => void api.openUpdate(updateInfo.releaseUrl)}><ExternalLink size={14}/></Button>}</div></div>
       </section>
       <section className="panel settings-panel">
-        <div className="section-title"><h2><Archive size={18}/>旧版数据迁移</h2><span className="muted small">先预览，确认后导入；旧数据不会被删除</span></div>
-        {migration.length ? migration.map((source) => <div className="setting-row" key={source.path}><div><h3>{leaf(source.path)}</h3><p>{source.tasks} 条任务 · {source.projects} 个项目{source.hasSettings ? " · 含偏好设置" : ""}<br/><span className="mono">{source.path}</span></p></div><Button kind="subtle" onClick={() => void api.importMigration(source.path).then((r) => { notify(`已导入 ${r.tasks} 条任务和 ${r.projects} 个项目，当前数据已备份`); setTimeout(() => location.reload(), 500); }).catch((e) => notify(String(e),true))}><Download size={14}/>确认导入</Button></div>) : <div className="setting-row"><div><h3>没有发现可迁移的旧数据</h3><p>支持 New Kocpy 与 KocardPro 的本地任务、项目和偏好设置。</p></div><Check size={17}/></div>}
-      </section>
-      <section className="panel settings-panel">
         <div className="section-title">
           <h2>
             <SlidersHorizontal size={18} />
@@ -1847,7 +1849,7 @@ function SettingsPage({
             <h3>数据与隐私</h3>
             <p>无需账号，任务与项目保存在本机；只在你指定时镜像报告。</p>
           </div>
-          <span className="small muted">独立于旧版 Kocpy</span>
+          <span className="small muted">Kocpy 本地工作空间</span>
         </div>
         <div className="setting-row">
           <div><h3>云端报告镜像</h3><p>{draft.reportSyncPath || "可选择 iCloud Drive、Dropbox 或其他同步盘文件夹；只镜像导出的报告与清单，不复制素材。"}</p></div>
@@ -1875,13 +1877,12 @@ function SettingsPage({
         <img src="./icon.png" alt="Kocpy 图标" />
         <div>
           <h3>
-            Kocpy <span>0.0.8</span>
+            Kocpy <span>0.0.9</span>
           </h3>
           <p>
-            融合 DiskHop 的轻量工作流与 Kocpy
-            的项目管理。为每一份创作，保留可靠的副本。
+            从现场接卡、项目归档到交付报告，为每一份创作保留可靠副本。
           </p>
-          <small>本地优先 · 独立校验 · 保留原 Kocpy 图标</small>
+          <small>本地优先 · 独立校验 · 项目全周期记录 · @sexyfeifan</small>
         </div>
       </div>
     </div>

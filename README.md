@@ -2,117 +2,111 @@
 
 <p align="center"><img src="resources/icon-256.png" width="112" alt="Kocpy icon"></p>
 
-<p align="center"><strong>面向片场与工作室的 macOS 素材备份工作台。</strong><br>多目的地安全拷贝、独立回读校验、项目归档、媒体预览、代理队列与交付报告，全部在本机完成。</p>
+<p align="center"><strong>面向片场与工作室的 macOS 素材备份与项目归档工作台。</strong><br>本地优先 · 多目的地安全拷贝 · 独立回读校验 · 项目全周期记录</p>
+
+<p align="center"><a href="#中文">中文</a> · <a href="#english">English</a> · <a href="#日本語">日本語</a></p>
 
 ![Kocpy 工作台](docs/screenshots/dashboard.png)
 
-## 核心工作流
+## 中文
 
-Kocpy 将素材接收、双备份、完整性校验、报告交付和代理生成放在同一个项目流程中。来源始终按只读思路处理，文件先写入任务专属的断点文件，完成同步后再发布为最终文件；每个目的地随后独立回读并与源哈希比对。
+### 一套完整的素材工作流
 
-首页会根据任务状态显示当前传输、失败目标和待处理事项。新建备份分为素材卡备份和项目备份：素材卡备份适合临时接收一个或多个来源；项目备份绑定“拍摄项目”，复用拍摄周期、设备、素材卷前缀和备份根目录。
+Kocpy 将素材卡接收、多目标备份、逐目标回读校验、项目归档、媒体预览、代理生成和交付报告放在一个本地工作空间中。素材源按只读原则处理，文件先写入任务专属断点文件，同步完成后再发布为最终文件；每份副本随后独立回读并与源哈希比对。
 
-项目目录采用固定层级：`项目开始日期_项目名 / 当天拍摄日期 / 设备 / 素材卷`。例如 `20260827_山海之间/20260829/FX3/FX3_202608291430/`。同型号多机位启用后会增加 A–E 机位层级，例如 `20260827_山海之间/20260829/FX3/A/FX3_202608291430/`；未启用时不会产生空的机位目录。素材卷保留每台设备的自定义前缀，并在真正开始任务时追加本地年月日时分；同一分钟内重复接卡会添加安全序号，避免目录冲突。
+素材卡模式适合快速接收一个或多个来源。项目模式绑定拍摄项目，保存拍摄周期、设备、机位、素材卷前缀与备份根目录，并采用：
 
-## 安全备份
+```text
+备份根目录 / 项目开始日期_项目名 / 拍摄日期 / 设备 / [同型号机位] / 设备_任务开始时间 /
+```
 
-- 同时备份到 1–4 个目的地，每个素材源建立安全隔离的素材卷目录。
-- 一次读取数据块并向多个目标分发，降低多副本任务对素材卡的重复读取压力。
-- 慢盘可从快速扇出中分离，健康目标继续完成，避免单个目标长期阻塞整项任务。
-- 支持 SHA-256、SHA-1 和 MD5；拷贝结束后逐目标独立回读校验。
-- 支持暂停、继续、取消、异常恢复、大文件断点续传、失败目标单独重试及完成后的独立复校验。
-- 任务检查点持续保存；断点恢复前会比较源文件与临时文件前缀，损坏的断点不会被继续使用。
-- 通过卷 UUID 记录素材源与目标磁盘身份，重接后若同名挂载点对应了其他磁盘，会阻止读写。
-- 按实际物理卷合并计算空间需求，包含断点占用和最终发布余量；多个目的地位于同一块盘时会给出风险提示。
-- 单个目的地预检、写入或校验失败时，其他健康目的地可以继续完成。
-- 同名文件先校验内容：一致则安全复用，不一致时保留原文件或创建带序号副本。
+例如：`20260827_山海之间/20260829/FX3/A/FX3_202608291430/`。未启用同型号多机位时不会产生 A–E 层级。
+
+![项目备份完整路径](docs/screenshots/project-backup-path.png)
+
+### 安全备份与真实状态
+
+- 同时写入 1–4 个目的地，一次读取素材数据块并分发给多个目标。
+- 支持 SHA-256、SHA-1 与 MD5；拷贝结束后逐目标独立回读校验。
+- 支持暂停、继续、取消、异常恢复、大文件断点续传、失败目标单独重试与完成后复校验。
+- 记录卷 UUID，防止同名磁盘替换后误写；按物理卷合并预检空间和临时发布余量。
+- 慢盘可以从快速分发中分离，健康目标继续完成。
+- 素材卡自动扫描并显示本次实际待备份容量、文件数量、磁盘总容量和可用空间。
+- 设置目的地时可直接点击外接磁盘，并从该磁盘继续选择目标文件夹。
+- 紫色进度表示拷贝，绿色覆盖表示校验；显示真实有效传输速度、回读速度、百分比与时分秒剩余时间。
+- 速度按操作系统确认完成的字节以 1 秒间隔采样和平滑处理；多目标速度不会重复累加。
+- 校验结束后立即结算任务并弹出完成通知，媒体缩略图随后在后台生成。
 
 ![传输队列](docs/screenshots/transfers.png)
 
-## 清晰的实时状态
-
-传输详情以紫色显示拷贝进度，以绿色覆盖显示独立校验进度，同时展示百分比、当前文件、实时写入吞吐和“时/分/秒”格式的预计剩余时间。每个目的地分别显示拷贝进度、校验进度、实际写入量、速度与错误原因；进入校验阶段后会切换为真实回读速度和校验剩余时间。
-
-速度来自操作系统确认完成的文件写入字节，以固定 1 秒采样并进行平滑处理；写入停顿时会自然降至零。任务百分比按源数据逻辑字节计算，多个目标不会让百分比重复累加；总写入量反映所有目标实际接收的数据。每个目标的累计大小跨文件单调增加，与最终副本大小保持一致。
-
-完成页会给出通过校验的目标数量，并提供打开报告、在 Finder 中定位副本和安全推出外置卷等操作。
-任务完成后同时显示 macOS 通知和应用内完成弹窗，汇总文件数、素材大小、通过校验的目标数量与总用时。
-
 ![任务校验详情](docs/screenshots/verification-detail.png)
 
-## 项目与素材库
+### 项目全周期看板
 
-- 项目保存名称、拍摄周期、最多 10 个常用设备、各设备素材卷前缀和目标根目录。内置 FX3、FX5、FX6、A7R5、A7CR、ZVE1、POCKET、LUNA、MAVIC 候选，也可自定义设备名称。
-- 每台设备可启用 2–5 个同型号机位，使用 A、B、C、D、E 管理；开始项目备份时可以确认或切换本次使用的机位。
-- 新项目保存时会按完整拍摄日期范围、所有设备及已配置的 A–E 机位，在每个备份根目录下创建完整空目录树；素材卷目录仍在任务真正开始时创建。
-- 二次编辑项目会检查每个备份根目录，逐项报告缺失目录、路径冲突和离线目标，并让用户选择补齐目录或仅保存设置。补齐操作不会移动、覆盖或删除已有素材。
-- 新建备份时可直接选择已有项目，也可在流程内首次创建项目；“拍摄项目”页面与备份向导使用同一份项目配置。
-- 项目备份使用项目、拍摄日期、设备和同型号机位的纵向逐层展开选择器，不使用日期或设备下拉框；设置目的地时可点击外接磁盘，从该磁盘继续选择目标文件夹，并为每个目标展示完整最终路径。
-- 软件会记住每个项目最近使用的日期、设备和机位，连续换卡时恢复现场选择；开始前就绪检查集中确认素材、目标空间、物理磁盘和归档层级。
-- 拍摄项目卡按设备汇总今日备份与校验进度，并可随时运行目录结构健康检查。
-- 外接存储设备同时显示总容量与可用空间；识别为素材卡时会自动扫描，并直接显示本次实际待备份大小和文件数。
-- 素材库集中展示已校验副本，保留原始目录结构和对应任务信息。
-- 视频可查看缩略图、摄影机型号、拍摄时间、分辨率、帧率、时长、音视频编码与时间码。
-- 备份校验完成后立即结算并通知，媒体缩略图随后在后台从已校验副本生成；PDF 文件清单会在对应素材条目中嵌入缩略图，尚未生成时会在导出报告时按需补充。
-- 素材库可单独筛选并定位 CUBE、CDL、CC、CCC 与 CLF 调色文件。
-- 可批量加入 H.264 或 ProRes Proxy 队列，查看逐项进度，并取消、重试或定位输出文件。
-- 代理队列保存在本机，应用异常结束后会保留任务并提供重试。
-- 可导出 DaVinci Resolve 媒体池 CSV，包含已校验媒体路径、卷名、机位、拍摄日与任务信息。
+项目页按“拍摄日期 × 设备/机位”展示整个执行周期：每一天每台设备是否已经备份、素材卷数量、文件数量、素材容量、已校验数量，以及项目总任务、总文件和总素材量。每个素材卷可继续查看日期、设备、机位、大小与任务结论。
 
-![拍摄项目设置](docs/screenshots/project-editor.png)
+项目完成后可导出：
 
-![项目备份完整路径确认](docs/screenshots/project-backup-path.png)
+- 项目完整 PDF：项目总览、日期与设备矩阵、全部素材卷、目的地、校验结论和完整文件明细。
+- 项目完整 JSON：项目配置与所有任务、目标、文件、哈希和校验记录，便于长期归档或二次处理。
+- 单任务 PDF / JSON / MHL / ASC MHL。
+- 拍摄日汇总 PDF 与 Resolve 媒体池 CSV。
 
-![代理处理队列](docs/screenshots/proxy-queue.png)
+![拍摄项目](docs/screenshots/project-editor.png)
 
-## 报告与交付
+### 素材、代理与报告
 
-- PDF 任务报告采用与应用一致的视觉样式，汇总来源、目标、文件数量、容量、哈希与逐目标校验结果。
-- 拍摄日汇总报告按项目归纳当天所有素材卷与目标结论。
-- JSON 导出保留完整任务记录。
-- MHL 1.1 清单便于通用交换。
-- ASC MHL v2 清单使用 MD5、传输动作与哈希时间字段，输出通过仓库内官方 XSD 的结构校验。
-- 可将导出的报告和清单镜像到用户选择的 iCloud Drive、Dropbox 或其他同步盘目录，素材文件不会被复制到该目录。
+- 素材库展示已校验副本、首帧缩略图、摄影机型号、拍摄时间、分辨率、帧率、时长、编码与时间码。
+- 可批量生成 H.264 或 ProRes Proxy，支持进度、取消、重试和定位输出。
+- PDF 报告使用与应用一致的版式，并在素材条目中嵌入可用缩略图。
+- 报告与清单可镜像到用户指定的同步文件夹；素材文件不会被上传。
+- 本地快照、隐藏挂载目录与系统备份卷不会被识别为可选存储设备。
 
-## 数据迁移、隐私与更新
+![素材库](docs/screenshots/library.png)
 
-设置页可预览并导入旧版 `New Kocpy` 与 `KocardPro` 的任务、项目和偏好。导入前会备份当前数据，旧目录不会被删除或改写。
+![代理队列](docs/screenshots/proxy-queue.png)
 
-Kocpy 不要求账号，不上传素材。任务、项目、设置、代理队列和缩略图保存在：
+![报告中心](docs/screenshots/reports.png)
 
-```text
-~/Library/Application Support/Kocpy/
-```
+### 外观、隐私与更新
 
-应用启动后自动检查项目官方 GitHub Release；左下角版本区域也可随时手动检查。发现新版本时会按当前 Mac 架构匹配 Apple Silicon 或 Intel DMG，并打开对应升级包。左下角同时提供作者的 [GitHub](https://github.com/sexyfeifan) 与 [小红书](https://www.xiaohongshu.com/user/profile/5d24d2ca000000001103fe97) 主页入口，小红书入口使用 [macOSicons 上的 RedNote Liquid Glass 图标](https://macosicons.com/zh?icon=LZQisdFaNe)。应用不会静默替换自身。外置卷推出前会检查备份与代理队列，防止移除仍在使用的设备。
+Kocpy 支持真实深色与浅色外观，任务、项目、偏好、缩略图和代理记录保存在 `~/Library/Application Support/Kocpy/`。软件无需账号，不上传素材。左下角可检查 GitHub Release 更新，并提供作者 [@sexyfeifan](https://github.com/sexyfeifan) 的 GitHub 与[小红书](https://www.xiaohongshu.com/user/profile/5d24d2ca000000001103fe97)入口。
 
-界面支持真实深色与浅色外观切换，并同步 macOS 原生控件配色；选择保存后会在下次启动恢复。
+![存储设备](docs/screenshots/storage.png)
 
-存储中心识别本地盘、素材介质与 SMB/NFS/AFP/WebDAV 网络卷，并显示网络协议、可写状态和访问响应时间。网络卷暂时离线时，任务会保留其失败状态，其他健康目标仍可继续。
-Time Machine 本地快照、隐藏挂载目录与系统备份卷不会出现在可选存储设备列表中。
-素材卡备份和项目备份在第一步共用这套设备识别：除了带 DCIM 目录的素材卡，也会显示普通本地外接数据盘，并允许直接选为素材来源。
+![偏好设置](docs/screenshots/settings.png)
 
-![存储设备识别](docs/screenshots/storage.png)
+### 安装
 
-![偏好设置与数据迁移](docs/screenshots/settings.png)
+从 [GitHub Releases](https://github.com/sexyfeifan/Kocpy/releases) 下载对应架构：
 
-## 安装
+- `Kocpy-0.0.9-arm64.dmg`：Apple Silicon Mac
+- `Kocpy-0.0.9-x64.dmg`：Intel Mac
 
-在 [GitHub Releases](https://github.com/sexyfeifan/Kocpy/releases) 下载与 Mac 处理器对应的安装包：
-
-- `Kocpy-0.0.8-arm64.dmg`：Apple Silicon Mac
-- `Kocpy-0.0.8-x64.dmg`：Intel Mac
-
-打开 DMG，将 Kocpy 拖入“应用程序”文件夹即可。应用内置与处理器架构匹配的原生 FFmpeg，用于媒体检查、缩略图与代理生成。
-
-当前公开安装包尚未使用 Apple Developer ID 签名和公证。首次启动若被 Gatekeeper 阻止，请先在“系统设置 → 隐私与安全性”中选择“仍要打开”。如果 macOS 明确提示应用“已损坏”且不提供该按钮，请确认安装包来自本仓库的官方 Release，再在终端执行以下仅针对 Kocpy 的命令：
+打开 DMG，将 Kocpy 拖入“应用程序”。当前公开包尚未使用 Apple Developer ID 签名和公证。若 macOS 明确提示应用“已损坏”，请先确认文件来自本仓库官方 Release，再执行：
 
 ```bash
 xattr -dr com.apple.quarantine "/Applications/Kocpy.app"
 ```
 
-不要全局关闭 Gatekeeper。完成 Developer ID 签名与 Apple 公证后将不再需要此步骤。
+不要全局关闭 Gatekeeper。
 
-## 技术与许可
+## English
 
-Kocpy 使用 Electron、React 与 TypeScript 构建，源码采用 MIT License。内置 FFmpeg 使用其随附的 GPL 许可。产品方向参考了 [Kocard](https://www.kocard.net/) 与公开仓库 [fdgjut797/kocard](https://github.com/fdgjut797/kocard)，界面、交互流程和实现均在本项目中重新设计。
+Kocpy is a local-first macOS workspace for verified media offload and production archiving. It copies one source to up to four destinations, reads every copy back for checksum verification, resumes interrupted large files, tracks physical volumes, and produces task, shooting-day, and full-project reports.
+
+Project mode organizes media by project, shooting date, camera, optional A–E camera position, and timestamped card volume. The project dashboard shows files, media size, card count, and verification status for every date and camera across the production period. Complete project records can be exported as PDF or JSON.
+
+Kocpy also includes media thumbnails and metadata, H.264/ProRes proxy queues, Resolve CSV export, light/dark appearance, update checks, and architecture-specific DMGs for Apple Silicon and Intel Macs. Media and records stay on the Mac unless the user explicitly selects a report mirror folder.
+
+## 日本語
+
+Kocpy は、macOS 向けのローカル優先メディアバックアップ／プロジェクト管理アプリです。1つの素材ソースを最大4つの保存先へコピーし、各コピーを独立して読み戻してチェックサム検証します。大容量ファイルの再開、物理ボリューム識別、容量事前確認、失敗した保存先の再試行にも対応します。
+
+プロジェクトモードでは、プロジェクト、撮影日、カメラ、任意の A–E カメラ位置、タイムスタンプ付き素材巻の階層で整理します。全期間の「撮影日 × カメラ」ごとに、素材巻数、ファイル数、容量、検証状態を確認でき、詳細なプロジェクト PDF／JSON を書き出せます。
+
+素材サムネイルとメタデータ、H.264／ProRes プロキシキュー、Resolve CSV、ライト／ダーク表示、更新確認、Apple Silicon／Intel 用 DMG も備えています。素材と記録は、ユーザーが明示的にレポート同期先を選ばない限り Mac 内に保持されます。
+
+## License
+
+Kocpy source code is available under the MIT License. Bundled FFmpeg binaries retain their respective licenses.
