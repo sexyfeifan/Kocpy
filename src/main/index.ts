@@ -7,6 +7,7 @@ import {
   Menu,
   powerSaveBlocker,
   Notification,
+  nativeTheme,
 } from "electron";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -27,7 +28,7 @@ import { generateReport, generateDailyReport } from "./backup/ReportGenerator";
 import { generateMhl, generateAscMhl } from "./backup/ManifestGenerator";
 import type { BackupTask, ProjectConfig, TaskConfig, ProxyJob } from "./types";
 import { compareVersions, selectMacAsset, type GitHubRelease } from "./update";
-import { makeProjectFolderName } from "./project-path";
+import { claimTimestampedVolume, formatVolumeTimestamp, makeProjectFolderName } from "./project-path";
 
 app.setName("Kocpy");
 const appDataRoot = app.getPath("appData");
@@ -119,6 +120,8 @@ function createWindow() {
   else main.loadFile(path.join(__dirname, "../renderer/index.html"));
 }
 app.whenReady().then(async () => {
+  const initialSettings = await store.read("settings.json", defaultSettings);
+  nativeTheme.themeSource = initialSettings.theme === "light" ? "light" : "dark";
   proxyJobs = await store.read<ProxyJob[]>("proxy-jobs.json", []);
   for (const job of proxyJobs) if (job.status === "running") { job.status = "failed"; job.error = "上次转码被中断，可点击重试"; }
   const saved = await store.read<BackupTask[]>("tasks.json", []);
@@ -242,11 +245,21 @@ app.whenReady().then(async () => {
     const asset = selectMacAsset(release, process.arch);
     return { current, latest, available: compareVersions(latest, current) > 0, releaseUrl: release.html_url, ...asset };
   });
-  handle("updates:open", (url: string) => { if (!/^https:\/\/github\.com\/sexyfeifan\/Kocpy\/releases\/(?:tag|download)\//.test(url)) throw new Error("无效更新地址"); return shell.openExternal(url); });
+  handle("updates:open", (url: string) => { if (!/^https:\/\/github\.com\/sexyfeifan\/Kocpy\/releases(?:\/(?:tag|download)\/.*)?$/.test(url)) throw new Error("无效更新地址"); return shell.openExternal(url); });
+  handle("system:open-author", (url: string) => {
+    const allowed = new Set(["https://github.com/sexyfeifan", "https://www.xiaohongshu.com/user/profile/5d24d2ca000000001103fe97"]);
+    if (!allowed.has(url)) throw new Error("无效作者主页地址");
+    return shell.openExternal(url);
+  });
+  handle("settings:preview-theme", (theme: "dark" | "light") => {
+    if (!new Set(["dark", "light"]).has(theme)) throw new Error("无效界面主题");
+    nativeTheme.themeSource = theme;
+  });
   handle("settings:get", () => store.read("settings.json", defaultSettings));
-  handle("settings:save", (settings: typeof defaultSettings) =>
-    store.write("settings.json", settings),
-  );
+  handle("settings:save", (settings: typeof defaultSettings) => {
+    nativeTheme.themeSource = settings.theme === "light" ? "light" : "dark";
+    return store.write("settings.json", settings);
+  });
   handle("projects:list", async () => (await store.read<ProjectConfig[]>("projects.json", [])).map(normalizeProject));
   handle("projects:save", async (project: ProjectConfig) => {
     project.name = segment(project.name);
@@ -265,14 +278,21 @@ app.whenReady().then(async () => {
     await store.write("projects.json", all);
     return all;
   });
-  handle("projects:claim-volume", async (projectId: string, device: string) => {
+  handle("projects:claim-volume", async (projectId: string, device: string, prefixOverride?: string) => {
     const all = (await store.read<ProjectConfig[]>("projects.json", [])).map(normalizeProject), project = all.find((p) => p.id === projectId);
     if (!project) throw new Error("项目不存在");
-    project.nextVolumeByDevice ||= {};
-    const number = Math.max(1, project.nextVolumeByDevice[device] || 1);
-    project.nextVolumeByDevice[device] = number + 1;
+    if (!project.devices.includes(device)) throw new Error("所选设备不属于当前项目");
+    const timestamp = formatVolumeTimestamp();
+    project.lastVolumeTimestampByDevice ||= {};
+    project.volumeTimestampCollisionByDevice ||= {};
+    const configuredPrefix = project.volumePrefixByDevice?.[device] || project.volumePrefix || `${device}_`;
+    const cleanOverride = prefixOverride?.trim() ? segment(prefixOverride) : "";
+    const prefix = cleanOverride ? (cleanOverride.endsWith("_") ? cleanOverride : `${cleanOverride}_`) : configuredPrefix;
+    const claimed = claimTimestampedVolume(prefix, timestamp, project.lastVolumeTimestampByDevice[device], project.volumeTimestampCollisionByDevice[device]);
+    project.lastVolumeTimestampByDevice[device] = timestamp;
+    project.volumeTimestampCollisionByDevice[device] = claimed.collision;
     await store.write("projects.json", all);
-    return { number, prefix: project.volumePrefixByDevice?.[device] || project.volumePrefix || `${device}_`, project };
+    return { ...claimed, timestamp, prefix, project };
   });
   handle("report:daily", async (shootingDate: string, projectId?: string) => {
     const tasks = engine.getAllTasks().filter((t) => (!projectId || t.projectId === projectId) && (t.shootingDate || new Date(t.completedAt || t.createdAt || 0).toLocaleDateString("sv-SE")) === shootingDate);

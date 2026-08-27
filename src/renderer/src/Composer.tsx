@@ -19,6 +19,7 @@ import {
   api,
   bytes,
   leaf,
+  previewVolumeTimestamp,
   today,
   type ProjectConfig,
   type Volume,
@@ -178,9 +179,9 @@ export function Composer({
   async function start() {
     await attempt(async () => {
       for (const source of sources) {
-        const claimed = mode === "project" && project ? await api.claimProjectVolume(project.id, camera) : undefined;
-        const automaticName = claimed ? `${claimed.prefix}${String(claimed.number).padStart(3, "0")}` : leaf(source.path);
-        const taskName = name || automaticName;
+        const claimed = mode === "project" && project ? await api.claimProjectVolume(project.id, camera, name || undefined) : undefined;
+        const automaticName = claimed?.label || leaf(source.path);
+        const taskName = mode === "project" ? automaticName : name || automaticName;
         const config = {
           name: taskName,
           sourcePath: source.path,
@@ -201,7 +202,6 @@ export function Composer({
           duplicateStrategy: duplicate,
           includeHidden: hidden,
           priority,
-          volumeNumber: claimed?.number,
         };
         const task = await api.createTask(config);
         await api.startTask(task.id);
@@ -515,12 +515,12 @@ export function Composer({
                   <p>所有副本都会独立回读校验，完成后可导出报告。</p>
                 </div>
                 <label>
-                  任务名称 / 卷标前缀
+                  {mode === "project" ? "素材卷前缀（可选覆盖项目默认值）" : "任务名称"}
                   <input
                     aria-label="任务名称"
                     placeholder={
                       mode === "project" && project
-                        ? `${project.volumePrefix || camera}${String(project.nextVolumeByDevice?.[camera] || 1).padStart(3, "0")}（确认开始后占用此卷号）`
+                        ? `${project.volumePrefixByDevice?.[camera] || project.volumePrefix || `${camera}_`}${previewVolumeTimestamp()}`
                         : sources.length === 1
                         ? leaf(sources[0].path)
                         : "默认使用各素材源文件夹名称"
@@ -588,7 +588,7 @@ export function Composer({
                     <p className="mono" key={d}>
                       {d}
                       {mode === "project"
-                        ? `/${project?.projectFolderName || `${(project?.shootingDateStart || "").replace(/-/g, "")}_${project?.name}`}/${shootDate.replace(/-/g, "")}/${camera}/${name || `${project?.volumePrefixByDevice?.[camera] || project?.volumePrefix || `${camera}_`}${String(project?.nextVolumeByDevice?.[camera] || 1).padStart(3, "0")}`}/`
+                        ? `/${project?.projectFolderName || `${(project?.shootingDateStart || "").replace(/-/g, "")}_${project?.name}`}/${shootDate.replace(/-/g, "")}/${camera}/${name ? `${name.replace(/_+$/, "")}_` : project?.volumePrefixByDevice?.[camera] || project?.volumePrefix || `${camera}_`}${previewVolumeTimestamp()}/`
                         : `/${name || "[素材源名称]"}_[时间戳]_[唯一标识]/`}
                     </p>
                   ))}

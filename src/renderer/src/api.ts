@@ -61,11 +61,13 @@ export interface API {
   importMigration(path:string): Promise<{tasks:number;projects:number;backup:string}>;
   checkUpdates(): Promise<UpdateInfo>;
   openUpdate(url:string): Promise<void>;
+  openAuthor(url:string): Promise<void>;
+  previewTheme(theme: Settings["theme"]): Promise<void>;
   getSettings(): Promise<Settings>;
   saveSettings(settings: Settings): Promise<void>;
   getProjects(): Promise<ProjectConfig[]>;
   saveProject(project: ProjectConfig): Promise<ProjectConfig[]>;
-  claimProjectVolume(projectId: string, device: string): Promise<{number:number;prefix:string;project:ProjectConfig}>;
+  claimProjectVolume(projectId: string, device: string, prefixOverride?: string): Promise<{label:string;timestamp:string;collision:number;prefix:string;project:ProjectConfig}>;
   exportReport(id: string, format: "pdf" | "json" | "mhl" | "ascmhl"): Promise<string | null>;
   exportDailyReport(date: string, projectId?: string): Promise<string | null>;
   exportResolveCsv(date: string, projectId?: string): Promise<string | null>;
@@ -98,6 +100,10 @@ export const bytes = (n = 0) => {
   return `${(n / 1024 ** i).toLocaleString("en-US", { maximumFractionDigits: i > 1 ? 1 : 0 })} ${["B", "KB", "MB", "GB", "TB"][i]}`;
 };
 export const leaf = (p: string) => p.split("/").filter(Boolean).pop() || p;
+export const previewVolumeTimestamp = (value = new Date()) => {
+  const part = (number: number) => String(number).padStart(2, "0");
+  return `${value.getFullYear()}${part(value.getMonth() + 1)}${part(value.getDate())}${part(value.getHours())}${part(value.getMinutes())}`;
+};
 export const date = (n?: number) =>
   n
     ? new Date(n).toLocaleString("zh-CN", {

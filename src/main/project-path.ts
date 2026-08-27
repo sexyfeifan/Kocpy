@@ -18,3 +18,23 @@ export function makeProjectDayPath(
 ): string {
   return path.join(segment(projectFolderName), compactDate(shootingDate), segment(device));
 }
+
+export function formatVolumeTimestamp(value = new Date()): string {
+  const part = (number: number) => String(number).padStart(2, "0");
+  return `${value.getFullYear()}${part(value.getMonth() + 1)}${part(value.getDate())}${part(value.getHours())}${part(value.getMinutes())}`;
+}
+
+export function claimTimestampedVolume(
+  prefix: string,
+  timestamp: string,
+  previousTimestamp?: string,
+  previousCollision = 0,
+): { label: string; collision: number } {
+  const collision = previousTimestamp === timestamp ? previousCollision + 1 : 0;
+  const cleanPrefix = segment(prefix);
+  const separatedPrefix = cleanPrefix.endsWith("_") ? cleanPrefix : `${cleanPrefix}_`;
+  return {
+    label: `${separatedPrefix}${timestamp}${collision ? `_${String(collision + 1).padStart(2, "0")}` : ""}`,
+    collision,
+  };
+}

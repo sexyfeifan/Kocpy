@@ -54,6 +54,7 @@ import {
   ChevronsUp,
   Activity,
   Pause,
+  Github,
 } from "lucide-react";
 import {
   api,
@@ -105,6 +106,12 @@ const duration = (seconds = 0) => {
   const h = Math.floor(value / 3600), m = Math.floor((value % 3600) / 60), s = value % 60;
   return `${h ? `${h}时` : ""}${h || m ? `${String(m).padStart(h ? 2 : 1, "0")}分` : ""}${String(s).padStart(h || m ? 2 : 1, "0")}秒`;
 };
+const XiaohongshuIcon = ({ size = 15 }: { size?: number }) => (
+  <svg aria-hidden="true" width={size} height={size} viewBox="0 0 24 24" fill="none">
+    <rect x="2.5" y="4" width="19" height="16" rx="4" stroke="currentColor" />
+    <path d="M7 8.5h10M8.2 12h7.6M9.5 15.5h5" stroke="currentColor" strokeLinecap="round" />
+  </svg>
+);
 export function Button({
   children,
   onClick,
@@ -425,6 +432,16 @@ export function App() {
     setEditor(null);
     notify("项目已保存");
   };
+  const checkForUpdates = async () => {
+    try {
+      const info = await api.checkUpdates();
+      setUpdateInfo(info);
+      if (info.available) await api.openUpdate(info.downloadUrl || info.releaseUrl);
+      else notify(`Kocpy ${info.current} 已是最新版本`);
+    } catch (error) {
+      notify(String(error).replace(/^Error: /, ""), true);
+    }
+  };
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -433,7 +450,7 @@ export function App() {
           <img src="./icon.png" alt="Kocpy 图标" />
           <div>
             <strong>
-              Kocpy<span>0.0.4</span>
+              Kocpy<span>0.0.5</span>
             </strong>
             <small>素材工作台</small>
           </div>
@@ -477,8 +494,16 @@ export function App() {
             {updateInfo?.available && <b title={`发现 Kocpy ${updateInfo.latest}`}>1</b>}
           </button>
           <div className="sidebar-foot">
-            <span className="live-dot" />
-            桌面版 · macOS <span>v0.0.4</span>
+            <button className={`sidebar-update ${updateInfo?.available ? "available" : ""}`} title="检查 Kocpy 更新" onClick={() => void checkForUpdates()}>
+              <RefreshCw size={13}/>
+              <span>{updateInfo?.available ? `可升级 ${updateInfo.latest}` : "检查更新"}</span>
+              <b>v0.0.5</b>
+            </button>
+            <div className="sidebar-author-links">
+              <span><i className="live-dot"/>桌面版 · macOS</span>
+              <button title="作者 GitHub 主页" aria-label="打开作者 GitHub 主页" onClick={() => void api.openAuthor("https://github.com/sexyfeifan")}><Github size={15}/></button>
+              <button title="作者小红书主页" aria-label="打开作者小红书主页" onClick={() => void api.openAuthor("https://www.xiaohongshu.com/user/profile/5d24d2ca000000001103fe97")}><XiaohongshuIcon/></button>
+            </div>
           </div>
         </div>
       </aside>
@@ -1699,6 +1724,10 @@ function SettingsPage({
     [saving, setSaving] = useState(false),
     [migration, setMigration] = useState<Array<{path:string;tasks:number;projects:number;hasSettings:boolean}>>([]);
   useEffect(() => { void api.previewMigration().then(setMigration).catch(() => {}); }, []);
+  useEffect(() => {
+    document.documentElement.dataset.theme = draft.theme;
+    void api.previewTheme(draft.theme).catch(() => {});
+  }, [draft.theme]);
   const save = async () => {
     setSaving(true);
     try {
@@ -1853,7 +1882,7 @@ function SettingsPage({
         <img src="./icon.png" alt="Kocpy 图标" />
         <div>
           <h3>
-            Kocpy <span>0.0.4</span>
+            Kocpy <span>0.0.5</span>
           </h3>
           <p>
             融合 DiskHop 的轻量工作流与 Kocpy

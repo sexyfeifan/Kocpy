@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { BackupEngine } from "../src/main/backup/BackupEngine";
-import { compactDate, makeProjectDayPath, makeProjectFolderName } from "../src/main/project-path";
+import { claimTimestampedVolume, compactDate, formatVolumeTimestamp, makeProjectDayPath, makeProjectFolderName } from "../src/main/project-path";
 import { compareVersions, selectMacAsset } from "../src/main/update";
 
 describe("project backup workflow", () => {
@@ -13,8 +13,8 @@ describe("project backup workflow", () => {
       projectName: "山海之间",
       projectStartDate: "2026-08-27",
       projectFolderName: folder,
-      name: "FX3_001",
-      namingTemplate: "FX3_001",
+      name: "Untitled_202607282123",
+      namingTemplate: "Untitled_202607282123",
       sourcePath: "/Volumes/CARD",
       destinationPaths: ["/Volumes/MASTER"],
       devices: ["FX3"],
@@ -22,7 +22,14 @@ describe("project backup workflow", () => {
       hashAlgorithm: "sha256",
     });
     expect(task.shootingDateFolder).toBe("20260827_山海之间/20260829/FX3");
-    expect(task.namingTemplate).toBe("FX3_001");
+    expect(task.namingTemplate).toBe("Untitled_202607282123");
+  });
+
+  it("formats local minute timestamps and keeps same-minute volume names unique", () => {
+    const timestamp = formatVolumeTimestamp(new Date(2026, 6, 28, 21, 23));
+    expect(timestamp).toBe("202607282123");
+    expect(claimTimestampedVolume("Untitled_", timestamp)).toEqual({ label: "Untitled_202607282123", collision: 0 });
+    expect(claimTimestampedVolume("Untitled_", timestamp, timestamp, 0)).toEqual({ label: "Untitled_202607282123_02", collision: 1 });
   });
 
   it("rejects invalid project dates", () => {
@@ -32,22 +39,22 @@ describe("project backup workflow", () => {
 
 describe("GitHub update selection", () => {
   const release = {
-    tag_name: "v0.0.4",
-    html_url: "https://github.com/sexyfeifan/Kocpy/releases/tag/v0.0.4",
+    tag_name: "v0.0.5",
+    html_url: "https://github.com/sexyfeifan/Kocpy/releases/tag/v0.0.5",
     assets: [
-      { name: "Kocpy-0.0.4-arm64.dmg", browser_download_url: "https://github.com/sexyfeifan/Kocpy/releases/download/v0.0.4/Kocpy-0.0.4-arm64.dmg" },
-      { name: "Kocpy-0.0.4-x64.dmg", browser_download_url: "https://github.com/sexyfeifan/Kocpy/releases/download/v0.0.4/Kocpy-0.0.4-x64.dmg" },
+      { name: "Kocpy-0.0.5-arm64.dmg", browser_download_url: "https://github.com/sexyfeifan/Kocpy/releases/download/v0.0.5/Kocpy-0.0.5-arm64.dmg" },
+      { name: "Kocpy-0.0.5-x64.dmg", browser_download_url: "https://github.com/sexyfeifan/Kocpy/releases/download/v0.0.5/Kocpy-0.0.5-x64.dmg" },
     ],
   };
 
   it("compares semantic numeric versions", () => {
-    expect(compareVersions("0.0.4", "0.0.3")).toBe(1);
-    expect(compareVersions("v0.0.4", "0.0.4")).toBe(0);
-    expect(compareVersions("0.0.3", "0.0.4")).toBe(-1);
+    expect(compareVersions("0.0.5", "0.0.4")).toBe(1);
+    expect(compareVersions("v0.0.5", "0.0.5")).toBe(0);
+    expect(compareVersions("0.0.4", "0.0.5")).toBe(-1);
   });
 
   it("returns the package matching the running Mac architecture", () => {
-    expect(selectMacAsset(release, "arm64").assetName).toBe("Kocpy-0.0.4-arm64.dmg");
-    expect(selectMacAsset(release, "x64").downloadUrl).toContain("Kocpy-0.0.4-x64.dmg");
+    expect(selectMacAsset(release, "arm64").assetName).toBe("Kocpy-0.0.5-arm64.dmg");
+    expect(selectMacAsset(release, "x64").downloadUrl).toContain("Kocpy-0.0.5-x64.dmg");
   });
 });

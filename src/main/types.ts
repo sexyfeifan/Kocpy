@@ -170,6 +170,8 @@ export interface ProjectConfig {
   volumePrefixByDevice?: Record<string, string>;
   projectFolderName?: string;
   nextVolumeByDevice?: Record<string, number>;
+  lastVolumeTimestampByDevice?: Record<string, string>;
+  volumeTimestampCollisionByDevice?: Record<string, number>;
   shootingDate?: string;
   shootingDateStart?: string;
   shootingDateEnd?: string;

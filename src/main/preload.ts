@@ -24,6 +24,8 @@ contextBridge.exposeInMainWorld("api", {
   importMigration: call("migration:import"),
   checkUpdates: call("updates:check"),
   openUpdate: call("updates:open"),
+  openAuthor: call("system:open-author"),
+  previewTheme: call("settings:preview-theme"),
   getSettings: call("settings:get"),
   saveSettings: call("settings:save"),
   getProjects: call("projects:list"),

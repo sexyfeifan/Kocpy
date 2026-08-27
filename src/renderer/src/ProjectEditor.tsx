@@ -1,9 +1,9 @@
 import { useMemo, useState } from "react";
 import { X, Plus, FolderOpen, Check, LoaderCircle, Info, Camera, CalendarDays } from "lucide-react";
-import { api, today, type ProjectConfig } from "./api";
+import { api, previewVolumeTimestamp, today, type ProjectConfig } from "./api";
 import { Button } from "./App";
 
-export const DEVICE_SUGGESTIONS = ["FX3", "FX5", "FX6", "A7R5", "A7CR", "POCKET", "LUNA", "MAVIC"];
+export const DEVICE_SUGGESTIONS = ["FX3", "FX5", "FX6", "A7R5", "A7CR", "ZVE1", "POCKET", "LUNA", "MAVIC"];
 const cleanPrefix = (value: string) => value.trim().replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_");
 const projectFolder = (date: string, name: string) => `${date.replace(/-/g, "")}_${name.trim().replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_")}`;
 
@@ -51,7 +51,10 @@ export function ProjectEditor({
     if (!dests.length) return setError("请至少添加一个备份根目录");
     setBusy(true);
     try {
-      const volumePrefixByDevice = Object.fromEntries(devices.map((device) => [device, cleanPrefix(prefixes[device] || `${device}_`)]));
+      const volumePrefixByDevice = Object.fromEntries(devices.map((device) => {
+        const prefix = cleanPrefix(prefixes[device] || `${device}_`);
+        return [device, prefix.endsWith("_") ? prefix : `${prefix}_`];
+      }));
       await onSave({
         ...initial,
         id: initial.id || crypto.randomUUID(),
@@ -88,19 +91,19 @@ export function ProjectEditor({
           </div>
           <div className="project-path-preview"><CalendarDays size={17}/><div><span>项目文件夹</span><strong className="mono">{folderName}</strong></div></div>
 
-          <div className="form-section-title"><h3>02 · 常用设备与素材卷</h3><p>最多保存 10 个设备或机位；每个设备拥有独立卷号序列。</p></div>
+          <div className="form-section-title"><h3>02 · 常用设备与素材卷</h3><p>最多保存 10 个设备或机位；素材卷使用自定义前缀和本地时间码。</p></div>
           <div className="device-suggestions">
             {DEVICE_SUGGESTIONS.map((device) => <button key={device} disabled={devices.includes(device) || devices.length >= 10} onClick={() => addDevice(device)}><Camera size={14}/>{device}{devices.includes(device) ? <Check size={12}/> : <Plus size={12}/>}</button>)}
           </div>
           <div className="manual-path"><input value={customDevice} onChange={(e) => setCustomDevice(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") addDevice(customDevice); }} placeholder="自定义设备或机位，例如 A机" /><Button kind="icon" title="添加设备" disabled={!customDevice.trim() || devices.length >= 10} onClick={() => addDevice(customDevice)}><Plus size={16}/></Button></div>
           <div className="device-profile-list">
-            {devices.map((device) => <div className="device-profile" key={device}><span><Camera size={16}/><strong>{device}</strong></span><label>素材卷前缀<input aria-label={`${device} 素材卷前缀`} value={prefixes[device] || ""} onChange={(e) => setPrefixes((all) => ({ ...all, [device]: e.target.value }))} placeholder={`${device}_`} /></label><small>{cleanPrefix(prefixes[device] || `${device}_`)}001</small><Button kind="icon" title={`移除 ${device}`} onClick={() => removeDevice(device)}><X size={14}/></Button></div>)}
+            {devices.map((device) => <div className="device-profile" key={device}><span><Camera size={16}/><strong>{device}</strong></span><label>素材卷前缀<input aria-label={`${device} 素材卷前缀`} value={prefixes[device] || ""} onChange={(e) => setPrefixes((all) => ({ ...all, [device]: e.target.value }))} placeholder={`${device}_`} /></label><small>{cleanPrefix(prefixes[device] || `${device}_`)}{previewVolumeTimestamp()}</small><Button kind="icon" title={`移除 ${device}`} onClick={() => removeDevice(device)}><X size={14}/></Button></div>)}
           </div>
 
           <div className="form-section-title"><h3>03 · 项目备份根目录</h3><p>每次拷卡会在这些根目录下创建相同的项目层级。</p></div>
           {dests.map((p) => <div className="chosen-path" key={p}><FolderOpen size={18}/><span className="mono path">{p}</span><Button kind="icon" title="移除此目的地" onClick={() => setDests((all) => all.filter((value) => value !== p))}><X size={15}/></Button></div>)}
           {dests.length < 4 && <Button kind="subtle" onClick={() => void api.selectDirectory().then((p) => p && setDests((all) => all.includes(p) ? all : [...all, p])).catch((e) => setError(String(e)))}><Plus size={15}/>添加备份根目录</Button>}
-          <div className="notice"><Info size={16}/><span>实际路径示例：<span className="mono">备份根目录/{folderName}/{today().replace(/-/g, "")}/{devices[0] || "设备"}/{cleanPrefix(prefixes[devices[0]] || "CARD")}001/</span></span></div>
+          <div className="notice"><Info size={16}/><span>实际路径示例：<span className="mono">备份根目录/{folderName}/{today().replace(/-/g, "")}/{devices[0] || "设备"}/{cleanPrefix(prefixes[devices[0]] || "Untitled_")}{previewVolumeTimestamp()}/</span></span></div>
           {error && <div role="alert" className="error-box">{error}</div>}
         </div>
         <div className="modal-footer"><Button kind="subtle" onClick={onClose} disabled={busy}>取消</Button><Button kind="primary" disabled={busy} onClick={() => void save()}>{busy ? <LoaderCircle size={16} className="spin"/> : <Check size={16}/>}保存项目</Button></div>
