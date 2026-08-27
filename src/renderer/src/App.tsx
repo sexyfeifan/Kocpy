@@ -420,8 +420,8 @@ export function App() {
       </div>
     </div>
   );
-  const saveProject = async (p: ProjectConfig) => {
-    setProjects(await api.saveProject(p));
+  const saveProject = async (p: ProjectConfig, createMissing = true) => {
+    setProjects(await api.saveProject(p, createMissing));
     setComposer((current) => current ? { ...current, project: p } : current);
     setEditor(null);
     notify("项目已保存");
@@ -444,7 +444,7 @@ export function App() {
           <img src="./icon.png" alt="Kocpy 图标" />
           <div>
             <strong>
-              Kocpy<span>0.0.6</span>
+              Kocpy<span>0.0.7</span>
             </strong>
             <small>素材工作台</small>
           </div>
@@ -491,7 +491,7 @@ export function App() {
             <button className={`sidebar-update ${updateInfo?.available ? "available" : ""}`} title="检查 Kocpy 更新" onClick={() => void checkForUpdates()}>
               <RefreshCw size={13}/>
               <span>{updateInfo?.available ? `可升级 ${updateInfo.latest}` : "检查更新"}</span>
-              <b>v0.0.6</b>
+              <b>v0.0.7</b>
             </button>
             <div className="sidebar-author-links">
               <span><i className="live-dot"/>桌面版 · macOS</span>
@@ -709,7 +709,7 @@ export function App() {
                     <Stat
                       icon={ArrowLeftRight}
                       label="进行中的任务"
-                      value={String(running.length).padStart(2, "0")}
+                      value={String(running.length)}
                       hint={
                         current
                           ? statusText[current.status]
@@ -720,7 +720,7 @@ export function App() {
                     <Stat
                       icon={ShieldCheck}
                       label="已校验备份"
-                      value={String(finished.length).padStart(2, "0")}
+                      value={String(finished.length)}
                       hint="所有目的地均通过校验"
                     />
                     <Stat
@@ -734,9 +734,7 @@ export function App() {
                     <Stat
                       icon={FolderKanban}
                       label="进行中的项目"
-                      value={String(
-                        projects.filter((p) => p.status !== "archived").length,
-                      ).padStart(2, "0")}
+                      value={String(projects.filter((p) => p.status !== "archived").length)}
                       hint="有序管理每一个拍摄计划"
                     />
                   </div>
@@ -889,13 +887,13 @@ export function App() {
                             <span className="project-icon">
                               <FolderKanban size={24} />
                             </span>
-                            <Button
+                            <div className="row"><Button kind="icon" title="检查项目目录结构" onClick={() => void act(async () => { const report = await api.inspectProjectStructure(p); const unavailable = report.destinations.filter((item) => item.error).length; notify(report.missingCount || report.conflictCount || unavailable ? `目录需要处理：缺少 ${report.missingCount} 个，冲突 ${report.conflictCount} 个，离线 ${unavailable} 个` : `项目目录完整：${report.expectedCount} 个目录均已就绪`, Boolean(report.conflictCount || unavailable)); })}><ShieldCheck size={16}/></Button><Button
                               kind="icon"
                               title="编辑项目"
                               onClick={() => setEditor(p)}
                             >
                               <SlidersHorizontal size={16} />
-                            </Button>
+                            </Button></div>
                           </div>
                           <h2>{p.name}</h2>
                           <small className="mono muted">{p.projectFolderName}</small>
@@ -927,6 +925,7 @@ export function App() {
                               次备份完成
                             </span>
                           </div>
+                          <div className="project-day-progress"><strong>今日素材进度</strong>{p.devices.map((device) => { const deviceTasks = tasks.filter((task) => task.projectId === p.id && task.shootingDate === today() && task.devices.includes(device)); const verified = deviceTasks.filter((task) => task.status === "completed").length; return <div key={device}><span>{device}</span><small className={verified ? "green-text" : "muted"}>{deviceTasks.length ? `${verified} / ${deviceTasks.length} 已校验` : "尚未备份"}</small></div>; })}</div>
                           <div className="row between">
                             <Button
                               kind="subtle"
@@ -952,7 +951,7 @@ export function App() {
                                           p.status === "archived"
                                             ? "active"
                                             : "archived",
-                                      }),
+                                      }, false),
                                     ),
                                   "项目状态已更新",
                                 )
@@ -1245,16 +1244,16 @@ export function App() {
                 </div>
                 <div>
                   <strong>
-                    {selected.aggregateSpeedBps ? bytes(selected.aggregateSpeedBps) + "/s" : "—"}
+                    {(selected.status === "verifying" ? selected.verifySpeedBps : selected.aggregateSpeedBps) ? bytes(selected.status === "verifying" ? selected.verifySpeedBps : selected.aggregateSpeedBps) + "/s" : "—"}
                   </strong>
-                  <span>实时物理写入</span>
+                  <span>{selected.status === "verifying" ? "校验回读速度" : "实时写入吞吐"}</span>
                 </div>
                 <div>
                   <strong>
                     {selected.startedAt && selected.completedAt
                       ? duration((selected.completedAt - selected.startedAt) / 1000)
-                      : selected.eta
-                        ? duration(selected.eta)
+                      : (selected.status === "verifying" ? selected.verifyEta : selected.eta)
+                        ? duration(selected.status === "verifying" ? selected.verifyEta : selected.eta)
                         : "—"}
                   </strong>
                   <span>{active(selected) ? "预计剩余" : "总用时"}</span>
@@ -1308,7 +1307,7 @@ export function App() {
                     {selected.status === "completed" && d.path.startsWith("/Volumes/") && <Button kind="icon" title="安全推出此磁盘" onClick={() => void act(() => api.ejectVolume(`/Volumes/${d.path.split("/")[2]}`), "设备已安全推出")}><Eject size={15}/></Button>}
                   </div>
                   <div className="destination-status">
-                    <span>拷贝 {Math.round(d.copyProgress || 0)}% · 校验 {Math.round(d.verifyProgress || 0)}% · {d.speedBps ? `${bytes(d.speedBps)}/s` : `已保存 ${bytes(d.copiedBytes || 0)} · 本次写入 ${bytes(d.bytesWritten)}`}</span>
+                    <span>拷贝 {Math.round(d.copyProgress || 0)}% · 校验 {Math.round(d.verifyProgress || 0)}% · {(selected.status === "verifying" ? d.verifySpeedBps : d.speedBps) ? `${bytes(selected.status === "verifying" ? d.verifySpeedBps : d.speedBps)}/s` : `已保存 ${bytes(d.copiedBytes || 0)} · 本次写入 ${bytes(d.bytesWritten)}`}</span>
                     <span
                       className={
                         d.verified
@@ -1876,7 +1875,7 @@ function SettingsPage({
         <img src="./icon.png" alt="Kocpy 图标" />
         <div>
           <h3>
-            Kocpy <span>0.0.6</span>
+            Kocpy <span>0.0.7</span>
           </h3>
           <p>
             融合 DiskHop 的轻量工作流与 Kocpy

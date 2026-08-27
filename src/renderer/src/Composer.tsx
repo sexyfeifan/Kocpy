@@ -32,6 +32,12 @@ interface Source {
   scan?: Scan;
 }
 const CAMERA_POSITIONS = ["A", "B", "C", "D", "E"];
+const shootingDates = (start?: string, end?: string) => {
+  if (!start) return [today()];
+  const values: string[] = [], finish = end || start;
+  for (let date = new Date(`${start}T12:00:00`); date <= new Date(`${finish}T12:00:00`) && values.length < 1000; date.setDate(date.getDate() + 1)) values.push(date.toLocaleDateString("sv-SE"));
+  return values;
+};
 export function Composer({
   initial,
   volumes,
@@ -71,6 +77,7 @@ export function Composer({
     [duplicate, setDuplicate] = useState(settings.defaultDuplicateStrategy),
     [hidden, setHidden] = useState(settings.includeHidden),
     [priority, setPriority] = useState(false);
+  const [clock, setClock] = useState(Date.now());
   const [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
     [spaces, setSpaces] = useState<Record<string, number>>({});
@@ -79,7 +86,7 @@ export function Composer({
     total = sources.reduce((n, s) => n + (s.scan?.totalBytes || 0), 0),
     externalVolumes = volumes.filter((volume) => volume.path.startsWith("/Volumes/") && !volume.isNetwork),
     availablePositions = project?.devicePositions?.[camera]?.length ? project.devicePositions[camera] : CAMERA_POSITIONS;
-  const previewStamp = previewVolumeTimestamp();
+  const previewStamp = previewVolumeTimestamp(new Date(clock));
   const previewPrefixRaw = name.trim() || project?.volumePrefixByDevice?.[camera] || project?.volumePrefix || `${camera}_`;
   const previewPrefix = `${previewPrefixRaw.replace(/_+$/, "")}_`;
   const previewVolumeName = (index: number) => {
@@ -126,6 +133,14 @@ export function Composer({
     const now = today();
     setShootDate(now >= start && now <= end ? now : start);
   }, [initial.project]);
+  useEffect(() => {
+    const timer = setInterval(() => setClock(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+  useEffect(() => {
+    if (!projectId) return;
+    localStorage.setItem(`kocpy-project-choice-${projectId}`, JSON.stringify({ shootDate, camera, multiPosition, cameraPosition }));
+  }, [projectId, shootDate, camera, multiPosition, cameraPosition]);
   async function attempt(fn: () => Promise<void>) {
     setError("");
     setBusy(true);
@@ -234,12 +249,15 @@ export function Composer({
     const p = projects.find((p) => p.id === id);
     if (p) {
       setDests(p.destinationPaths || []);
-      setCamera(p.devices[0] || "FX3");
-      const firstDevice = p.devices[0] || "FX3", configuredPositions = p.devicePositions?.[firstDevice] || [];
-      setMultiPosition(Boolean(configuredPositions.length));
-      setCameraPosition(configuredPositions[0] || "A");
       const start = p.shootingDateStart || today(), end = p.shootingDateEnd || start, now = today();
-      setShootDate(now >= start && now <= end ? now : start);
+      let recent: { shootDate?: string; camera?: string; multiPosition?: boolean; cameraPosition?: string } = {};
+      try { recent = JSON.parse(localStorage.getItem(`kocpy-project-choice-${id}`) || "{}"); } catch { /* Ignore damaged local preference. */ }
+      const selectedCamera = recent.camera && p.devices.includes(recent.camera) ? recent.camera : p.devices[0] || "FX3";
+      const configuredPositions = p.devicePositions?.[selectedCamera] || [];
+      setCamera(selectedCamera);
+      setMultiPosition(Boolean(configuredPositions.length) && recent.multiPosition !== false);
+      setCameraPosition(recent.cameraPosition && configuredPositions.includes(recent.cameraPosition) ? recent.cameraPosition : configuredPositions[0] || "A");
+      setShootDate(recent.shootDate && recent.shootDate >= start && recent.shootDate <= end ? recent.shootDate : now >= start && now <= end ? now : start);
     }
   }
   return (
@@ -410,7 +428,7 @@ export function Composer({
                   <div className="detected-storage-heading"><span>已识别外接存储设备</span><span>{externalVolumes.length} 个本地卷</span></div>
                   {externalVolumes.length ? <div className="detected-storage-grid">{externalVolumes.map((volume) => {
                     const selected = sources.some((source) => source.path === volume.path);
-                    return <button key={volume.path} className={selected ? "selected" : ""} disabled={busy} onClick={() => selected ? setSources((all) => all.filter((source) => source.path !== volume.path)) : addSource(volume.path)}><MemoryStick size={16}/><span><strong>{volume.name}</strong><small>{volume.deviceType === "source" ? "素材卡" : "外接数据盘"} · {bytes(volume.total)}</small></span>{selected ? <Check size={14}/> : <Plus size={14}/>}</button>;
+                    return <button key={volume.path} className={selected ? "selected" : ""} disabled={busy} onClick={() => selected ? setSources((all) => all.filter((source) => source.path !== volume.path)) : addSource(volume.path)}><MemoryStick size={16}/><span><strong>{volume.name}</strong><small>{volume.deviceType === "source" ? "素材卡" : "外接数据盘"} · 总容量 {bytes(volume.total)} · 可用 {bytes(volume.free)}</small></span>{selected ? <Check size={14}/> : <Plus size={14}/>}</button>;
                   })}</div> : <div className="notice"><Info size={14}/>暂未检测到本地外接盘，连接后可返回此步骤刷新。</div>}
                 </div>
               </>
@@ -424,40 +442,13 @@ export function Composer({
                 {mode === "project" && (
                   <div className="project-form">
                     <div className="selected-project"><FolderKanban size={20}/><div><span>当前项目</span><strong>{project?.name}</strong><small className="mono">{project?.projectFolderName || `${(project?.shootingDateStart || "").replace(/-/g, "")}_${project?.name}`}</small></div><Button kind="subtle" onClick={() => setStep(0)}>更换项目</Button></div>
-                    <div className="form-grid">
-                      <label>
-                        拍摄日期
-                        <input
-                          type="date"
-                          value={shootDate}
-                          min={project?.shootingDateStart}
-                          max={project?.shootingDateEnd}
-                          onChange={(e) => setShootDate(e.target.value)}
-                          required
-                        />
-                      </label>
-                      <label>
-                        机位
-                        <select
-                          value={camera}
-                          onChange={(e) => {
-                            const device = e.target.value, configuredPositions = project?.devicePositions?.[device] || [];
-                            setCamera(device);
-                            setMultiPosition(Boolean(configuredPositions.length));
-                            setCameraPosition(configuredPositions[0] || "A");
-                          }}
-                        >
-                          {(project?.devices.length
-                            ? project.devices
-                            : ["FX3"]
-                          ).map((d) => (
-                            <option key={d}>{d}</option>
-                          ))}
-                        </select>
-                      </label>
+                    <div className="project-column-browser">
+                      <section><span>01 · 项目</span><button className="selected"><FolderKanban size={15}/><strong>{project?.projectFolderName}</strong></button></section>
+                      <section><span>02 · 拍摄日期</span><div className="column-options">{shootingDates(project?.shootingDateStart, project?.shootingDateEnd).map((date) => <button key={date} className={shootDate === date ? "selected" : ""} onClick={() => setShootDate(date)}><strong>{date.replace(/-/g, "")}</strong><small>{date === today() ? "今天" : new Date(`${date}T12:00:00`).toLocaleDateString("zh-CN", { month: "long", day: "numeric", weekday: "short" })}</small></button>)}</div></section>
+                      <section><span>03 · 设备 / 机位</span><div className="column-options">{(project?.devices.length ? project.devices : ["FX3"]).map((device) => <button key={device} className={camera === device ? "selected" : ""} onClick={() => { const configured = project?.devicePositions?.[device] || []; setCamera(device); setMultiPosition(Boolean(configured.length)); setCameraPosition(configured[0] || "A"); }}><strong>{device}</strong><small>{project?.devicePositions?.[device]?.length ? `${project.devicePositions[device].join(" / ")} 多机位` : "单机位目录"}</small></button>)}</div></section>
+                      <section><span>04 · 同型号机位</span>{project?.devicePositions?.[camera]?.length ? <div className="column-options"><button className={!multiPosition ? "selected" : ""} onClick={() => setMultiPosition(false)}><strong>不分机位</strong><small>直接保存到 {camera}</small></button>{availablePositions.map((position) => <button key={position} className={multiPosition && cameraPosition === position ? "selected" : ""} onClick={() => { setMultiPosition(true); setCameraPosition(position); }}><strong>{position}</strong><small>{camera} · {position} 机</small></button>)}</div> : <div className="column-empty"><Check size={15}/>该设备使用单机位目录</div>}</section>
                     </div>
-                    <div className="multi-position-control"><label><input type="checkbox" checked={multiPosition} onChange={(e) => setMultiPosition(e.target.checked)}/><span>同型号多机位</span></label>{multiPosition ? <div className="position-buttons">{availablePositions.map((position) => <button key={position} className={cameraPosition === position ? "selected" : ""} onClick={() => setCameraPosition(position)}>{position}</button>)}</div> : <small className="muted">关闭时不创建 A–E 机位目录</small>}</div>
-                    <div className="notice"><Info size={15}/><span>本次素材将归入 <span className="mono">{project?.projectFolderName}/{shootDate.replace(/-/g, "")}/{camera}/{multiPosition ? `${cameraPosition}/` : ""}素材卷/</span></span></div>
+                    <div className="project-breadcrumb"><span>{project?.projectFolderName}</span><ArrowRight size={12}/><span>{shootDate.replace(/-/g, "")}</span><ArrowRight size={12}/><span>{camera}</span>{multiPosition && <><ArrowRight size={12}/><strong>{cameraPosition}</strong></>}</div>
                   </div>
                 )}
                 <div className="dest-heading">
@@ -520,6 +511,7 @@ export function Composer({
                     </div>
                   </>
                 )}
+                {mode === "project" && dests.length > 0 && <div className="destination-final-paths"><div className="dest-heading"><span>最终保存路径</span><small>素材卷时间戳随当前时间更新，开始任务时最终确认</small></div>{dests.flatMap((destination) => (sources.length ? sources : [{ path: "素材源" }]).map((source, index) => { const volume = previewVolumeName(index), folder = sources.length > 1 ? `${volume}_${leaf(source.path)}` : volume; return <div key={`${destination}-${source.path}`}><HardDrive size={15}/><span><strong>{leaf(destination)}</strong><small className="mono">{destination}/{project?.projectFolderName}/{shootDate.replace(/-/g, "")}/{camera}/{multiPosition ? `${cameraPosition}/` : ""}{folder}/</small></span></div>; }))}</div>}
                 <div className="notice">
                   <ShieldCheck size={17} />
                   源与目标不能相同或互相包含。应用不会覆盖或删除已有素材。
@@ -609,6 +601,7 @@ export function Composer({
                   }))}</div> : dests.map((destination) => <p className="mono" key={destination}>{destination}/{name || "[素材源名称]"}_[时间戳]_[唯一标识]/</p>)}
                   {mode === "project" && <small className="muted">时间码在点击“开始备份”时按本机时间生成。</small>}
                 </div>
+                <div className="readiness-panel"><div className="dest-heading"><span>开始前就绪检查</span><small>所有关键条件会在引擎预检时再次确认</small></div><div className="readiness-grid"><div className={sources.every((source) => Boolean(source.scan?.totalFiles)) ? "ready" : "warning"}><Check size={15}/><span><strong>素材来源</strong><small>{sources.length} 个来源 · {sources.reduce((sum, source) => sum + (source.scan?.totalFiles || 0), 0)} 个文件</small></span></div><div className={dests.every((destination) => spaces[destination] === undefined || spaces[destination] >= total) ? "ready" : "warning"}><Check size={15}/><span><strong>目标空间</strong><small>{dests.length} 个目的地已通过容量检查</small></span></div><div className={new Set(dests.map((destination) => volumes.find((volume) => destination === volume.path || destination.startsWith(`${volume.path}/`))?.identity?.id).filter(Boolean)).size === dests.length ? "ready" : "warning"}>{new Set(dests.map((destination) => volumes.find((volume) => destination === volume.path || destination.startsWith(`${volume.path}/`))?.identity?.id).filter(Boolean)).size === dests.length ? <Check size={15}/> : <AlertTriangle size={15}/>}<span><strong>物理磁盘</strong><small>{dests.length > 1 ? "建议每个副本位于不同物理盘" : "当前只有一个副本"}</small></span></div><div className={mode !== "project" || (project && shootDate && camera) ? "ready" : "warning"}><Check size={15}/><span><strong>项目归档</strong><small>{mode === "project" ? `${shootDate.replace(/-/g, "")} · ${camera}${multiPosition ? ` · ${cameraPosition}` : ""}` : "素材卡独立备份"}</small></span></div></div></div>
                 {dests.length === 1 && (
                   <div className="notice amber">
                     <AlertTriangle size={16} />

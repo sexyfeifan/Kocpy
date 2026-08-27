@@ -1,5 +1,5 @@
-import type { BackupTask, TaskConfig, ProjectConfig, ProxyJob } from "../../main/types";
-export type { BackupTask, TaskConfig, ProjectConfig, ProxyJob };
+import type { BackupTask, TaskConfig, ProjectConfig, ProjectStructureReport, ProxyJob } from "../../main/types";
+export type { BackupTask, TaskConfig, ProjectConfig, ProjectStructureReport, ProxyJob };
 export interface Volume {
   name: string;
   path: string;
@@ -66,7 +66,8 @@ export interface API {
   getSettings(): Promise<Settings>;
   saveSettings(settings: Settings): Promise<void>;
   getProjects(): Promise<ProjectConfig[]>;
-  saveProject(project: ProjectConfig): Promise<ProjectConfig[]>;
+  inspectProjectStructure(project: ProjectConfig): Promise<ProjectStructureReport>;
+  saveProject(project: ProjectConfig, createMissing?: boolean): Promise<ProjectConfig[]>;
   claimProjectVolume(projectId: string, device: string, prefixOverride?: string): Promise<{label:string;timestamp:string;collision:number;prefix:string;project:ProjectConfig}>;
   exportReport(id: string, format: "pdf" | "json" | "mhl" | "ascmhl"): Promise<string | null>;
   exportDailyReport(date: string, projectId?: string): Promise<string | null>;

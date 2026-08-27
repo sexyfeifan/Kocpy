@@ -3,7 +3,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { randomBytes } from "node:crypto";
-import { BackupEngine, hashFile } from "../src/main/backup/BackupEngine";
+import { BackupEngine, SpeedMeter, hashFile } from "../src/main/backup/BackupEngine";
 import { validatePaths, scan } from "../src/main/backup/safety";
 import type { BackupTask, TaskConfig } from "../src/main/types";
 let root: string, source: string, d1: string, d2: string;
@@ -60,6 +60,17 @@ async function run(cfg = config()) {
   return { task: await done, engine };
 }
 describe("Real filesystem backup integrity", () => {
+  it("samples acknowledged bytes on a fixed interval and decays smoothly during stalls", () => {
+    const meter = new SpeedMeter(0);
+    meter.add(50 * 1024 * 1024);
+    const first = meter.sample(500);
+    expect(first).toBeCloseTo(100 * 1024 * 1024, -3);
+    meter.add(50 * 1024 * 1024);
+    expect(meter.sample(1000)).toBeCloseTo(first, -3);
+    const stalled = meter.sample(1500);
+    expect(stalled).toBeGreaterThan(0);
+    expect(stalled).toBeLessThan(first);
+  });
   it("copies two destinations, empty files and directories, verifies every hash without changing source", async () => {
     const before = await fs.stat(path.join(source, "DCIM", "片段.bin"));
     const { task } = await run();
@@ -257,6 +268,21 @@ describe("Real filesystem backup integrity", () => {
     expect((await done).status).toBe("completed");
     expect(paused).toBe(true); expect(sawPhysicalBytes).toBe(true); expect(sawVerifyPhase).toBe(true);
     expect(task.copyProgress).toBe(100); expect(task.verifyProgress).toBe(100);
+  });
+  it("keeps each destination byte counter monotonic across differently sized files", async () => {
+    await fs.writeFile(path.join(source, "small.bin"), randomBytes(32 * 1024));
+    await fs.writeFile(path.join(source, "large.bin"), randomBytes(3 * 1024 * 1024));
+    const engine = new BackupEngine(), task = engine.createTask(config());
+    const samples = new Map<string, number[]>();
+    engine.on("progress", (payload) => {
+      for (const destination of payload.destinations) samples.set(destination.id, [...(samples.get(destination.id) || []), destination.copiedBytes || 0]);
+    });
+    const done = wait(engine, task.id); engine.startTask(task.id); await done;
+    for (const destination of task.destinations) {
+      const values = samples.get(destination.id) || [];
+      expect(values.every((value, index) => !index || value >= values[index - 1])).toBe(true);
+      expect(destination.copiedBytes).toBe(task.totalBytes);
+    }
   });
   it("isolates a destination preflight failure and completes the healthy target", async () => {
     const blocker = path.join(root, "not-a-directory"); await fs.writeFile(blocker, "x");

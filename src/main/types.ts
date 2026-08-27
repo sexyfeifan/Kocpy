@@ -28,6 +28,7 @@ export interface Destination {
   copyProgress?: number;
   verifyProgress?: number;
   speedBps?: number;
+  verifySpeedBps?: number;
   volumeId?: string;
   volumeUuid?: string;
   volumeName?: string;
@@ -79,6 +80,8 @@ export interface BackupTask {
   copyProgress?: number;
   verifyProgress?: number;
   aggregateSpeedBps?: number;
+  verifySpeedBps?: number;
+  verifyEta?: number;
   speedBps: number;
   eta: number;
   currentFile: string;
@@ -181,4 +184,20 @@ export interface ProjectConfig {
   destinationPaths?: string[];
   status?: "active" | "archived";
   createdAt?: number;
+}
+
+export interface ProjectStructureDestination {
+  destination: string;
+  expectedCount: number;
+  existingCount: number;
+  missing: string[];
+  conflicts: string[];
+  error?: string;
+}
+
+export interface ProjectStructureReport {
+  expectedCount: number;
+  missingCount: number;
+  conflictCount: number;
+  destinations: ProjectStructureDestination[];
 }

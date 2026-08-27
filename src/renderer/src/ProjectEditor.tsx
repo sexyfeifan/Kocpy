@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { X, Plus, FolderOpen, Check, LoaderCircle, Info, Camera, CalendarDays } from "lucide-react";
-import { api, previewVolumeTimestamp, today, type ProjectConfig } from "./api";
+import { api, previewVolumeTimestamp, today, type ProjectConfig, type ProjectStructureReport } from "./api";
 import { Button } from "./App";
 
 export const DEVICE_SUGGESTIONS = ["FX3", "FX5", "FX6", "A7R5", "A7CR", "ZVE1", "POCKET", "LUNA", "MAVIC"];
@@ -15,7 +15,7 @@ export function ProjectEditor({
 }: {
   initial: Partial<ProjectConfig>;
   onClose: () => void;
-  onSave: (p: ProjectConfig) => Promise<void>;
+  onSave: (p: ProjectConfig, createMissing?: boolean) => Promise<void>;
 }) {
   const initialDevices = initial.devices?.length ? initial.devices : ["FX3"];
   const [name, setName] = useState(initial.name || ""),
@@ -29,7 +29,8 @@ export function ProjectEditor({
     [customDevice, setCustomDevice] = useState(""),
     [dests, setDests] = useState(initial.destinationPaths || []),
     [busy, setBusy] = useState(false),
-    [error, setError] = useState("");
+    [error, setError] = useState(""),
+    [review, setReview] = useState<{ project: ProjectConfig; report: ProjectStructureReport } | null>(null);
   const folderName = useMemo(() => projectFolder(start, name || "项目名"), [start, name]);
 
   function addDevice(raw: string) {
@@ -52,19 +53,16 @@ export function ProjectEditor({
   function setPositionCount(device: string, count: number) {
     setPositions((all) => ({ ...all, [device]: CAMERA_POSITIONS.slice(0, count) }));
   }
-  async function save() {
-    setError("");
-    if (!name.trim()) return setError("请输入项目名称");
-    if (!start || !end || end < start) return setError("请填写有效的拍摄日期范围");
-    if (!devices.length) return setError("请至少选择一个设备或机位");
-    if (!dests.length) return setError("请至少添加一个备份根目录");
-    setBusy(true);
-    try {
-      const volumePrefixByDevice = Object.fromEntries(devices.map((device) => {
-        const prefix = cleanPrefix(prefixes[device] || `${device}_`);
-        return [device, prefix.endsWith("_") ? prefix : `${prefix}_`];
-      }));
-      await onSave({
+  function buildProject(): ProjectConfig | undefined {
+    if (!name.trim()) { setError("请输入项目名称"); return; }
+    if (!start || !end || end < start) { setError("请填写有效的拍摄日期范围"); return; }
+    if (!devices.length) { setError("请至少选择一个设备或机位"); return; }
+    if (!dests.length) { setError("请至少添加一个备份根目录"); return; }
+    const volumePrefixByDevice = Object.fromEntries(devices.map((device) => {
+      const prefix = cleanPrefix(prefixes[device] || `${device}_`);
+      return [device, prefix.endsWith("_") ? prefix : `${prefix}_`];
+    }));
+    return {
         ...initial,
         id: initial.id || crypto.randomUUID(),
         name: name.trim(),
@@ -78,12 +76,31 @@ export function ProjectEditor({
         destinationPaths: dests,
         status: initial.status || "active",
         createdAt: initial.createdAt || Date.now(),
-      });
+    };
+  }
+  async function commit(project: ProjectConfig, createMissing: boolean) {
+    setBusy(true); setError("");
+    try {
+      await onSave(project, createMissing);
     } catch (e) {
       setError(String(e).replace(/^Error: /, ""));
     } finally {
       setBusy(false);
     }
+  }
+  async function save() {
+    setError(""); setReview(null);
+    const project = buildProject();
+    if (!project) return;
+    if (!initial.id) return commit(project, true);
+    setBusy(true);
+    try {
+      const report = await api.inspectProjectStructure(project);
+      const needsReview = report.missingCount || report.conflictCount || report.destinations.some((item) => item.error);
+      if (needsReview) setReview({ project, report });
+      else await onSave(project, false);
+    } catch (e) { setError(String(e).replace(/^Error: /, "")); }
+    finally { setBusy(false); }
   }
   return (
     <div className="modal-backdrop top-layer">
@@ -113,7 +130,8 @@ export function ProjectEditor({
           <div className="form-section-title"><h3>03 · 项目备份根目录</h3><p>每次拷卡会在这些根目录下创建相同的项目层级。</p></div>
           {dests.map((p) => <div className="chosen-path" key={p}><FolderOpen size={18}/><span className="mono path">{p}</span><Button kind="icon" title="移除此目的地" onClick={() => setDests((all) => all.filter((value) => value !== p))}><X size={15}/></Button></div>)}
           {dests.length < 4 && <Button kind="subtle" onClick={() => void api.selectDirectory().then((p) => p && setDests((all) => all.includes(p) ? all : [...all, p])).catch((e) => setError(String(e)))}><Plus size={15}/>添加备份根目录</Button>}
-          <div className="notice"><Info size={16}/><span>保存后立即创建：<span className="mono">备份根目录/{folderName}/{start.replace(/-/g, "")}/</span><br/>备份路径示例：<span className="mono">…/{devices[0] || "设备"}/{positions[devices[0]]?.[0] ? `${positions[devices[0]][0]}/` : ""}{cleanPrefix(prefixes[devices[0]] || "Untitled_")}{previewVolumeTimestamp()}/</span></span></div>
+          <div className="notice"><Info size={16}/><span>新项目保存后会按整个拍摄日期范围、设备及 A–E 机位创建完整目录结构。<br/>备份路径示例：<span className="mono">备份根目录/{folderName}/{start.replace(/-/g, "")}/{devices[0] || "设备"}/{positions[devices[0]]?.[0] ? `${positions[devices[0]][0]}/` : ""}{cleanPrefix(prefixes[devices[0]] || "Untitled_")}{previewVolumeTimestamp()}/</span></span></div>
+          {review && <div className="structure-review"><div className="structure-review-title"><Info size={17}/><div><strong>检测到项目目录需要处理</strong><span>缺少 {review.report.missingCount} 个目录 · 冲突 {review.report.conflictCount} 项</span></div></div>{review.report.destinations.map((item) => <div className="structure-review-row" key={item.destination}><strong>{item.destination}</strong><span>{item.error ? `无法检查：${item.error}` : `已存在 ${item.existingCount} / ${item.expectedCount} · 缺少 ${item.missing.length}${item.conflicts.length ? ` · 冲突 ${item.conflicts.length}` : ""}`}</span></div>)}<p>补齐操作只创建缺失文件夹，不移动、覆盖或删除已有素材。</p><div className="row"><Button kind="primary" disabled={busy || review.report.conflictCount > 0 || review.report.destinations.some((item) => Boolean(item.error))} onClick={() => void commit(review.project, true)}><FolderOpen size={15}/>创建缺失目录并保存</Button><Button kind="subtle" disabled={busy} onClick={() => void commit(review.project, false)}>仅保存设置</Button><Button kind="subtle" disabled={busy} onClick={() => setReview(null)}>返回检查</Button></div></div>}
           {error && <div role="alert" className="error-box">{error}</div>}
         </div>
         <div className="modal-footer"><Button kind="subtle" onClick={onClose} disabled={busy}>取消</Button><Button kind="primary" disabled={busy} onClick={() => void save()}>{busy ? <LoaderCircle size={16} className="spin"/> : <Check size={16}/>}保存项目</Button></div>

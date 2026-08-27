@@ -29,6 +29,7 @@ contextBridge.exposeInMainWorld("api", {
   getSettings: call("settings:get"),
   saveSettings: call("settings:save"),
   getProjects: call("projects:list"),
+  inspectProjectStructure: call("projects:inspect-structure"),
   saveProject: call("projects:save"),
   claimProjectVolume: call("projects:claim-volume"),
   exportReport: call("report:export"),

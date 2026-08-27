@@ -28,7 +28,7 @@ import { generateReport, generateDailyReport } from "./backup/ReportGenerator";
 import { generateMhl, generateAscMhl } from "./backup/ManifestGenerator";
 import type { BackupTask, ProjectConfig, TaskConfig, ProxyJob } from "./types";
 import { compareVersions, selectMacAsset, type GitHubRelease } from "./update";
-import { claimTimestampedVolume, createProjectDateFolders, formatVolumeTimestamp, makeProjectFolderName } from "./project-path";
+import { claimTimestampedVolume, createProjectStructure, formatVolumeTimestamp, inspectProjectStructure, makeProjectFolderName } from "./project-path";
 
 app.setName("Kocpy");
 const appDataRoot = app.getPath("appData");
@@ -53,6 +53,22 @@ const normalizeProject = (project: ProjectConfig): ProjectConfig => {
       return positions.length ? [[device, positions]] : [];
     })),
   };
+};
+const prepareProject = (value: ProjectConfig): ProjectConfig => {
+  const project = { ...value, devices: [...(value.devices || [])], destinationPaths: [...(value.destinationPaths || [])] };
+  project.name = segment(project.name);
+  if (!project.shootingDateStart) throw new Error("请设置项目开始日期");
+  if (project.shootingDateEnd && project.shootingDateEnd < project.shootingDateStart) throw new Error("项目结束日期不能早于开始日期");
+  project.devices = [...new Set(project.devices.map(segment))].slice(0, 10);
+  if (!project.devices.length) throw new Error("请至少选择一个设备或机位");
+  if (!project.destinationPaths?.length || project.destinationPaths.length > 4 || project.destinationPaths.some((pathValue) => !path.isAbsolute(pathValue))) throw new Error("请选择 1–4 个有效备份根目录");
+  project.projectFolderName = makeProjectFolderName(project.shootingDateStart, project.name);
+  project.volumePrefixByDevice = Object.fromEntries(project.devices.map((device) => [device, segment(project.volumePrefixByDevice?.[device] || `${device}_`)]));
+  project.devicePositions = Object.fromEntries(project.devices.flatMap((device) => {
+    const positions = [...new Set(project.devicePositions?.[device] || [])].filter((position) => /^[A-E]$/.test(position)).slice(0, 5);
+    return positions.length ? [[device, positions]] : [];
+  }));
+  return normalizeProject(project);
 };
 let main: BrowserWindow | null = null,
   persistTimer: ReturnType<typeof setTimeout> | undefined,
@@ -265,21 +281,10 @@ app.whenReady().then(async () => {
     return store.write("settings.json", settings);
   });
   handle("projects:list", async () => (await store.read<ProjectConfig[]>("projects.json", [])).map(normalizeProject));
-  handle("projects:save", async (project: ProjectConfig) => {
-    project.name = segment(project.name);
-    if (!project.shootingDateStart) throw new Error("请设置项目开始日期");
-    if (project.shootingDateEnd && project.shootingDateEnd < project.shootingDateStart) throw new Error("项目结束日期不能早于开始日期");
-    project.devices = [...new Set(project.devices.map(segment))].slice(0, 10);
-    if (!project.devices.length) throw new Error("请至少选择一个设备或机位");
-    if (!project.destinationPaths?.length || project.destinationPaths.length > 4 || project.destinationPaths.some((value) => !path.isAbsolute(value))) throw new Error("请选择 1–4 个有效备份根目录");
-    project.projectFolderName = makeProjectFolderName(project.shootingDateStart, project.name);
-    project.volumePrefixByDevice = Object.fromEntries(project.devices.map((device) => [device, segment(project.volumePrefixByDevice?.[device] || `${device}_`)]));
-    project.devicePositions = Object.fromEntries(project.devices.flatMap((device) => {
-      const positions = [...new Set(project.devicePositions?.[device] || [])].filter((value) => /^[A-E]$/.test(value)).slice(0, 5);
-      return positions.length ? [[device, positions]] : [];
-    }));
-    project = normalizeProject(project);
-    await createProjectDateFolders(project.destinationPaths!, project.projectFolderName!, project.shootingDateStart!);
+  handle("projects:inspect-structure", async (project: ProjectConfig) => inspectProjectStructure(prepareProject(project)));
+  handle("projects:save", async (value: ProjectConfig, createMissing = true) => {
+    const project = prepareProject(value);
+    if (createMissing) await createProjectStructure(project);
     const all = (await store.read<ProjectConfig[]>("projects.json", [])).map(normalizeProject),
       idx = all.findIndex((p) => p.id === project.id);
     if (idx < 0) all.push(project);
