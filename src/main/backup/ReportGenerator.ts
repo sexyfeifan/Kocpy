@@ -2,6 +2,7 @@ import * as fs from "fs";
 import type { BackupTask, ProjectConfig } from "../types";
 import { formatBytes } from "../report-builder";
 import { projectShootingDates } from "../project-path";
+import { projectCellStatus, projectCloseoutSummary, verifiedPhysicalCopyCount } from "../project-closeout";
 
 function formatDuration(ms: number): string {
   const seconds = Math.floor(ms / 1000);
@@ -12,6 +13,7 @@ function formatDuration(ms: number): string {
   if (m > 0) return `${m}分 ${s}秒`;
   return `${s}秒`;
 }
+const performanceLabel = (value?: { average: number; p95: number; peak: number; stalls: number; samples: number }) => value?.samples ? `平均 ${formatBytes(value.average)}/s · P95 ${formatBytes(value.p95)}/s · 峰值 ${formatBytes(value.peak)}/s${value.stalls ? ` · 停顿 ${value.stalls} 次` : ""}` : "样本不足";
 
 function esc(s: string): string {
   return s
@@ -48,7 +50,7 @@ export async function generateReport(
       (d) => `
     <tr>
       <td>${esc(d.resolvedPath || d.path)}</td>
-      <td>${formatBytes(d.copiedBytes ?? (d.verified ? task.totalBytes : d.bytesWritten))}<small style="display:block;color:#96919d;margin-top:2px">本次写入 ${formatBytes(d.bytesWritten)}</small></td>
+      <td>${formatBytes(d.copiedBytes ?? (d.verified ? task.totalBytes : d.bytesWritten))}<small style="display:block;color:#96919d;margin-top:2px">本次写入 ${formatBytes(d.bytesWritten)} · ${esc(d.volumeName || "未知卷")} · ${esc(d.volumeUuid || d.volumeId || "无卷标识")}</small><small style="display:block;color:#96919d;margin-top:2px">写入 ${performanceLabel(d.performance)}<br>回读 ${performanceLabel(d.verifyPerformance)}</small></td>
       <td style="color:${d.verified ? "#22c55e" : d.error ? "#ef4444" : "#888"}">
         ${d.verified ? "✓ 通过" : d.error ? `✗ ${esc(d.error)}` : "未知"}
       </td>
@@ -176,7 +178,7 @@ export async function generateReport(
 <div class="header">
   <div>
     <h1>Kocpy</h1>
-    <p>VERIFIED MEDIA TRANSFER REPORT · v0.0.10</p>
+    <p>VERIFIED MEDIA TRANSFER REPORT · v0.0.11</p>
     <p style="margin-top:8px;font-size:12px;color:#aaa">生成时间：${new Date().toLocaleString("zh-CN")}</p>
   </div>
   <div class="badge">${statusLabel}</div>
@@ -185,7 +187,7 @@ export async function generateReport(
 <div class="summary">
   <div><strong>${task.totalFiles}</strong><span>FILES / 文件</span></div>
   <div><strong>${formatBytes(task.totalBytes)}</strong><span>SOURCE / 源数据</span></div>
-  <div><strong>${task.destinations.length}</strong><span>COPIES / 目的地</span></div>
+  <div><strong>${verifiedPhysicalCopyCount(task)} / ${task.destinations.length}</strong><span>PHYSICAL COPIES / 物理独立副本</span></div>
   <div><strong>${duration}</strong><span>DURATION / 总用时</span></div>
 </div>
 
@@ -203,6 +205,8 @@ export async function generateReport(
     <span class="label">开始时间</span><span class="value">${task.startedAt ? new Date(task.startedAt).toLocaleString("zh-CN") : "-"}</span>
     <span class="label">完成时间</span><span class="value">${task.completedAt ? new Date(task.completedAt).toLocaleString("zh-CN") : "-"}</span>
     <span class="label">耗时</span><span class="value">${duration}</span>
+    <span class="label">源哈希读取</span><span class="value">${performanceLabel(task.sourceHashPerformance)}</span>
+    <span class="label">源分发读取</span><span class="value">${performanceLabel(task.sourceCopyReadPerformance)}</span>
   </div>
 </div>
 
@@ -243,18 +247,18 @@ export async function generateProjectReport(project: ProjectConfig, tasks: Backu
   const dates = projectShootingDates(project.shootingDateStart || project.shootingDate || "", project.shootingDateEnd || project.shootingDateStart || project.shootingDate || "");
   const devices = [...new Set([...project.devices, ...tasks.flatMap((task) => task.devices || [])])];
   const totalFiles = tasks.reduce((sum, task) => sum + task.totalFiles, 0), totalBytes = tasks.reduce((sum, task) => sum + task.totalBytes, 0);
-  const completed = tasks.filter((task) => task.status === "completed").length;
+  const closeout = projectCloseoutSummary(project, tasks, dates);
+  const completed = tasks.filter((task) => task.status === "completed" && verifiedPhysicalCopyCount(task) >= (project.requiredCopies || 2)).length;
   const matrixRows = dates.flatMap((shootingDate) => devices.map((device) => {
-    const rows = tasks.filter((task) => task.shootingDate === shootingDate && task.devices.includes(device));
-    const files = rows.reduce((sum, task) => sum + task.totalFiles, 0), size = rows.reduce((sum, task) => sum + task.totalBytes, 0), passed = rows.filter((task) => task.status === "completed" && task.destinations.filter((destination) => destination.verified).length >= (project.requiredCopies || 2)).length;
-    const exempt = project.restDays?.includes(shootingDate) ? "休息日" : project.unusedDevicesByDate?.[shootingDate]?.includes(device) ? "当天未使用" : "";
-    return `<tr><td>${esc(shootingDate)}</td><td>${esc(device)}</td><td>${rows.length}</td><td>${files}</td><td>${formatBytes(size)}</td><td class="${exempt || (rows.length && passed === rows.length) ? "ok" : rows.length ? "warn" : "muted"}">${exempt || (rows.length ? `${passed} / ${rows.length} 达到 ${project.requiredCopies || 2} 份副本` : "尚未备份")}</td></tr>`;
+    const cell = projectCellStatus(project, tasks, shootingDate, device), rows = cell.rows;
+    const files = rows.reduce((sum, task) => sum + task.totalFiles, 0), size = rows.reduce((sum, task) => sum + task.totalBytes, 0);
+    return `<tr><td>${esc(shootingDate)}</td><td>${esc(device)}</td><td>${rows.length}</td><td>${files}</td><td>${formatBytes(size)}</td><td class="${cell.complete ? "ok" : rows.length ? "warn" : "muted"}">${cell.label}</td></tr>`;
   })).join("");
   const dailyRows = dates.map((shootingDate) => { const rows = tasks.filter((task) => task.shootingDate === shootingDate); return `<tr><td>${shootingDate}</td><td>${rows.length}</td><td>${rows.reduce((sum, task) => sum + task.totalFiles, 0)}</td><td>${formatBytes(rows.reduce((sum, task) => sum + task.totalBytes, 0))}</td></tr>`; }).join("");
   const deviceRows = devices.map((device) => { const rows = tasks.filter((task) => task.devices.includes(device)), size = rows.reduce((sum, task) => sum + task.totalBytes, 0); return `<tr><td>${esc(device)}</td><td>${rows.length}</td><td>${rows.reduce((sum, task) => sum + task.totalFiles, 0)}</td><td>${formatBytes(size)}</td><td>${totalBytes ? (size / totalBytes * 100).toFixed(1) : 0}%</td></tr>`; }).join("");
-  const taskRows = [...tasks].sort((a, b) => (a.shootingDate || "").localeCompare(b.shootingDate || "") || (a.startedAt || 0) - (b.startedAt || 0)).map((task) => `<tr><td>${esc(task.shootingDate || "-")}</td><td>${esc((task.devices || []).join(" / ") || "-")}${task.cameraPosition ? ` · ${esc(task.cameraPosition)}` : ""}</td><td>${esc(task.name)}</td><td>${task.totalFiles}</td><td>${formatBytes(task.totalBytes)}</td><td class="${task.status === "completed" ? "ok" : "warn"}">${task.status === "completed" ? "✓ 已校验" : `⚠ ${esc(task.errorMessage || task.status)}`}</td></tr>`).join("");
+  const taskRows = [...tasks].sort((a, b) => (a.shootingDate || "").localeCompare(b.shootingDate || "") || (a.startedAt || 0) - (b.startedAt || 0)).map((task) => { const copies = verifiedPhysicalCopyCount(task), safe = task.status === "completed" && copies >= (project.requiredCopies || 2); return `<tr><td>${esc(task.shootingDate || "-")}</td><td>${esc((task.devices || []).join(" / ") || "-")}${task.cameraPosition ? ` · ${esc(task.cameraPosition)}` : ""}</td><td>${esc(task.name)}</td><td>${task.totalFiles}</td><td>${formatBytes(task.totalBytes)}</td><td class="${safe ? "ok" : "warn"}">${safe ? `✓ ${copies} 份物理独立副本` : `⚠ ${esc(task.errorMessage || `${copies} 份物理独立副本，未达到要求`)}`}</td></tr>`; }).join("");
   const destinationRows = tasks.flatMap((task) => task.destinations.map((destination) => `<tr><td>${esc(task.name)}</td><td>${esc(destination.volumeName || destination.label)}</td><td>${esc(destination.resolvedPath || destination.path)}</td><td class="${destination.verified ? "ok" : "warn"}">${destination.verified ? "✓ 通过" : `✗ ${esc(destination.error || "未通过")}`}</td></tr>`)).join("");
   const fileRows = tasks.flatMap((task) => task.fileRecords.map((file) => `<tr><td>${esc(task.shootingDate || "-")}</td><td>${esc((task.devices || []).join(" / ") || "-")}</td><td>${esc(task.name)}</td><td>${esc(file.relativePath)}</td><td>${formatBytes(file.size)}</td><td class="${file.destinations.every((destination) => destination.verified) ? "ok" : "warn"}">${file.destinations.filter((destination) => destination.verified).length} / ${file.destinations.length} 通过</td></tr>`)).join("");
-  const html = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><style>*{box-sizing:border-box}body{font-family:-apple-system,"PingFang SC",sans-serif;color:#24212c;padding:28px;background:#f5f3f7;font-size:11px}.cover{padding:28px;border-radius:16px;color:#fff;background:linear-gradient(135deg,#6d5ee8,#9a88ff);display:flex;justify-content:space-between}.cover h1{margin:0;font-size:25px}.cover p{margin:8px 0 0;color:#eeeaff}.period{font-size:15px}.summary{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:16px 0}.summary div,.section{background:#fff;border:1px solid #e7e2ee;border-radius:11px;padding:15px}.summary strong{display:block;font-size:19px}.summary span{display:block;color:#8b8493;font-size:8px;margin-top:5px}.section{margin-top:12px}.section h2{font-size:12px;margin:0 0 11px;padding-bottom:9px;border-bottom:1px solid #eee9f2}table{width:100%;border-collapse:collapse;table-layout:fixed}th{padding:8px;background:#eee9ff;color:#514783;text-align:left}td{padding:7px 8px;border-bottom:1px solid #eee;overflow-wrap:anywhere}tr{break-inside:avoid}.ok{color:#188b58}.warn{color:#bd4e5a}.muted{color:#999}.split{display:grid;grid-template-columns:1fr 1fr;gap:12px}.footer{text-align:center;color:#999;margin-top:18px}@page{size:A4;margin:12mm}@media print{body{padding:0;background:#fff}.section{break-inside:auto}}</style></head><body><div class="cover"><div><h1>Kocpy · 项目完整报告</h1><p>${esc(project.name)} · PROJECT MEDIA REPORT</p></div><div class="period">${esc(project.shootingDateStart || "-")} — ${esc(project.shootingDateEnd || project.shootingDateStart || "-")}<br>报告编号 ${esc(project.id.slice(0, 12).toUpperCase())}</div></div><div class="summary"><div><strong>${tasks.length}</strong><span>BACKUPS / 备份任务</span></div><div><strong>${completed} / ${tasks.length}</strong><span>VERIFIED / 已校验</span></div><div><strong>${totalFiles}</strong><span>FILES / 文件</span></div><div><strong>${formatBytes(totalBytes)}</strong><span>MEDIA / 项目素材</span></div></div><div class="section"><h2>日期 × 设备素材完成情况</h2><table><thead><tr><th>拍摄日期</th><th>设备 / 机位</th><th>素材卷</th><th>文件</th><th>素材量</th><th>收工状态</th></tr></thead><tbody>${matrixRows}</tbody></table></div><div class="split"><div class="section"><h2>每日素材趋势</h2><table><thead><tr><th>日期</th><th>素材卷</th><th>文件</th><th>素材量</th></tr></thead><tbody>${dailyRows}</tbody></table></div><div class="section"><h2>设备素材占比</h2><table><thead><tr><th>设备</th><th>素材卷</th><th>文件</th><th>素材量</th><th>占比</th></tr></thead><tbody>${deviceRows}</tbody></table></div></div><div class="section"><h2>全部备份任务</h2><table><thead><tr><th>日期</th><th>设备 / 机位</th><th>素材卷</th><th>文件</th><th>素材量</th><th>结论</th></tr></thead><tbody>${taskRows}</tbody></table></div><div class="section"><h2>目的地与独立校验</h2><table><thead><tr><th>素材卷</th><th>磁盘</th><th>最终路径</th><th>校验</th></tr></thead><tbody>${destinationRows}</tbody></table></div><div class="section"><h2>完整文件明细</h2><table><thead><tr><th>日期</th><th>设备</th><th>素材卷</th><th>文件路径</th><th>大小</th><th>副本校验</th></tr></thead><tbody>${fileRows}</tbody></table></div><div class="footer">Kocpy · @sexyfeifan · 生成时间 ${new Date().toLocaleString("zh-CN")}</div></body></html>`;
+  const html = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><style>*{box-sizing:border-box}body{font-family:-apple-system,"PingFang SC",sans-serif;color:#24212c;padding:28px;background:#f5f3f7;font-size:11px}.cover{padding:28px;border-radius:16px;color:#fff;background:linear-gradient(135deg,#6d5ee8,#9a88ff);display:flex;justify-content:space-between}.cover h1{margin:0;font-size:25px}.cover p{margin:8px 0 0;color:#eeeaff}.period{font-size:15px}.summary{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:16px 0}.summary div,.section{background:#fff;border:1px solid #e7e2ee;border-radius:11px;padding:15px}.summary strong{display:block;font-size:19px}.summary span{display:block;color:#8b8493;font-size:8px;margin-top:5px}.section{margin-top:12px}.section h2{font-size:12px;margin:0 0 11px;padding-bottom:9px;border-bottom:1px solid #eee9f2}table{width:100%;border-collapse:collapse;table-layout:fixed}th{padding:8px;background:#eee9ff;color:#514783;text-align:left}td{padding:7px 8px;border-bottom:1px solid #eee;overflow-wrap:anywhere}tr{break-inside:avoid}.ok{color:#188b58}.warn{color:#bd4e5a}.muted{color:#999}.split{display:grid;grid-template-columns:1fr 1fr;gap:12px}.footer{text-align:center;color:#999;margin-top:18px}@page{size:A4;margin:12mm}@media print{body{padding:0;background:#fff}.section{break-inside:auto}}</style></head><body><div class="cover"><div><h1>Kocpy · 项目完整报告</h1><p>${esc(project.name)} · PROJECT MEDIA REPORT</p></div><div class="period">${esc(project.shootingDateStart || "-")} — ${esc(project.shootingDateEnd || project.shootingDateStart || "-")}<br>报告编号 ${esc(project.id.slice(0, 12).toUpperCase())}</div></div><div class="summary"><div><strong>${tasks.length}</strong><span>BACKUPS / 备份任务</span></div><div><strong>${completed} / ${tasks.length}</strong><span>SAFE TASKS / 达到副本要求</span></div><div><strong>${totalFiles}</strong><span>FILES / 文件</span></div><div><strong>${formatBytes(totalBytes)}</strong><span>MEDIA / 项目素材</span></div></div><div class="section"><h2>项目收工结论 · ${closeout.complete} / ${closeout.total} 个日期设备单元完成</h2><p class="${closeout.pending.length ? "warn" : "ok"}">${closeout.pending.length ? `仍有 ${closeout.pending.length} 个单元待处理` : "全部拍摄日和设备均满足收工要求"}</p></div><div class="section"><h2>日期 × 设备素材完成情况</h2><table><thead><tr><th>拍摄日期</th><th>设备 / 机位</th><th>素材卷</th><th>文件</th><th>素材量</th><th>收工状态</th></tr></thead><tbody>${matrixRows}</tbody></table></div><div class="split"><div class="section"><h2>每日素材趋势</h2><table><thead><tr><th>日期</th><th>素材卷</th><th>文件</th><th>素材量</th></tr></thead><tbody>${dailyRows}</tbody></table></div><div class="section"><h2>设备素材占比</h2><table><thead><tr><th>设备</th><th>素材卷</th><th>文件</th><th>素材量</th><th>占比</th></tr></thead><tbody>${deviceRows}</tbody></table></div></div><div class="section"><h2>全部备份任务</h2><table><thead><tr><th>日期</th><th>设备 / 机位</th><th>素材卷</th><th>文件</th><th>素材量</th><th>结论</th></tr></thead><tbody>${taskRows}</tbody></table></div><div class="section"><h2>目的地与独立校验</h2><table><thead><tr><th>素材卷</th><th>磁盘</th><th>最终路径</th><th>校验</th></tr></thead><tbody>${destinationRows}</tbody></table></div><div class="section"><h2>完整文件明细</h2><table><thead><tr><th>日期</th><th>设备</th><th>素材卷</th><th>文件路径</th><th>大小</th><th>副本校验</th></tr></thead><tbody>${fileRows}</tbody></table></div><div class="footer">Kocpy · @sexyfeifan · 生成时间 ${new Date().toLocaleString("zh-CN")}</div></body></html>`;
   return Buffer.from(html, "utf8");
 }

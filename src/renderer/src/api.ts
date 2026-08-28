@@ -1,5 +1,5 @@
-import type { BackupTask, TaskConfig, ProjectConfig, ProjectStructureReport, ProxyJob } from "../../main/types";
-export type { BackupTask, TaskConfig, ProjectConfig, ProjectStructureReport, ProxyJob };
+import type { BackupTask, TaskConfig, ProjectConfig, ProjectStructureReport, ProxyJob, TransferPerformance } from "../../main/types";
+export type { BackupTask, TaskConfig, ProjectConfig, ProjectStructureReport, ProxyJob, TransferPerformance };
 export interface Volume {
   name: string;
   path: string;

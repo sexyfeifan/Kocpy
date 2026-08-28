@@ -3,7 +3,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { randomBytes } from "node:crypto";
-import { BackupEngine, SpeedMeter, hashFile } from "../src/main/backup/BackupEngine";
+import { BackupEngine, SpeedMeter, hashFile, summarizeSpeeds } from "../src/main/backup/BackupEngine";
 import { validatePaths, scan } from "../src/main/backup/safety";
 import type { BackupTask, TaskConfig } from "../src/main/types";
 let root: string, source: string, d1: string, d2: string;
@@ -71,6 +71,13 @@ describe("Real filesystem backup integrity", () => {
     expect(stalled).toBeGreaterThan(0);
     expect(stalled).toBeLessThan(first);
   });
+  it("summarizes raw speed samples without hiding stalls", () => {
+    const summary = summarizeSpeeds([10_000, 20_000, 0, 30_000, 0]);
+    expect(summary.average).toBe(20_000);
+    expect(summary.peak).toBe(30_000);
+    expect(summary.p50).toBe(20_000);
+    expect(summary.stalls).toBe(2);
+  });
   it("copies two destinations, empty files and directories, verifies every hash without changing source", async () => {
     const before = await fs.stat(path.join(source, "DCIM", "片段.bin"));
     const { task } = await run();
@@ -111,6 +118,20 @@ describe("Real filesystem backup integrity", () => {
     );
     expect(task.destinations[0].verified).toBe(false);
     expect(task.destinations[1].verified).toBe(true);
+  });
+  it("retries only failed destinations and preserves successful destination records", async () => {
+    await fs.mkdir(path.join(d1, "DCIM"));
+    await fs.writeFile(path.join(d1, "DCIM", "片段.bin"), "conflict");
+    const engine = new BackupEngine(), task = engine.createTask(config());
+    let done = wait(engine, task.id); engine.startTask(task.id); await done;
+    expect(task.status).toBe("failed"); expect(task.destinations[1].verified).toBe(true);
+    const successfulBytesWritten = task.destinations[1].bytesWritten;
+    await fs.unlink(path.join(d1, "DCIM", "片段.bin"));
+    done = wait(engine, task.id); engine.retryFailedDestinations(task.id); await done;
+    expect(task.status).toBe("completed");
+    expect(task.destinations.every((destination) => destination.verified)).toBe(true);
+    expect(task.destinations[1].bytesWritten).toBe(successfulBytesWritten);
+    expect(task.fileRecords.every((record) => record.destinations[1].verified)).toBe(true);
   });
   it("creates a unique suffixed copy for a different existing file", async () => {
     await fs.mkdir(path.join(d1, "DCIM"));

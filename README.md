@@ -29,14 +29,14 @@ Kocpy 将素材卡接收、多目标备份、逐目标回读校验、项目归�
 - 同时写入 1–4 个目的地，一次读取素材数据块并分发给多个目标。
 - 支持 SHA-256、SHA-1 与 MD5；拷贝结束后逐目标独立回读校验。
 - 支持暂停、继续、取消、异常恢复、大文件断点续传、失败目标单独重试与完成后复校验。
-- 恢复中心集中列出异常退出、暂停任务、离线目标和未完成校验，可从安全检查点继续或只重试失败副本。
+- 恢复中心集中列出异常退出、暂停任务、离线目标和未完成校验，并区分“当前位置继续”“扫描并复用断点”“仅重试失败目标”和“重新校验全部副本”。成功目标不会在单目标重试中重新读取或初始化。
 - 记录卷 UUID，防止同名磁盘替换后误写；按物理卷合并预检空间和临时发布余量。
 - 慢盘可以从快速分发中分离，健康目标继续完成。
 - 素材卡自动扫描并显示本次实际待备份容量、文件数量、磁盘总容量和可用空间。
 - 设置目的地时可直接点击外接磁盘，并从该磁盘继续选择目标文件夹。
 - 紫色进度表示拷贝，绿色覆盖表示校验；显示真实有效传输速度、回读速度、百分比与时分秒剩余时间。
 - 速度按操作系统确认完成的字节以 1 秒间隔采样和平滑处理；多目标速度不会重复累加。
-- 任务详情保留最近 30 秒素材源读取、各目标写入与校验回读曲线，并指出持续最慢的目的地。
+- 任务详情分别显示源素材哈希读取、源素材分发读取、各目标写入和校验回读曲线；完整任务记录保留平均值、P50、P95、峰值与停顿次数，并指出持续最慢的目的地。
 - 校验结束后立即结算任务并弹出完成通知，媒体缩略图随后在后台生成。
 
 ![传输队列](docs/screenshots/transfers.png)
@@ -47,14 +47,14 @@ Kocpy 将素材卡接收、多目标备份、逐目标回读校验、项目归�
 
 ### 项目全周期看板
 
-项目页按“拍摄日期 × 设备/机位”展示整个执行周期：每一天每台设备是否已经备份、素材卷数量、文件数量、素材容量、已校验数量，以及项目总任务、总文件和总素材量。项目可设置 1–4 份收工副本标准，并标记休息日或当天未使用的设备，避免空白单元格被误判为漏备份。每个素材卷可继续查看日期、设备、机位、大小与任务结论。
+项目页按“拍摄日期 × 设备/机位”展示整个执行周期：每一天每台设备是否已经备份、素材卷数量、文件数量、素材容量、已校验数量，以及项目总任务、总文件和总素材量。项目可设置 1–4 份收工副本标准，并标记休息日或当天未使用的设备，避免空白单元格被误判为漏备份。副本按物理卷 UUID 去重，同一磁盘上的多个文件夹只计算为一份；工作台同时显示尚未完成的日期与设备。
 
 项目完成后可导出：
 
 - 项目完整 PDF：项目总览、日期与设备矩阵、全部素材卷、目的地、校验结论和完整文件明细。
 - 项目完整 JSON：项目配置与所有任务、目标、文件、哈希和校验记录，便于长期归档或二次处理。
 - 项目 CSV：按日期、设备、机位和素材卷整理的表格数据。
-- 项目归档包：一次导出项目 PDF、完整 JSON、统计 CSV 和每个素材卷的 MHL 清单。
+- 项目归档包：一次导出项目 PDF、完整 JSON、统计 CSV、每个素材卷的 MHL 清单和用于验证整个归档包的 `SHA256SUMS.txt`。
 - 单任务 PDF / JSON / MHL / ASC MHL。
 - 拍摄日汇总 PDF 与 Resolve 媒体池 CSV。
 
@@ -68,7 +68,7 @@ Kocpy 将素材卡接收、多目标备份、逐目标回读校验、项目归�
 - PDF 报告使用与应用一致的版式，并在素材条目中嵌入可用缩略图。
 - 报告与清单可镜像到用户指定的同步文件夹；素材文件不会被上传。
 - 本地快照、隐藏挂载目录与系统备份卷不会被识别为可选存储设备。
-- 存储设备页可批量安全推出所有已完成设备；仍被任务使用或存在未校验副本的磁盘会被保留并说明原因。
+- 存储设备页可批量安全推出所有已完成设备；仍被备份或代理任务使用、存在未被后续成功任务覆盖的失败记录时，磁盘会被保留并说明原因。
 
 ![素材库](docs/screenshots/library.png)
 
@@ -88,8 +88,8 @@ Kocpy 支持真实深色与浅色外观，任务、项目、偏好、缩略图�
 
 从 [GitHub Releases](https://github.com/sexyfeifan/Kocpy/releases) 下载对应架构：
 
-- `Kocpy-0.0.10-arm64.dmg`：Apple Silicon Mac
-- `Kocpy-0.0.10-x64.dmg`：Intel Mac
+- `Kocpy-0.0.11-arm64.dmg`：Apple Silicon Mac
+- `Kocpy-0.0.11-x64.dmg`：Intel Mac
 
 打开 DMG，将 Kocpy 拖入“应用程序”。当前公开包尚未使用 Apple Developer ID 签名和公证。若 macOS 明确提示应用“已损坏”，请先确认文件来自本仓库官方 Release，再执行：
 
@@ -101,17 +101,17 @@ xattr -dr com.apple.quarantine "/Applications/Kocpy.app"
 
 ## English
 
-Kocpy is a local-first macOS workspace for verified media offload and production archiving. It copies one source to up to four destinations, reads every copy back for checksum verification, resumes interrupted large files, tracks physical volumes, and produces task, shooting-day, and full-project reports. Its Recovery Center brings paused jobs, offline destinations, and incomplete verification into one actionable queue.
+Kocpy is a local-first macOS workspace for verified media offload and production archiving. It copies one source to up to four destinations, reads every copy back for checksum verification, resumes interrupted large files, tracks physical volumes, and produces task, shooting-day, and full-project reports. Its Recovery Center can retry only failed destinations while preserving successful copies and their verification records.
 
-Project mode organizes media by project, shooting date, camera, optional A–E camera position, and timestamped card volume. The project dashboard applies a configurable verified-copy closeout rule to every date and camera, with explicit rest-day and unused-camera exceptions. Complete records can be exported as PDF, JSON, CSV, or a self-contained archive bundle with MHL manifests.
+Project mode organizes media by project, shooting date, camera, optional A–E camera position, and timestamped card volume. The project dashboard applies a configurable closeout rule based on physically distinct volume identities, with explicit rest-day and unused-camera exceptions. Complete records can be exported as PDF, JSON, CSV, or a self-contained archive bundle with MHL manifests and SHA-256 checksums.
 
 Kocpy also includes media thumbnails and metadata, H.264/ProRes proxy queues, Resolve CSV export, light/dark appearance, update checks, and architecture-specific DMGs for Apple Silicon and Intel Macs. Media and records stay on the Mac unless the user explicitly selects a report mirror folder.
 
 ## 日本語
 
-Kocpy は、macOS 向けのローカル優先メディアバックアップ／プロジェクト管理アプリです。1つの素材ソースを最大4つの保存先へコピーし、各コピーを独立して読み戻してチェックサム検証します。大容量ファイルの再開、物理ボリューム識別、容量事前確認、失敗した保存先の再試行に加え、停止・オフライン・未検証タスクをまとめる復旧センターにも対応します。
+Kocpy は、macOS 向けのローカル優先メディアバックアップ／プロジェクト管理アプリです。1つの素材ソースを最大4つの保存先へコピーし、各コピーを独立して読み戻してチェックサム検証します。大容量ファイルの再開、物理ボリューム識別、容量事前確認に加え、成功済みコピーを保持したまま失敗した保存先だけを再試行できます。
 
-プロジェクトモードでは、プロジェクト、撮影日、カメラ、任意の A–E カメラ位置、タイムスタンプ付き素材巻の階層で整理します。全期間の「撮影日 × カメラ」ごとに必要コピー数を確認し、休撮日と未使用カメラも明示できます。詳細データは PDF／JSON／CSV、MHL を含む一括アーカイブとして書き出せます。
+プロジェクトモードでは、プロジェクト、撮影日、カメラ、任意の A–E カメラ位置、タイムスタンプ付き素材巻の階層で整理します。必要コピー数は物理ボリューム UUID ごとに数え、同じディスク上の複数フォルダを重複カウントしません。詳細データは PDF／JSON／CSV、MHL と `SHA256SUMS.txt` を含む一括アーカイブとして書き出せます。
 
 素材サムネイルとメタデータ、H.264／ProRes プロキシキュー、Resolve CSV、ライト／ダーク表示、更新確認、Apple Silicon／Intel 用 DMG も備えています。素材と記録は、ユーザーが明示的にレポート同期先を選ばない限り Mac 内に保持されます。
 

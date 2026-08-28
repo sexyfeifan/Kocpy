@@ -35,6 +35,19 @@ export interface Destination {
   available?: boolean;
   error?: string;
   speedHistory?: Array<{ at: number; copy: number; verify: number }>;
+  copySpeedSamples?: number[];
+  verifySpeedSamples?: number[];
+  performance?: TransferPerformance;
+  verifyPerformance?: TransferPerformance;
+}
+
+export interface TransferPerformance {
+  average: number;
+  peak: number;
+  p50: number;
+  p95: number;
+  samples: number;
+  stalls: number;
 }
 
 export interface FileRecord {
@@ -111,6 +124,12 @@ export interface BackupTask {
   lastVerifiedAt?: number;
   sourceReadSpeedBps?: number;
   sourceSpeedHistory?: Array<{ at: number; speed: number }>;
+  sourceHashSpeedBps?: number;
+  sourceCopyReadSpeedBps?: number;
+  sourceHashHistory?: Array<{ at: number; speed: number }>;
+  sourceCopyReadHistory?: Array<{ at: number; speed: number }>;
+  sourceHashPerformance?: TransferPerformance;
+  sourceCopyReadPerformance?: TransferPerformance;
   performanceSummary?: string;
   mediaBreakdown?: Record<"video" | "photo" | "audio" | "other", { files: number; bytes: number }>;
 }

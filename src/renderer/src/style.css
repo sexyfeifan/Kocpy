@@ -2210,6 +2210,17 @@ small {
 .performance-card { display:grid; grid-template-columns:180px 1fr; gap:14px; align-items:center; margin:12px 0; padding:11px; border:1px solid var(--border); border-radius:9px; background:var(--panel2); }
 .performance-card strong,.performance-card span { display:block; }
 .performance-card span { margin-top:4px; color:var(--muted); font-size:9px; }
+.source-performance-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin:12px 0; }
+.source-performance-grid .performance-card { display:block; margin:0; }
+.source-performance-grid .speed-sparkline { margin-top:9px; }
+.source-performance-grid>p { grid-column:1/-1; margin:0; color:var(--muted); font-size:10px; }
+.performance-summary { display:flex; justify-content:space-between; gap:12px; padding-top:8px; color:var(--muted); border-top:1px dashed var(--border); }
+.daily-closeout { margin-top:18px; }
+.daily-closeout-list { display:grid; gap:7px; }
+.daily-closeout-list button { display:grid; grid-template-columns:auto 1fr auto auto; align-items:center; gap:12px; width:100%; padding:11px 12px; border:1px solid var(--border); border-radius:9px; background:var(--panel2); color:var(--text); text-align:left; }
+.daily-closeout-list button:hover { border-color:var(--purple); }
+.daily-closeout-list span,.daily-closeout-list strong,.daily-closeout-list small { display:block; }
+.daily-closeout-list small { margin-top:3px; color:var(--muted); }
 .destination-chart { display:grid; grid-template-columns:1fr auto; gap:8px; align-items:center; margin-top:8px; }
 .destination-chart small { color:var(--muted); font-size:8px; }
 .media-breakdown,.source-breakdown { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:7px; margin:10px 0; }

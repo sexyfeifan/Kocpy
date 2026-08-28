@@ -29,6 +29,7 @@ import { generateMhl, generateAscMhl } from "./backup/ManifestGenerator";
 import type { BackupTask, ProjectConfig, TaskConfig, ProxyJob } from "./types";
 import { compareVersions, selectMacAsset, type GitHubRelease } from "./update";
 import { claimTimestampedVolume, createProjectStructure, formatVolumeTimestamp, inspectProjectStructure, makeProjectFolderName } from "./project-path";
+import { verifiedPhysicalCopyCount } from "./project-closeout";
 
 app.setName("Kocpy");
 const appDataRoot = app.getPath("appData");
@@ -174,13 +175,20 @@ app.whenReady().then(async () => {
   handle("tasks:list", () => engine.getAllTasks());
   handle("tasks:create", async (config: TaskConfig) => {
     await validatePaths(config.sourcePath, config.destinationPaths);
-    const task = engine.createTask(config);
     const sourceIdentity = await volumeIdentity(config.sourcePath);
+    const destinationIdentities = await Promise.all(config.destinationPaths.map((destination) => volumeIdentity(destination)));
+    if (config.projectId) {
+      const project = (await store.read<ProjectConfig[]>("projects.json", [])).map(normalizeProject).find((item) => item.id === config.projectId);
+      if (!project) throw new Error("拍摄项目不存在");
+      const required = project.requiredCopies || 2;
+      if (destinationIdentities.length < required || new Set(destinationIdentities.map((identity) => identity.uuid || identity.id)).size < required) throw new Error(`项目要求 ${required} 份物理独立副本，请选择位于不同磁盘的目的地`);
+    }
+    const task = engine.createTask(config);
     task.sourceVolumeId = sourceIdentity.id;
     task.sourceVolumeUuid = sourceIdentity.uuid;
     task.sourceVolumeName = sourceIdentity.name;
-    await Promise.all(task.destinations.map(async (destination) => {
-      const identity = await volumeIdentity(destination.path);
+    await Promise.all(task.destinations.map(async (destination, index) => {
+      const identity = destinationIdentities[index];
       destination.volumeId = identity.id;
       destination.volumeUuid = identity.uuid;
       destination.volumeName = identity.name;
@@ -200,7 +208,7 @@ app.whenReady().then(async () => {
   handle("tasks:pause", async (id: string) => { engine.pauseTask(id); await persist(); return true; });
   handle("tasks:resume", async (id: string) => { engine.resumeTask(id); await persist(); return true; });
   handle("tasks:reverify", async (id: string) => { const result = await engine.reverifyTask(id); await persist(); return result; });
-  handle("tasks:retry-failed", async (id: string) => { const task = engine.getTask(id); if (!task || !task.destinations.some((d) => !d.verified)) throw new Error("没有可重试的失败目标"); engine.startTask(id); await persist(); return true; });
+  handle("tasks:retry-failed", async (id: string) => { engine.retryFailedDestinations(id); await persist(); return true; });
   handle("tasks:delete", (id: string) => {
     engine.deleteTask(id);
     return persist();
@@ -258,8 +266,11 @@ app.whenReady().then(async () => {
     for (const volume of volumes.filter((item) => item.canEject)) {
       const unsafe = engine.getAllTasks().some((task) => ["running", "paused", "verifying", "pending"].includes(task.status) && (inside(task.sourcePath, volume.path) || task.destinations.some((destination) => inside(destination.path, volume.path))));
       if (unsafe) { results.push({ path: volume.path, ok: false, error: "仍有进行中任务" }); continue; }
+      if (proxyJobs.some((job) => ["pending", "running"].includes(job.status) && (inside(job.input, volume.path) || inside(job.outputDir, volume.path)))) { results.push({ path: volume.path, ok: false, error: "仍有代理任务正在使用" }); continue; }
       const related = engine.getAllTasks().filter((task) => inside(task.sourcePath, volume.path) || task.destinations.some((destination) => inside(destination.path, volume.path)));
-      if (!related.length || related.some((task) => task.status !== "completed" || task.destinations.some((destination) => !destination.verified))) { results.push({ path: volume.path, ok: false, error: "存在未完成或未校验副本" }); continue; }
+      const complete = related.filter((task) => task.status === "completed" && task.destinations.every((destination) => destination.verified));
+      const uncovered = related.filter((task) => ["failed", "cancelled"].includes(task.status)).some((task) => !complete.some((candidate) => (candidate.createdAt || 0) >= (task.createdAt || 0) && (candidate.sourceVolumeUuid && candidate.sourceVolumeUuid === task.sourceVolumeUuid || candidate.sourcePath === task.sourcePath)));
+      if (!related.length || !complete.length || uncovered) { results.push({ path: volume.path, ok: false, error: uncovered ? "存在尚未被后续成功备份覆盖的失败任务" : "没有完整且通过校验的备份记录" }); continue; }
       try { await ejectVolume(volume.path); results.push({ path: volume.path, ok: true }); } catch (error: any) { results.push({ path: volume.path, ok: false, error: error.message || String(error) }); }
     }
     return results;
@@ -292,6 +303,7 @@ app.whenReady().then(async () => {
   handle("projects:inspect-structure", async (project: ProjectConfig) => inspectProjectStructure(prepareProject(project)));
   handle("projects:save", async (value: ProjectConfig, createMissing = true) => {
     const project = prepareProject(value);
+    if ((project.destinationPaths?.length || 0) < (project.requiredCopies || 2)) throw new Error(`项目要求 ${project.requiredCopies || 2} 份物理独立副本，请配置至少同等数量的目的地`);
     if (createMissing) await createProjectStructure(project);
     const all = (await store.read<ProjectConfig[]>("projects.json", [])).map(normalizeProject),
       idx = all.findIndex((p) => p.id === project.id);
@@ -333,16 +345,19 @@ app.whenReady().then(async () => {
     if (!project) throw new Error("项目不存在");
     const tasks = engine.getAllTasks().filter((task) => task.projectId === projectId);
     if (!tasks.length) throw new Error("当前项目还没有可导出的备份记录");
-    const csv = () => { const cell = (value: unknown) => `"${String(value ?? "").replace(/"/g, '""')}"`; return "\ufeff" + ["拍摄日期,设备,机位,素材卷,文件数,素材大小,状态,通过目标,目标总数", ...tasks.map((task) => [task.shootingDate, task.devices.join("/"), task.cameraPosition, task.name, task.totalFiles, task.totalBytes, task.status, task.destinations.filter((destination) => destination.verified).length, task.destinations.length].map(cell).join(","))].join("\n"); };
+    const csv = () => { const cell = (value: unknown) => `"${String(value ?? "").replace(/"/g, '""')}"`; return "\ufeff" + ["拍摄日期,设备,机位,素材卷,文件数,素材大小,状态,通过目标,物理独立副本,项目要求副本", ...tasks.map((task) => [task.shootingDate, task.devices.join("/"), task.cameraPosition, task.name, task.totalFiles, task.totalBytes, task.status, task.destinations.filter((destination) => destination.verified).length, verifiedPhysicalCopyCount(task), project.requiredCopies || 2].map(cell).join(","))].join("\n"); };
     if (format === "bundle") {
       const chosen = await dialog.showOpenDialog({ properties: ["openDirectory", "createDirectory"] }); if (chosen.canceled) return null;
       const folder = path.join(chosen.filePaths[0], `Kocpy_${segment(project.name)}_项目归档包_${Date.now()}`); await fs.mkdir(folder, { recursive: true });
+      const archiveFiles = ["项目完整报告.pdf", "项目完整数据.json", "项目素材统计.csv", ...tasks.map((task) => `${segment(task.name)}_${task.id.slice(0, 6)}.mhl`)];
       await Promise.all([
         fs.writeFile(path.join(folder, "项目完整报告.pdf"), await htmlToPdf(await generateProjectReport(project, tasks))),
         fs.writeFile(path.join(folder, "项目完整数据.json"), JSON.stringify({ generatedAt: new Date().toISOString(), project, tasks }, null, 2)),
         fs.writeFile(path.join(folder, "项目素材统计.csv"), csv()),
         ...tasks.map((task) => fs.writeFile(path.join(folder, `${segment(task.name)}_${task.id.slice(0, 6)}.mhl`), generateMhl(task))),
       ]);
+      const checksums = await Promise.all(archiveFiles.map(async (name) => `${await hashFile(path.join(folder, name), "sha256")}  ${name}`));
+      await fs.writeFile(path.join(folder, "SHA256SUMS.txt"), checksums.join("\n") + "\n");
       return folder;
     }
     const extension = format;

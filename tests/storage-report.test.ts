@@ -8,6 +8,7 @@ import { generateProjectReport, generateReport } from "../src/main/backup/Report
 import { generateMhl, generateAscMhl } from "../src/main/backup/ManifestGenerator";
 import { execFileSync } from "node:child_process";
 import { isTimeMachineVolume } from "../src/main/system";
+import { projectCellStatus, verifiedPhysicalCopyCount } from "../src/main/project-closeout";
 describe("Persistence and reports", () => {
   it("serializes concurrent writes and recovers the previous valid snapshot", async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "kocpy-store-"));
@@ -81,10 +82,20 @@ describe("Persistence and reports", () => {
     const engine = new BackupEngine(), task = engine.createTask({ name: "FX3_202608271200", namingTemplate: "name", sourcePath: "/tmp/source", destinationPaths: ["/tmp/a", "/tmp/b"], devices: ["FX3"], hashAlgorithm: "sha256", shootingDate: "2026-08-27" });
     task.status = "completed"; task.totalFiles = 2; task.totalBytes = 100; task.destinations[0].verified = true; task.destinations[1].verified = false;
     const html = (await generateProjectReport({ id: "project-123456789", name: "测试项目", devices: ["FX3", "FX6"], volumePrefix: "CARD", shootingDateStart: "2026-08-27", shootingDateEnd: "2026-08-28", requiredCopies: 2, restDays: ["2026-08-28"], unusedDevicesByDate: { "2026-08-27": ["FX6"] } }, [task])).toString();
-    expect(html).toContain("0 / 1 达到 2 份副本");
+    expect(html).toContain("0 / 1 达到 2 份物理独立副本");
     expect(html).toContain("当天未使用");
     expect(html).toContain("休息日");
     expect(html).toContain("每日素材趋势");
     expect(html).toContain("设备素材占比");
+  });
+  it("does not count two folders on one physical volume as independent copies", () => {
+    const task = new BackupEngine().createTask({ name: "same-disk", namingTemplate: "same-disk", sourcePath: "/tmp/source", destinationPaths: ["/Volumes/RAID/a", "/Volumes/RAID/b"], devices: ["FX3"], hashAlgorithm: "sha256", shootingDate: "2026-08-27" });
+    task.status = "completed";
+    for (const destination of task.destinations) { destination.verified = true; destination.volumeUuid = "same-volume"; }
+    expect(verifiedPhysicalCopyCount(task)).toBe(1);
+    const cell = projectCellStatus({ id: "p", name: "p", devices: ["FX3"], volumePrefix: "CARD", requiredCopies: 2 }, [task], "2026-08-27", "FX3");
+    expect(cell.complete).toBe(false);
+    task.destinations[1].volumeUuid = "second-volume";
+    expect(verifiedPhysicalCopyCount(task)).toBe(2);
   });
 });
