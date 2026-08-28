@@ -1,6 +1,6 @@
 {
   "name": "kocpy",
-  "version": "0.0.9",
+  "version": "0.0.10",
   "description": "Kocpy 专业素材工作台 · 多目的地备份、独立校验与项目归档",
   "main": "out/main/index.js",
   "productName": "Kocpy",
@@ -52,7 +52,7 @@
       "icon": "resources/icon.icns",
       "category": "public.app-category.video",
       "hardenedRuntime": true,
-      "notarize": true,
+      "notarize": false,
       "target": [
         "dmg"
       ],

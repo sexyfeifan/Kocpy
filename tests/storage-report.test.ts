@@ -4,7 +4,7 @@ import path from "node:path";
 import os from "node:os";
 import { Storage } from "../src/main/storage";
 import { BackupEngine } from "../src/main/backup/BackupEngine";
-import { generateReport } from "../src/main/backup/ReportGenerator";
+import { generateProjectReport, generateReport } from "../src/main/backup/ReportGenerator";
 import { generateMhl, generateAscMhl } from "../src/main/backup/ManifestGenerator";
 import { execFileSync } from "node:child_process";
 import { isTimeMachineVolume } from "../src/main/system";
@@ -76,5 +76,15 @@ describe("Persistence and reports", () => {
     t.fileRecords = [{ name: "a&b.mov", relativePath: "A/a&b.mov", size: 42, srcChecksum: "abc", destinations: [] }];
     const mhl = generateMhl(t);
     expect(mhl).toContain("<mhl version=\"1.1\">"); expect(mhl).toContain("A/a&amp;b.mov"); expect(mhl).toContain("<sha256>abc</sha256>");
+  });
+  it("applies project closeout copy requirements and schedule exceptions", async () => {
+    const engine = new BackupEngine(), task = engine.createTask({ name: "FX3_202608271200", namingTemplate: "name", sourcePath: "/tmp/source", destinationPaths: ["/tmp/a", "/tmp/b"], devices: ["FX3"], hashAlgorithm: "sha256", shootingDate: "2026-08-27" });
+    task.status = "completed"; task.totalFiles = 2; task.totalBytes = 100; task.destinations[0].verified = true; task.destinations[1].verified = false;
+    const html = (await generateProjectReport({ id: "project-123456789", name: "测试项目", devices: ["FX3", "FX6"], volumePrefix: "CARD", shootingDateStart: "2026-08-27", shootingDateEnd: "2026-08-28", requiredCopies: 2, restDays: ["2026-08-28"], unusedDevicesByDate: { "2026-08-27": ["FX6"] } }, [task])).toString();
+    expect(html).toContain("0 / 1 达到 2 份副本");
+    expect(html).toContain("当天未使用");
+    expect(html).toContain("休息日");
+    expect(html).toContain("每日素材趋势");
+    expect(html).toContain("设备素材占比");
   });
 });

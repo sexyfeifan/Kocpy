@@ -27,6 +27,7 @@ export interface Scan {
   totalBytes: number;
   skipped: number;
   sample: string[];
+  breakdown: Record<"video" | "photo" | "audio" | "other", { files: number; bytes: number }>;
 }
 export interface UpdateInfo {
   current: string;
@@ -56,6 +57,7 @@ export interface API {
     path: string,
   ): Promise<{ total: number; free: number; used: number }>;
   ejectVolume(path: string): Promise<void>;
+  ejectCompletedVolumes(): Promise<Array<{ path: string; ok: boolean; error?: string }>>;
   reveal(path: string): Promise<void>;
   checkUpdates(): Promise<UpdateInfo>;
   openUpdate(url:string): Promise<void>;
@@ -69,7 +71,7 @@ export interface API {
   claimProjectVolume(projectId: string, device: string, prefixOverride?: string): Promise<{label:string;timestamp:string;collision:number;prefix:string;project:ProjectConfig}>;
   exportReport(id: string, format: "pdf" | "json" | "mhl" | "ascmhl"): Promise<string | null>;
   exportDailyReport(date: string, projectId?: string): Promise<string | null>;
-  exportProjectReport(projectId: string, format: "pdf" | "json"): Promise<string | null>;
+  exportProjectReport(projectId: string, format: "pdf" | "json" | "csv" | "bundle"): Promise<string | null>;
   exportResolveCsv(date: string, projectId?: string): Promise<string | null>;
   inspectMedia(path: string): Promise<{name:string;path:string;size:number;modifiedAt:number;duration?:string;video?:string;audio?:string;timecode?:string;camera?:string;creationTime?:string;resolution?:string;frameRate?:string;thumbnail?:string;thumbnailPath?:string}>;
   getProxyJobs(): Promise<ProxyJob[]>;

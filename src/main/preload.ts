@@ -19,6 +19,7 @@ contextBridge.exposeInMainWorld("api", {
   listVolumes: call("volumes:list"),
   driveInfo: call("volumes:info"),
   ejectVolume: call("volumes:eject"),
+  ejectCompletedVolumes: call("volumes:eject-completed"),
   reveal: call("system:reveal"),
   checkUpdates: call("updates:check"),
   openUpdate: call("updates:open"),

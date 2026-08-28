@@ -78,6 +78,7 @@ import { ProjectEditor } from "./ProjectEditor";
 type Page =
   | "overview"
   | "transfers"
+  | "recovery"
   | "projects"
   | "library"
   | "processing"
@@ -87,6 +88,7 @@ type Page =
 const navigation: [Page, string, typeof LayoutDashboard][] = [
   ["overview", "工作台", LayoutDashboard],
   ["transfers", "传输队列", ArrowLeftRight],
+  ["recovery", "恢复中心", RefreshCw],
   ["projects", "拍摄项目", FolderKanban],
   ["library", "素材库", Film],
   ["processing", "代理队列", Activity],
@@ -97,6 +99,12 @@ const projectDates = (project: ProjectConfig, tasks: BackupTask[]) => {
   const result: string[] = [], start = project.shootingDateStart, end = project.shootingDateEnd || start;
   if (start && end) for (let cursor = new Date(`${start}T12:00:00`), finish = new Date(`${end}T12:00:00`); cursor <= finish && result.length < 1000; cursor.setDate(cursor.getDate() + 1)) result.push(cursor.toLocaleDateString("sv-SE"));
   return [...new Set([...result, ...tasks.map((task) => task.shootingDate).filter(Boolean) as string[]])].sort();
+};
+const projectCell = (project: ProjectConfig, tasks: BackupTask[], shootingDate: string, device: string) => {
+  const rows = tasks.filter((task) => task.shootingDate === shootingDate && task.devices.includes(device)), required = project.requiredCopies || 2;
+  const rest = project.restDays?.includes(shootingDate), unused = project.unusedDevicesByDate?.[shootingDate]?.includes(device);
+  const safe = rows.filter((task) => task.status === "completed" && task.destinations.filter((destination) => destination.verified).length >= required).length;
+  return { rows, safe, exempt: Boolean(rest || unused), label: rest ? "休息日" : unused ? "当天未使用" : rows.length && safe === rows.length ? "已满足收工要求" : rows.length ? `${safe} / ${rows.length} 达到 ${required} 份副本` : "尚未备份" };
 };
 const defaults: Settings = {
   defaultHash: "sha256",
@@ -167,6 +175,10 @@ export function Badge({ status }: { status: string }) {
       {statusText[status] || status}
     </span>
   );
+}
+function SpeedSparkline({ values, color = "var(--purple)" }: { values: number[]; color?: string }) {
+  const max = Math.max(1, ...values), points = (values.length ? values : [0]).map((value, index, all) => `${(index / Math.max(1, all.length - 1)) * 100},${28 - (value / max) * 24}`).join(" ");
+  return <svg className="speed-sparkline" viewBox="0 0 100 30" preserveAspectRatio="none" aria-label="最近 30 秒速度曲线"><polyline points={points} fill="none" stroke={color} strokeWidth="2" vectorEffect="non-scaling-stroke"/></svg>;
 }
 export function App() {
   const [page, setPage] = useState<Page>("overview"),
@@ -444,6 +456,13 @@ export function App() {
   };
   const projectDetail = projects.find((project) => project.id === projectDetailId);
   const projectDetailTasks = tasks.filter((task) => task.projectId === projectDetailId);
+  const recoveryTasks = tasks.filter((task) => ["failed", "cancelled", "paused", "pending"].includes(task.status) || task.destinations.some((destination) => destination.available === false || Boolean(destination.error) || (!destination.verified && task.status !== "running" && task.status !== "verifying")));
+  const updateProjectSchedule = async (project: ProjectConfig, dateValue: string, device?: string) => {
+    const next = { ...project, restDays: [...(project.restDays || [])], unusedDevicesByDate: { ...(project.unusedDevicesByDate || {}) } };
+    if (!device) next.restDays = next.restDays.includes(dateValue) ? next.restDays.filter((date) => date !== dateValue) : [...next.restDays, dateValue];
+    else { const values = [...(next.unusedDevicesByDate[dateValue] || [])]; next.unusedDevicesByDate[dateValue] = values.includes(device) ? values.filter((value) => value !== device) : [...values, device]; }
+    setProjects(await api.saveProject(next, false));
+  };
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -452,7 +471,7 @@ export function App() {
           <img src="./icon.png" alt="Kocpy 图标" />
           <div>
             <strong>
-              Kocpy<span>0.0.9</span>
+              Kocpy<span>0.0.10</span>
             </strong>
             <small>素材工作台</small>
           </div>
@@ -499,7 +518,7 @@ export function App() {
             <button className={`sidebar-update ${updateInfo?.available ? "available" : ""}`} title="检查 Kocpy 更新" onClick={() => void checkForUpdates()}>
               <RefreshCw size={13}/>
               <span>{updateInfo?.available ? `可升级 ${updateInfo.latest}` : "检查更新"}</span>
-              <b>v0.0.9</b>
+              <b>v0.0.10</b>
             </button>
             <div className="sidebar-author-links">
               <span><i className="live-dot"/><b>@sexyfeifan</b></span>
@@ -547,6 +566,7 @@ export function App() {
                   {
                     overview: "YOUR CREATIVE WORKSPACE",
                     transfers: "TRANSFER CENTER",
+                    recovery: "RECOVERY CENTER",
                     projects: "PRODUCTION ORGANIZER",
                     library: "VERIFIED MEDIA",
                     processing: "PROXY PROCESSING",
@@ -561,6 +581,7 @@ export function App() {
                   {
                     overview: "每一份素材，都安心抵达。",
                     transfers: "传输队列",
+                    recovery: "恢复中心",
                     projects: "拍摄项目",
                     library: "素材库",
                     processing: "代理队列",
@@ -575,6 +596,7 @@ export function App() {
                   {
                     overview: "从现场备份到素材交付，让创作井然有序。",
                     transfers: "拷贝、校验与任务记录，在一个地方掌握。",
+                    recovery: "识别中断、离线目标和未完成校验，并安全恢复。",
                     projects: "提前整理拍摄计划，让每一次备份自动归位。",
                     library: "浏览备份文件清单，从已校验的副本继续工作。",
                     processing: "批量转码、进度、取消与失败重试。",
@@ -857,6 +879,11 @@ export function App() {
                   )}
                 </section>
               )}
+              {page === "recovery" && <section className="panel recovery-center">
+                <div className="section-title"><div><h2><RefreshCw size={18}/>恢复中心</h2><span className="muted small">集中处理异常退出、断点文件、离线目的地与未完成校验</span></div><Button kind="subtle" onClick={() => void refresh()}><RefreshCw size={14}/>重新检测</Button></div>
+                <div className="recovery-summary"><div><strong>{recoveryTasks.length}</strong><span>需要关注的任务</span></div><div><strong>{recoveryTasks.filter((task) => task.destinations.some((destination) => destination.available === false || destination.error)).length}</strong><span>失联或失败目标</span></div><div><strong>{recoveryTasks.filter((task) => task.transferredBytes > 0 && task.transferredBytes < task.totalBytes).length}</strong><span>可恢复断点任务</span></div></div>
+                {recoveryTasks.length ? <div className="recovery-list">{recoveryTasks.map((task) => { const failedTargets = task.destinations.filter((destination) => destination.available === false || destination.error || !destination.verified); return <div key={task.id}><span className="file-icon"><RefreshCw size={18}/></span><div><strong>{task.name}</strong><p>{task.status === "paused" ? "任务已暂停，可从当前检查点继续" : task.status === "cancelled" && task.transferredBytes ? "检测到已传输数据，重新执行会校验并复用安全断点" : failedTargets.length ? `${failedTargets.length} 个目标需要重新连接或重试` : "任务尚未完成"}</p><small>{task.currentFile || task.errorMessage || task.sourcePath}</small></div><div className="row"><Badge status={task.status}/>{task.status === "paused" ? <Button kind="primary" onClick={() => void act(() => api.resumeTask(task.id), "任务已继续")}><Play size={13}/>继续</Button> : <Button kind="subtle" onClick={() => void act(() => api.startTask(task.id), "已重新加入恢复队列")}><RefreshCw size={13}/>恢复任务</Button>}{failedTargets.length > 0 && <Button kind="subtle" onClick={() => void act(() => api.retryFailedDestinations(task.id), "失败目标已单独重试")}><HardDrive size={13}/>重试目标</Button>}{task.fileRecords.length > 0 && <Button kind="subtle" onClick={() => void act(() => api.reverifyTask(task.id), "复校验已完成")}><ShieldCheck size={13}/>重新校验</Button>}</div></div>; })}</div> : <Empty icon={CheckCheck} title="没有需要恢复的任务" detail="所有任务、目的地和校验记录均处于安全状态。"/>}
+              </section>}
               {page === "projects" && (
                 <>
                   <div className="list-toolbar plain">
@@ -966,9 +993,11 @@ export function App() {
                       ))}
                   </div>
                   {projectDetail && <section className="panel project-insights">
-                    <div className="section-title"><div><h2><Activity size={18}/>{projectDetail.name} · 项目全周期</h2><span className="muted small">按拍摄日期与设备汇总素材卷、文件、容量和独立校验状态</span></div><div className="row"><Button kind="subtle" onClick={() => void act(async () => { const result = await api.exportProjectReport(projectDetail.id, "json"); if (result) notify(`项目完整数据已保存：${result}`); })}><Download size={14}/>完整 JSON</Button><Button kind="primary" onClick={() => void act(async () => { const result = await api.exportProjectReport(projectDetail.id, "pdf"); if (result) notify(`项目完整报告已保存：${result}`); })}><FileCheck2 size={14}/>项目 PDF</Button><Button kind="icon" title="关闭项目详情" onClick={() => setProjectDetailId(null)}><X size={15}/></Button></div></div>
+                    <div className="section-title"><div><h2><Activity size={18}/>{projectDetail.name} · 项目全周期</h2><span className="muted small">按拍摄日期与设备汇总素材卷、文件、容量和独立校验状态</span></div><div className="row"><Button kind="subtle" onClick={() => void act(async () => { const result = await api.exportProjectReport(projectDetail.id, "csv"); if (result) notify(`项目 CSV 已保存：${result}`); })}><Download size={14}/>CSV</Button><Button kind="subtle" onClick={() => void act(async () => { const result = await api.exportProjectReport(projectDetail.id, "json"); if (result) notify(`项目完整数据已保存：${result}`); })}>完整 JSON</Button><Button kind="subtle" onClick={() => void act(async () => { const result = await api.exportProjectReport(projectDetail.id, "pdf"); if (result) notify(`项目完整报告已保存：${result}`); })}><FileCheck2 size={14}/>项目 PDF</Button><Button kind="primary" onClick={() => void act(async () => { const result = await api.exportProjectReport(projectDetail.id, "bundle"); if (result) notify(`项目归档包已创建：${result}`); })}><Archive size={14}/>归档包</Button><Button kind="icon" title="关闭项目详情" onClick={() => setProjectDetailId(null)}><X size={15}/></Button></div></div>
                     <div className="project-total-cards"><div><strong>{projectDetailTasks.length}</strong><span>素材卷任务</span></div><div><strong>{projectDetailTasks.filter((task) => task.status === "completed").length} / {projectDetailTasks.length}</strong><span>已完成校验</span></div><div><strong>{projectDetailTasks.reduce((sum, task) => sum + task.totalFiles, 0)}</strong><span>项目文件</span></div><div><strong>{bytes(projectDetailTasks.reduce((sum, task) => sum + task.totalBytes, 0))}</strong><span>项目总素材</span></div></div>
-                    <div className="project-matrix"><div className="project-matrix-head"><span>拍摄日期</span><span>设备 / 机位</span><span>素材卷</span><span>文件</span><span>素材量</span><span>完成情况</span></div>{projectDates(projectDetail, projectDetailTasks).flatMap((shootingDate) => projectDetail.devices.map((device) => { const rows = projectDetailTasks.filter((task) => task.shootingDate === shootingDate && task.devices.includes(device)), complete = rows.filter((task) => task.status === "completed").length; return <div className="project-matrix-row" key={`${shootingDate}-${device}`}><strong>{shootingDate.replace(/-/g, "")}</strong><span>{device}</span><span>{rows.length}</span><span>{rows.reduce((sum, task) => sum + task.totalFiles, 0)}</span><span>{bytes(rows.reduce((sum, task) => sum + task.totalBytes, 0))}</span><span className={rows.length && complete === rows.length ? "green-text" : rows.length ? "amber-text" : "muted"}>{rows.length ? `${complete} / ${rows.length} 已校验` : "尚未备份"}</span></div>; }))}</div>
+                    <div className="closeout-note"><ShieldCheck size={16}/><span>收工标准：每个使用中的设备至少有 {projectDetail.requiredCopies || 2} 份独立校验副本。点击状态可标记休息日或当天未使用设备。</span></div>
+                    <div className="project-matrix"><div className="project-matrix-head"><span>拍摄日期</span><span>设备 / 机位</span><span>素材卷</span><span>文件</span><span>素材量</span><span>收工检查</span></div>{projectDates(projectDetail, projectDetailTasks).flatMap((shootingDate) => projectDetail.devices.map((device) => { const cell = projectCell(projectDetail, projectDetailTasks, shootingDate, device), rows = cell.rows; return <div className="project-matrix-row" key={`${shootingDate}-${device}`}><strong>{shootingDate.replace(/-/g, "")}</strong><span>{device}</span><span>{rows.length}</span><span>{rows.reduce((sum, task) => sum + task.totalFiles, 0)}</span><span>{bytes(rows.reduce((sum, task) => sum + task.totalBytes, 0))}</span><button className={cell.exempt || (rows.length && cell.safe === rows.length) ? "green-text" : rows.length ? "amber-text" : "muted"} onClick={() => void updateProjectSchedule(projectDetail, shootingDate, device)} title="切换当天未使用标记">{cell.label}</button></div>; }))}</div>
+                    <div className="closeout-actions"><span>整日未拍摄时可直接标记：</span>{projectDates(projectDetail, projectDetailTasks).map((shootingDate) => <Button key={shootingDate} kind="subtle" onClick={() => void updateProjectSchedule(projectDetail, shootingDate)}>{projectDetail.restDays?.includes(shootingDate) ? <Check size={13}/> : <CalendarDays size={13}/>} {shootingDate.replace(/-/g, "")} {projectDetail.restDays?.includes(shootingDate) ? "休息日" : "标记休息"}</Button>)}</div>
                     {projectDetailTasks.length > 0 && <div className="project-task-breakdown"><strong>素材卷明细</strong>{[...projectDetailTasks].sort((a,b) => (a.shootingDate || "").localeCompare(b.shootingDate || "") || (a.startedAt || 0) - (b.startedAt || 0)).map((task) => <div key={task.id}><span>{task.shootingDate?.replace(/-/g, "") || "未标日期"} · {task.devices.join("/")}{task.cameraPosition ? ` · ${task.cameraPosition}` : ""}</span><b>{task.name}</b><small>{task.totalFiles} 个文件 · {bytes(task.totalBytes)}</small><Badge status={task.status}/></div>)}</div>}
                   </section>}
                   {!projects.filter((p) =>
@@ -1003,6 +1032,7 @@ export function App() {
               )}
               {page === "storage" && (
                 <>
+                  <div className="row justify-end"><Button kind="subtle" onClick={() => void act(async () => { const results = await api.ejectCompletedVolumes(); const success = results.filter((result) => result.ok).length; setVolumes(await api.listVolumes()); notify(`已安全推出 ${success} 个完成设备；${results.length - success} 个设备因安全检查未推出`, results.some((result) => !result.ok)); })}><Eject size={14}/>安全推出所有已完成设备</Button></div>
                   <div className="notice">
                     <Info size={16} />
                     <span>
@@ -1294,6 +1324,8 @@ export function App() {
                 <span>{selected.sourcePath}</span>
                 <ExternalLink size={14} />
               </button>
+              {selected.mediaBreakdown && <div className="media-breakdown">{(["video","photo","audio","other"] as const).map((kind) => <div key={kind}><strong>{selected.mediaBreakdown![kind].files}</strong><span>{({video:"视频",photo:"照片 / RAW",audio:"音频",other:"其他"})[kind]} · {bytes(selected.mediaBreakdown![kind].bytes)}</span></div>)}</div>}
+              {(selected.sourceSpeedHistory?.length || selected.performanceSummary) && <div className="performance-card"><div><strong>素材源读取</strong><span>{selected.sourceReadSpeedBps ? `${bytes(selected.sourceReadSpeedBps)}/s` : selected.performanceSummary}</span></div><SpeedSparkline values={(selected.sourceSpeedHistory || []).map((point) => point.speed)}/></div>}
               <h3 className="detail-label">备份目的地</h3>
               {selected.destinations.map((d) => (
                 <div className="destination-detail" key={d.id}>
@@ -1328,6 +1360,7 @@ export function App() {
                       {d.verified ? "✓ 哈希一致" : d.error || "尚未完成校验"}
                     </span>
                   </div>
+                  {d.speedHistory?.length ? <div className="destination-chart"><SpeedSparkline values={d.speedHistory.map((point) => selected.status === "verifying" ? point.verify : point.copy)} color={selected.status === "verifying" ? "var(--green)" : "var(--purple)"}/><small>最近 30 秒 · {selected.status === "verifying" ? "回读" : "写入"}</small></div> : null}
                 </div>
               ))}
               <details className="log-box">
@@ -1877,7 +1910,7 @@ function SettingsPage({
         <img src="./icon.png" alt="Kocpy 图标" />
         <div>
           <h3>
-            Kocpy <span>0.0.9</span>
+            Kocpy <span>0.0.10</span>
           </h3>
           <p>
             从现场接卡、项目归档到交付报告，为每一份创作保留可靠副本。

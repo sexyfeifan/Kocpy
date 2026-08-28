@@ -26,6 +26,7 @@ export function ProjectEditor({
       Object.fromEntries(initialDevices.map((device) => [device, initial.volumePrefixByDevice?.[device] || (initial.volumePrefix && initialDevices.length === 1 ? initial.volumePrefix : `${device}_`)])),
     ),
     [positions, setPositions] = useState<Record<string, string[]>>(() => initial.devicePositions || {}),
+    [requiredCopies, setRequiredCopies] = useState(initial.requiredCopies || 2),
     [customDevice, setCustomDevice] = useState(""),
     [dests, setDests] = useState(initial.destinationPaths || []),
     [busy, setBusy] = useState(false),
@@ -74,6 +75,7 @@ export function ProjectEditor({
         shootingDateStart: start,
         shootingDateEnd: end,
         destinationPaths: dests,
+        requiredCopies,
         status: initial.status || "active",
         createdAt: initial.createdAt || Date.now(),
     };
@@ -128,6 +130,7 @@ export function ProjectEditor({
           </div>
 
           <div className="form-section-title"><h3>03 · 项目备份根目录</h3><p>每次拷卡会在这些根目录下创建相同的项目层级。</p></div>
+          <label>项目要求的安全副本数量<select value={requiredCopies} onChange={(event) => setRequiredCopies(Number(event.target.value))}>{[1,2,3,4].map((count) => <option key={count} value={count}>{count} 份独立校验副本</option>)}</select></label>
           {dests.map((p) => <div className="chosen-path" key={p}><FolderOpen size={18}/><span className="mono path">{p}</span><Button kind="icon" title="移除此目的地" onClick={() => setDests((all) => all.filter((value) => value !== p))}><X size={15}/></Button></div>)}
           {dests.length < 4 && <Button kind="subtle" onClick={() => void api.selectDirectory().then((p) => p && setDests((all) => all.includes(p) ? all : [...all, p])).catch((e) => setError(String(e)))}><Plus size={15}/>添加备份根目录</Button>}
           <div className="notice"><Info size={16}/><span>新项目保存后会按整个拍摄日期范围、设备及 A–E 机位创建完整目录结构。<br/>备份路径示例：<span className="mono">备份根目录/{folderName}/{start.replace(/-/g, "")}/{devices[0] || "设备"}/{positions[devices[0]]?.[0] ? `${positions[devices[0]][0]}/` : ""}{cleanPrefix(prefixes[devices[0]] || "Untitled_")}{previewVolumeTimestamp()}/</span></span></div>

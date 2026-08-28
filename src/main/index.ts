@@ -52,6 +52,9 @@ const normalizeProject = (project: ProjectConfig): ProjectConfig => {
       const positions = (project.devicePositions?.[device] || []).filter((value) => /^[A-E]$/.test(value)).slice(0, 5);
       return positions.length ? [[device, positions]] : [];
     })),
+    restDays: [...new Set(project.restDays || [])],
+    unusedDevicesByDate: Object.fromEntries(Object.entries(project.unusedDevicesByDate || {}).map(([date, values]) => [date, [...new Set(values)].filter((device) => devices.includes(device))])),
+    requiredCopies: Math.max(1, Math.min(4, project.requiredCopies || 2)),
   };
 };
 const prepareProject = (value: ProjectConfig): ProjectConfig => {
@@ -68,6 +71,9 @@ const prepareProject = (value: ProjectConfig): ProjectConfig => {
     const positions = [...new Set(project.devicePositions?.[device] || [])].filter((position) => /^[A-E]$/.test(position)).slice(0, 5);
     return positions.length ? [[device, positions]] : [];
   }));
+  project.restDays = [...new Set(project.restDays || [])];
+  project.unusedDevicesByDate = Object.fromEntries(Object.entries(project.unusedDevicesByDate || {}).map(([date, values]) => [date, [...new Set(values)].filter((device) => project.devices.includes(device))]));
+  project.requiredCopies = Math.max(1, Math.min(4, project.requiredCopies || 2));
   return normalizeProject(project);
 };
 let main: BrowserWindow | null = null,
@@ -96,6 +102,11 @@ async function syncReport(file: string) {
   await fs.mkdir(settings.reportSyncPath, { recursive: true });
   const target = path.join(settings.reportSyncPath, path.basename(file));
   if (path.resolve(target) !== path.resolve(file)) await fs.copyFile(file, target);
+}
+async function htmlToPdf(html: Buffer | string) {
+  const report = new BrowserWindow({ show: false, webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } });
+  try { await report.loadURL("data:text/html;charset=utf-8," + encodeURIComponent(html.toString())); return await report.webContents.printToPDF({ printBackground: true, pageSize: "A4", margins: { top: 0.35, bottom: 0.35, left: 0.3, right: 0.3 } }); }
+  finally { report.destroy(); }
 }
 async function processProxyQueue() {
   if (proxyBusy) return;
@@ -214,11 +225,14 @@ app.whenReady().then(async () => {
       scan(source, includeHidden, controller.signal),
       timeout,
     ]).finally(() => clearTimeout(timer));
+    const breakdown = Object.fromEntries((["video", "photo", "audio", "other"] as const).map((kind) => [kind, { files: 0, bytes: 0 }])) as Record<"video" | "photo" | "audio" | "other", { files: number; bytes: number }>;
+    for (const file of r.files) { const kind = /\.(mov|mp4|mxf|mkv|avi|m4v|r3d|braw)$/i.test(file.name) ? "video" : /\.(jpg|jpeg|png|heic|tif|tiff|dng|arw|cr2|cr3|nef|raf)$/i.test(file.name) ? "photo" : /\.(wav|mp3|aac|flac|aif|aiff)$/i.test(file.name) ? "audio" : "other"; breakdown[kind].files++; breakdown[kind].bytes += file.size; }
     return {
       totalFiles: r.files.length,
       totalBytes: r.totalBytes,
       skipped: r.skipped,
       sample: r.files.slice(0, 6).map((f) => f.relativePath),
+      breakdown,
     };
   });
   handle("volumes:list", listVolumes);
@@ -238,6 +252,17 @@ app.whenReady().then(async () => {
     if (proxyJobs.some((job) => ["pending", "running"].includes(job.status) && (inside(job.input, volume) || inside(job.outputDir, volume))))
       throw new Error("该磁盘有等待中或进行中的代理任务，请先取消任务");
     return ejectVolume(volume);
+  });
+  handle("volumes:eject-completed", async () => {
+    const volumes = await listVolumes(), results: Array<{ path: string; ok: boolean; error?: string }> = [];
+    for (const volume of volumes.filter((item) => item.canEject)) {
+      const unsafe = engine.getAllTasks().some((task) => ["running", "paused", "verifying", "pending"].includes(task.status) && (inside(task.sourcePath, volume.path) || task.destinations.some((destination) => inside(destination.path, volume.path))));
+      if (unsafe) { results.push({ path: volume.path, ok: false, error: "仍有进行中任务" }); continue; }
+      const related = engine.getAllTasks().filter((task) => inside(task.sourcePath, volume.path) || task.destinations.some((destination) => inside(destination.path, volume.path)));
+      if (!related.length || related.some((task) => task.status !== "completed" || task.destinations.some((destination) => !destination.verified))) { results.push({ path: volume.path, ok: false, error: "存在未完成或未校验副本" }); continue; }
+      try { await ejectVolume(volume.path); results.push({ path: volume.path, ok: true }); } catch (error: any) { results.push({ path: volume.path, ok: false, error: error.message || String(error) }); }
+    }
+    return results;
   });
   handle("system:reveal", (file: string) => shell.showItemInFolder(file));
   handle("updates:check", async () => {
@@ -303,20 +328,29 @@ app.whenReady().then(async () => {
     await syncReport(r.filePath);
     return r.filePath;
   });
-  handle("report:project", async (projectId: string, format: "pdf" | "json") => {
+  handle("report:project", async (projectId: string, format: "pdf" | "json" | "csv" | "bundle") => {
     const project = (await store.read<ProjectConfig[]>("projects.json", [])).map(normalizeProject).find((item) => item.id === projectId);
     if (!project) throw new Error("项目不存在");
     const tasks = engine.getAllTasks().filter((task) => task.projectId === projectId);
     if (!tasks.length) throw new Error("当前项目还没有可导出的备份记录");
-    const extension = format === "json" ? "json" : "pdf";
-    const result = await dialog.showSaveDialog({ defaultPath: `Kocpy_${project.name}_项目完整报告.${extension}`, filters: [{ name: format === "json" ? "JSON" : "PDF", extensions: [extension] }] });
+    const csv = () => { const cell = (value: unknown) => `"${String(value ?? "").replace(/"/g, '""')}"`; return "\ufeff" + ["拍摄日期,设备,机位,素材卷,文件数,素材大小,状态,通过目标,目标总数", ...tasks.map((task) => [task.shootingDate, task.devices.join("/"), task.cameraPosition, task.name, task.totalFiles, task.totalBytes, task.status, task.destinations.filter((destination) => destination.verified).length, task.destinations.length].map(cell).join(","))].join("\n"); };
+    if (format === "bundle") {
+      const chosen = await dialog.showOpenDialog({ properties: ["openDirectory", "createDirectory"] }); if (chosen.canceled) return null;
+      const folder = path.join(chosen.filePaths[0], `Kocpy_${segment(project.name)}_项目归档包_${Date.now()}`); await fs.mkdir(folder, { recursive: true });
+      await Promise.all([
+        fs.writeFile(path.join(folder, "项目完整报告.pdf"), await htmlToPdf(await generateProjectReport(project, tasks))),
+        fs.writeFile(path.join(folder, "项目完整数据.json"), JSON.stringify({ generatedAt: new Date().toISOString(), project, tasks }, null, 2)),
+        fs.writeFile(path.join(folder, "项目素材统计.csv"), csv()),
+        ...tasks.map((task) => fs.writeFile(path.join(folder, `${segment(task.name)}_${task.id.slice(0, 6)}.mhl`), generateMhl(task))),
+      ]);
+      return folder;
+    }
+    const extension = format;
+    const result = await dialog.showSaveDialog({ defaultPath: `Kocpy_${project.name}_项目完整报告.${extension}`, filters: [{ name: format.toUpperCase(), extensions: [extension] }] });
     if (!result.filePath) return null;
     if (format === "json") await fs.writeFile(result.filePath, JSON.stringify({ generatedAt: new Date().toISOString(), project, tasks }, null, 2));
-    else {
-      const report = new BrowserWindow({ show: false, webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } });
-      try { await report.loadURL("data:text/html;charset=utf-8," + encodeURIComponent((await generateProjectReport(project, tasks)).toString())); const pdf = await report.webContents.printToPDF({ printBackground: true, pageSize: "A4", margins: { top: 0.35, bottom: 0.35, left: 0.3, right: 0.3 } }); await fs.writeFile(result.filePath, pdf); }
-      finally { report.destroy(); }
-    }
+    else if (format === "csv") await fs.writeFile(result.filePath, csv());
+    else await fs.writeFile(result.filePath, await htmlToPdf(await generateProjectReport(project, tasks)));
     await syncReport(result.filePath);
     return result.filePath;
   });

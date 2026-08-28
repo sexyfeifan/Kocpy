@@ -16,9 +16,9 @@ export async function hashFile(file: string, algorithm: HashAlgorithm, signal?: 
   }
   return hash.digest("hex");
 }
-async function hashSource(file: string, algorithm: HashAlgorithm, signal?: AbortSignal) {
+async function hashSource(file: string, algorithm: HashAlgorithm, signal?: AbortSignal, onBytes?: (bytes: number) => void) {
   const primary = createHash(algorithm), md5 = algorithm === "md5" ? primary : createHash("md5");
-  for await (const chunk of createReadStream(file, { highWaterMark: 4 * 1024 * 1024, signal })) { primary.update(chunk); if (md5 !== primary) md5.update(chunk); }
+  for await (const chunk of createReadStream(file, { highWaterMark: 4 * 1024 * 1024, signal })) { primary.update(chunk); if (md5 !== primary) md5.update(chunk); onBytes?.(chunk.length); }
   const digest = primary.digest("hex"); return { primary: digest, md5: md5 === primary ? digest : md5.digest("hex") };
 }
 
@@ -250,6 +250,8 @@ export class BackupEngine extends EventEmitter {
       const rawEta = task.verifySpeedBps ? Math.max(0, totalVerifyBytes - (task.verifiedBytes || 0)) / task.verifySpeedBps : 0;
       displayedEta = rawEta ? (displayedEta ? displayedEta * 0.9 + rawEta * 0.1 : rawEta) : 0;
       task.verifyEta = displayedEta;
+      const at = Date.now();
+      for (const d of task.destinations) d.speedHistory = [...(d.speedHistory || []), { at, copy: d.speedBps || 0, verify: d.verifySpeedBps || 0 }].slice(-30);
       this.emitProgress(task);
     }, 1000);
     try { for (const record of task.fileRecords) {
@@ -303,13 +305,14 @@ export class BackupEngine extends EventEmitter {
   private async run(id: string, signal: AbortSignal) {
     const task = this.tasks.get(id)!;
     let completionNotified = false;
-    Object.assign(task, { status: "running", startedAt: Date.now(), completedAt: undefined, completedFiles: 0, transferredBytes: 0, physicalWrittenBytes: 0, verifiedBytes: 0, copyProgress: 0, verifyProgress: 0, fileRecords: [], verifyLog: [], verifyCompletedFiles: 0, verifyTotalFiles: 0, speedBps: 0, aggregateSpeedBps: 0, verifySpeedBps: 0, verifyEta: 0, volumeWarnings: [] });
-    for (const d of task.destinations) Object.assign(d, { verified: false, error: undefined, available: true, resolvedPath: undefined, bytesWritten: 0, copiedBytes: 0, verifiedBytes: 0, copyProgress: 0, verifyProgress: 0, speedBps: 0, verifySpeedBps: 0 });
-    this.emitProgress(task); const meter = new SpeedMeter(), destinationMeters = new Map(task.destinations.map((d) => [d.id, new SpeedMeter()]));
+    Object.assign(task, { status: "running", startedAt: Date.now(), completedAt: undefined, completedFiles: 0, transferredBytes: 0, physicalWrittenBytes: 0, verifiedBytes: 0, copyProgress: 0, verifyProgress: 0, fileRecords: [], verifyLog: [], verifyCompletedFiles: 0, verifyTotalFiles: 0, speedBps: 0, aggregateSpeedBps: 0, verifySpeedBps: 0, verifyEta: 0, sourceReadSpeedBps: 0, sourceSpeedHistory: [], volumeWarnings: [] });
+    for (const d of task.destinations) Object.assign(d, { verified: false, error: undefined, available: true, resolvedPath: undefined, bytesWritten: 0, copiedBytes: 0, verifiedBytes: 0, copyProgress: 0, verifyProgress: 0, speedBps: 0, verifySpeedBps: 0, speedHistory: [] });
+    this.emitProgress(task); const meter = new SpeedMeter(), sourceMeter = new SpeedMeter(), destinationMeters = new Map(task.destinations.map((d) => [d.id, new SpeedMeter()]));
     let displayedEta = 0;
     const telemetry = setInterval(() => {
       if (task.status !== "running") return;
       task.aggregateSpeedBps = meter.sample();
+      task.sourceReadSpeedBps = sourceMeter.sample();
       for (const d of task.destinations) d.speedBps = destinationMeters.get(d.id)?.sample() || 0;
       const healthy = task.destinations.filter((d) => d.available !== false);
       const pending = healthy.filter((d) => (d.copiedBytes || 0) < task.totalBytes), rates = pending.map((d) => d.speedBps || 0);
@@ -317,6 +320,9 @@ export class BackupEngine extends EventEmitter {
       const rawEta = task.speedBps ? Math.max(...pending.map((d) => Math.max(0, task.totalBytes - (d.copiedBytes || 0)) / Math.max(1, d.speedBps || task.speedBps))) : 0;
       displayedEta = rawEta ? (displayedEta ? displayedEta * 0.9 + rawEta * 0.1 : rawEta) : 0;
       task.eta = displayedEta;
+      const at = Date.now();
+      task.sourceSpeedHistory = [...(task.sourceSpeedHistory || []), { at, speed: task.sourceReadSpeedBps }].slice(-30);
+      for (const d of task.destinations) d.speedHistory = [...(d.speedHistory || []), { at, copy: d.speedBps || 0, verify: d.verifySpeedBps || 0 }].slice(-30);
       this.emitProgress(task);
     }, 1000);
     try {
@@ -337,6 +343,9 @@ export class BackupEngine extends EventEmitter {
       task.sourceVolumeId = sourceIdentity.id; task.sourceVolumeUuid = sourceIdentity.uuid; task.sourceVolumeName = sourceIdentity.name;
       const inventory = await scan(src, task.includeHidden, signal); if (!inventory.files.length) throw new Error("素材源没有可备份的文件");
       task.totalFiles = inventory.files.length; task.totalBytes = inventory.totalBytes; task.skippedFiles = inventory.skipped; task.verifyTotalFiles = task.totalFiles * task.destinations.length;
+      const kind = (name: string): "video" | "photo" | "audio" | "other" => /\.(mov|mp4|mxf|mkv|avi|m4v|r3d|braw)$/i.test(name) ? "video" : /\.(jpg|jpeg|png|heic|tif|tiff|dng|arw|cr2|cr3|nef|raf)$/i.test(name) ? "photo" : /\.(wav|mp3|aac|flac|aif|aiff)$/i.test(name) ? "audio" : "other";
+      task.mediaBreakdown = Object.fromEntries((["video", "photo", "audio", "other"] as const).map((type) => [type, { files: 0, bytes: 0 }])) as BackupTask["mediaBreakdown"];
+      for (const file of inventory.files) { const group = task.mediaBreakdown![kind(file.name)]; group.files++; group.bytes += file.size; }
       const volumeNeeds = new Map<string, { free: number; need: number; largest: number; labels: string[] }>();
       for (const [i, d] of task.destinations.entries()) {
         if (d.available === false) continue;
@@ -377,7 +386,7 @@ export class BackupEngine extends EventEmitter {
       if (!task.destinations.some((d) => d.available !== false)) throw new Error("所有目的地均未通过预检，请检查磁盘连接、身份和可用空间");
       for (const file of inventory.files) {
         await this.waitIfPaused(id, signal); task.status = "running"; task.currentFile = file.relativePath; this.emitProgress(task);
-        const sourceHashes = await hashSource(file.absolutePath, task.hashAlgorithm, signal), srcHash = sourceHashes.primary;
+        const sourceHashes = await hashSource(file.absolutePath, task.hashAlgorithm, signal, (count) => sourceMeter.add(count)), srcHash = sourceHashes.primary;
         const record: FileRecord = { name: file.name, relativePath: file.relativePath, size: file.size, srcChecksum: srcHash, ascMhlMd5: sourceHashes.md5, destinations: [] };
         const targets: CopyTarget[] = [];
         for (const d of task.destinations) {
@@ -412,6 +421,9 @@ export class BackupEngine extends EventEmitter {
       clearInterval(telemetry); task.speedBps = 0; task.aggregateSpeedBps = 0; task.eta = 0; for (const d of task.destinations) d.speedBps = 0; await this.verifyRecords(task, signal); signal.throwIfAborted();
       if (task.destinations.some((d) => !d.verified)) throw new Error("部分目的地未通过校验。成功的副本已保留，可单独重试失败目标。");
       task.status = "completed"; task.lastVerifiedAt = Date.now(); task.completedAt = Date.now(); task.currentFile = "";
+      const averageCopySpeed = (destination: Destination) => { const samples = (destination.speedHistory || []).map((point) => point.copy).filter((speed) => speed > 0); return samples.length ? samples.reduce((sum, speed) => sum + speed, 0) / samples.length : Number.POSITIVE_INFINITY; };
+      const slowest = [...task.destinations].filter((d) => Number.isFinite(averageCopySpeed(d))).sort((a, b) => averageCopySpeed(a) - averageCopySpeed(b))[0];
+      task.performanceSummary = slowest ? `${slowest.label} 是本次传输的主要速度瓶颈` : "任务已完成，未检测到持续速度瓶颈";
       task.speedBps = 0; task.aggregateSpeedBps = 0; task.verifySpeedBps = 0; task.eta = 0; task.verifyEta = 0;
       this.emitProgress(task, true); this.emit("settled", task); completionNotified = true;
       void this.generateTaskThumbnails(task, new AbortController().signal).then(() => {

@@ -450,6 +450,7 @@ export function Composer({
                   <h3>把副本，放在可靠的地方。</h3>
                   <p>最多添加 4 个目的地。建议使用不同物理磁盘。</p>
                 </div>
+                {sources.some((source) => source.scan?.breakdown) && <div className="source-breakdown">{(["video","photo","audio","other"] as const).map((kind) => { const files = sources.reduce((sum, source) => sum + (source.scan?.breakdown?.[kind]?.files || 0), 0), size = sources.reduce((sum, source) => sum + (source.scan?.breakdown?.[kind]?.bytes || 0), 0); return <div key={kind}><strong>{files}</strong><span>{({video:"视频",photo:"照片 / RAW",audio:"音频",other:"其他"})[kind]} · {bytes(size)}</span></div>; })}</div>}
                 {mode === "project" && (
                   <div className="project-form">
                     <div className="selected-project"><FolderKanban size={20}/><div><span>当前项目</span><strong>{project?.name}</strong><small className="mono">{project?.projectFolderName || `${(project?.shootingDateStart || "").replace(/-/g, "")}_${project?.name}`}</small></div><Button kind="subtle" onClick={() => setStep(0)}>更换项目</Button></div>

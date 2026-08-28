@@ -34,6 +34,7 @@ export interface Destination {
   volumeName?: string;
   available?: boolean;
   error?: string;
+  speedHistory?: Array<{ at: number; copy: number; verify: number }>;
 }
 
 export interface FileRecord {
@@ -108,6 +109,10 @@ export interface BackupTask {
   lastCheckpointAt?: number;
   volumeWarnings?: string[];
   lastVerifiedAt?: number;
+  sourceReadSpeedBps?: number;
+  sourceSpeedHistory?: Array<{ at: number; speed: number }>;
+  performanceSummary?: string;
+  mediaBreakdown?: Record<"video" | "photo" | "audio" | "other", { files: number; bytes: number }>;
 }
 
 export interface TaskConfig {
@@ -184,6 +189,9 @@ export interface ProjectConfig {
   destinationPaths?: string[];
   status?: "active" | "archived";
   createdAt?: number;
+  restDays?: string[];
+  unusedDevicesByDate?: Record<string, string[]>;
+  requiredCopies?: number;
 }
 
 export interface ProjectStructureDestination {
