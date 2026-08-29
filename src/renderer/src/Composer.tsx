@@ -82,6 +82,7 @@ export function Composer({
     [error, setError] = useState(""),
     [spaces, setSpaces] = useState<Record<string, number>>({}),
     [detectedScans, setDetectedScans] = useState<Record<string, Scan | "loading" | "error">>({});
+  const [draggingDestination,setDraggingDestination]=useState(false);
   const dialog = useRef<HTMLElement>(null);
   const project = projects.find((p) => p.id === projectId),
     total = sources.reduce((n, s) => n + (s.scan?.totalBytes || 0), 0),
@@ -497,8 +498,12 @@ export function Composer({
                 {dests.length < 4 && (
                   <>
                     <button
-                      className="add-destination"
+                      className={`add-destination ${draggingDestination ? "dragging" : ""}`}
                       disabled={busy}
+                      onDragEnter={(event)=>{event.preventDefault();setDraggingDestination(true);}}
+                      onDragOver={(event)=>{event.preventDefault();event.dataTransfer.dropEffect="copy";setDraggingDestination(true);}}
+                      onDragLeave={()=>setDraggingDestination(false)}
+                      onDrop={(event)=>{event.preventDefault();setDraggingDestination(false);const paths=api.resolveDroppedPaths([...event.dataTransfer.files]);if(!paths.length){setError("请从 Finder 拖入一个目的地文件夹");return;}for(const dropped of paths.slice(0,4-dests.length))addDest(dropped);}}
                       onClick={() =>
                         void attempt(async () => {
                           const p = await api.selectDirectory();
@@ -507,8 +512,8 @@ export function Composer({
                       }
                     >
                       <Plus size={20} />
-                      <span>添加备份目的地</span>
-                      <small>本地磁盘、移动硬盘或已挂载 NAS</small>
+                      <span>{draggingDestination ? "松开以添加目的地" : "添加备份目的地"}</span>
+                      <small>点击选择，或从 Finder 直接拖入文件夹</small>
                     </button>
                     <div className="manual-path">
                       <input

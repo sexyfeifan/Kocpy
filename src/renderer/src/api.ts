@@ -1,5 +1,5 @@
-import type { ArchiveHealthRecord, BackupTask, TaskConfig, ProjectConfig, ProjectStructureReport, ProjectTemplate, ProxyJob, TransferPerformance, BenchmarkResult, WorkspaceMergeResult } from "../../main/types";
-export type { ArchiveHealthRecord, BackupTask, TaskConfig, ProjectConfig, ProjectStructureReport, ProjectTemplate, ProxyJob, TransferPerformance, BenchmarkResult, WorkspaceMergeResult };
+import type { ArchiveChangeRecord, ArchiveHealthRecord, ArchiveReminder, BackupTask, ExistingImportPreview, NasPreset, ProjectConfig, ProjectCoverage, ProjectStructureReport, ProjectTemplate, ProxyJob, TaskConfig, TransferPerformance, BenchmarkResult, WorkspaceMergeResult } from "../../main/types";
+export type { ArchiveChangeRecord, ArchiveHealthRecord, ArchiveReminder, BackupTask, ExistingImportPreview, NasPreset, ProjectConfig, ProjectCoverage, ProjectStructureReport, ProjectTemplate, ProxyJob, TaskConfig, TransferPerformance, BenchmarkResult, WorkspaceMergeResult };
 export interface Volume {
   name: string;
   path: string;
@@ -21,6 +21,8 @@ export interface Settings {
   operator: string;
   theme: "dark" | "light";
   reportSyncPath: string;
+  thumbnailCacheGiB:number;
+  notificationSound:boolean;
 }
 export interface Scan {
   totalFiles: number;
@@ -41,8 +43,12 @@ export interface UpdateInfo {
   archLabel: "Apple Silicon" | "Intel";
 }
 export interface API {
+  resolveDroppedPaths(files:File[]):string[];
   selectDirectory(defaultPath?: string): Promise<string | null>;
   getTasks(): Promise<BackupTask[]>;
+  getCatalogStats(): Promise<{tasks:number;files:number;projects:number;schema:number}>;
+  getCatalogFiles(options:{projectId?:string;query?:string;offset?:number;limit?:number}): Promise<Array<Record<string,unknown>>>;
+  rebuildCatalog(): Promise<{tasks:number;files:number;projects:number;schema:number}>;
   createTask(config: TaskConfig): Promise<BackupTask>;
   startTask(id: string): Promise<void>;
   cancelTask(id: string): Promise<void>;
@@ -63,16 +69,33 @@ export interface API {
   getDiagnostics(): Promise<any>;
   exportDiagnostics(): Promise<string | null>;
   getArchiveHealth(): Promise<ArchiveHealthRecord[]>;
+  getArchiveChanges(projectId?:string):Promise<ArchiveChangeRecord[]>;
+  getArchiveReminders():Promise<ArchiveReminder[]>;
+  saveArchiveReminder(value:ArchiveReminder):Promise<ArchiveReminder[]>;
+  verifyArchiveScope(scope:{projectId:string;shootingDate?:string;taskId?:string;relativePath?:string}):Promise<ArchiveChangeRecord[]>;
+  moveArchiveCopy(taskId:string,destinationId:string,newPath:string):Promise<BackupTask>;
+  exportArchiveChanges(projectId:string):Promise<string|null>;
   verifyProjectArchive(projectId: string): Promise<ArchiveHealthRecord>;
   repairArchiveCopy(taskId: string, destinationId: string): Promise<{ repaired: number; preservedDamagedOriginals: number }>;
   getProjectTemplates(): Promise<ProjectTemplate[]>;
   createTemplateFromProject(projectId: string, name?: string): Promise<ProjectTemplate[]>;
   deleteProjectTemplate(id: string): Promise<ProjectTemplate[]>;
   applyProjectTemplate(templateId: string, projectId: string): Promise<ProjectConfig[]>;
+  previewExistingBackup(root:string):Promise<ExistingImportPreview>;
+  importExistingBackup(projectId:string,root:string,mode:"manifest-import"|"external-baseline"|"unverified-import",metadata?:{shootingDate?:string;device?:string;card?:string}):Promise<BackupTask>;
+  getProjectCoverage(projectId:string):Promise<ProjectCoverage>;
+  signProjectChecklist(projectId:string,run:any):Promise<ProjectConfig>;
+  getNasPresets():Promise<NasPreset[]>;
+  saveNasPreset(value:NasPreset):Promise<NasPreset[]>;
+  deleteNasPreset(id:string):Promise<NasPreset[]>;
+  testNasPreset(id:string):Promise<any>;
   addProjectHandoff(projectId: string, operator: string, note: string): Promise<ProjectConfig[]>;
   exportWorkspace(): Promise<string | null>;
   importWorkspace(): Promise<WorkspaceMergeResult | null>;
   backupWorkspaceData(): Promise<string | null>;
+  startLanIndex():Promise<{active:boolean;port:number;addresses:string[];token:string}>;
+  stopLanIndex():Promise<{active:boolean;port:number;addresses:string[];token:string}>;
+  getLanIndexStatus():Promise<{active:boolean;port:number;addresses:string[];token:string}>;
   reveal(path: string): Promise<void>;
   checkUpdates(): Promise<UpdateInfo>;
   openUpdate(url:string): Promise<void>;
@@ -88,14 +111,14 @@ export interface API {
   exportDailyReport(date: string, projectId?: string): Promise<string | null>;
   exportProjectReport(projectId: string, format: "pdf" | "json" | "csv" | "bundle"): Promise<string | null>;
   exportResolveCsv(date: string, projectId?: string): Promise<string | null>;
-  inspectMedia(path: string): Promise<{name:string;path:string;size:number;modifiedAt:number;duration?:string;video?:string;audio?:string;timecode?:string;camera?:string;creationTime?:string;resolution?:string;frameRate?:string;thumbnail?:string;thumbnailPath?:string}>;
+  inspectMedia(path: string): Promise<{name:string;path:string;size:number;modifiedAt:number;duration?:string;video?:string;audio?:string;timecode?:string;camera?:string;creationTime?:string;resolution?:string;frameRate?:string;colorSpace?:string;thumbnail?:string;thumbnailPath?:string;waveform?:string;waveformPath?:string}>;
   getProxyJobs(): Promise<ProxyJob[]>;
   enqueueProxy(
     inputs: string[],
     out: string,
     format: "h264" | "prores",
-    resolution: "1080p" | "720p",
-    options?: { preset?: "review" | "editorial" | "offline"; namingTemplate?: string },
+    resolution: string,
+    options?: { preset?: "review" | "editorial" | "offline"; namingTemplate?: string;bitrateMbps?:number;container?:"mp4"|"mov"|"mkv" },
   ): Promise<ProxyJob[]>;
   cancelProxy(id?: string): Promise<void>;
   pauseProxy(id: string): Promise<void>;
@@ -103,6 +126,7 @@ export interface API {
   retryProxy(id: string): Promise<void>;
   deleteProxy(id: string): Promise<void>;
   exportProxyDelivery(format: "resolve" | "premiere" | "fcpxml" | "json"): Promise<string | null>;
+  exportProxyPackage(): Promise<string | null>;
   onProxyJobs(callback: (jobs: ProxyJob[]) => void): () => void;
   onTaskSettled(callback: (task: BackupTask) => void): () => void;
   onProgress(

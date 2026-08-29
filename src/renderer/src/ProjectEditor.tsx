@@ -27,6 +27,11 @@ export function ProjectEditor({
     ),
     [positions, setPositions] = useState<Record<string, string[]>>(() => initial.devicePositions || {}),
     [requiredCopies, setRequiredCopies] = useState(initial.requiredCopies || 2),
+    [productionType,setProductionType]=useState<ProjectConfig["productionType"]>(initial.productionType||"custom"),
+    [expectedVolumes,setExpectedVolumes]=useState(initial.expectedVolumes||0),
+    [managedSince,setManagedSince]=useState(initial.managedSince||initial.shootingDateStart||today()),
+    [completionActions,setCompletionActions]=useState<Array<"report"|"delivery"|"eject">>(initial.completionActions||["report"]),
+    [crewText,setCrewText]=useState((initial.crew||[]).map((item)=>`${item.role}:${item.name}`).join("\n")),
     [customDevice, setCustomDevice] = useState(""),
     [dests, setDests] = useState(initial.destinationPaths || []),
     [busy, setBusy] = useState(false),
@@ -76,6 +81,12 @@ export function ProjectEditor({
         shootingDateEnd: end,
         destinationPaths: dests,
         requiredCopies,
+        productionType,
+        expectedVolumes:expectedVolumes||undefined,
+        managedSince,
+        crew:crewText.split(/\n/).map((line)=>line.trim()).filter(Boolean).map((line)=>{const [role,...name]=line.split(":");return{id:crypto.randomUUID(),role:(["DIT","cinematographer","data-manager","assistant"].includes(role)?role:"other") as "DIT"|"cinematographer"|"data-manager"|"assistant"|"other",name:(name.join(":")||role).trim()};}),
+        checklists:initial.checklists?.length?initial.checklists:[{id:"start-media",phase:"start",label:"确认素材卡、项目、日期与摄影机",required:true},{id:"start-destinations",phase:"start",label:"确认目的地位于独立物理磁盘",required:true},{id:"close-verified",phase:"close",label:"所有素材卷达到独立副本要求",required:true},{id:"close-report",phase:"close",label:"报告与交接记录已经生成",required:true},{id:"close-eject",phase:"close",label:"合格设备已安全推出",required:true}],
+        completionActions,
         status: initial.status || "active",
         createdAt: initial.createdAt || Date.now(),
     };
@@ -119,6 +130,9 @@ export function ProjectEditor({
             <label>预计结束日期<input type="date" value={end} min={start} onChange={(e) => setEnd(e.target.value)} /></label>
           </div>
           <div className="project-path-preview"><CalendarDays size={17}/><div><span>项目文件夹</span><strong className="mono">{folderName}</strong></div></div>
+          <div className="form-grid"><label>制作类型<select value={productionType} onChange={(e)=>setProductionType(e.target.value as ProjectConfig["productionType"])}><option value="commercial">广告</option><option value="documentary">纪录片</option><option value="short">短片</option><option value="variety">综艺</option><option value="feature">电影</option><option value="custom">自定义</option></select></label><label>预计素材卷数量<input type="number" min="0" value={expectedVolumes} onChange={(e)=>setExpectedVolumes(Math.max(0,Number(e.target.value)))}/><small>未知时填 0，不显示误导性的项目百分比。</small></label></div>
+          <label>Kocpy 管理起始日期<input type="date" value={managedSince} onChange={(e)=>setManagedSince(e.target.value)}/><small>中途接管项目时，用于明确 Kocpy 覆盖范围。</small></label>
+          <label>制作人员与角色<textarea rows={4} value={crewText} onChange={(e)=>setCrewText(e.target.value)} placeholder={'DIT:张三\ncinematographer:李四\ndata-manager:王五'}/><small>每行使用“角色:姓名”；支持 DIT、cinematographer、data-manager、assistant。</small></label>
 
           <div className="form-section-title"><h3>02 · 常用设备与素材卷</h3><p>最多保存 10 个设备；同型号多机位可按 A–E 增加一层机位目录。</p></div>
           <div className="device-suggestions">
@@ -131,6 +145,7 @@ export function ProjectEditor({
 
           <div className="form-section-title"><h3>03 · 项目备份根目录</h3><p>每次拷卡会在这些根目录下创建相同的项目层级。</p></div>
           <label>项目要求的安全副本数量<select value={requiredCopies} onChange={(event) => setRequiredCopies(Number(event.target.value))}>{[1,2,3,4].map((count) => <option key={count} value={count}>{count} 份物理独立校验副本</option>)}</select></label>
+          <div className="option-checks"><label><input type="checkbox" checked={completionActions.includes("report")} onChange={(e)=>setCompletionActions((all)=>e.target.checked?[...new Set([...all,"report" as const])]:all.filter((item)=>item!=="report"))}/><span>自动生成报告</span></label><label><input type="checkbox" checked={completionActions.includes("delivery")} onChange={(e)=>setCompletionActions((all)=>e.target.checked?[...new Set([...all,"delivery" as const])]:all.filter((item)=>item!=="delivery"))}/><span>自动生成交付清单</span></label><label><input type="checkbox" checked={completionActions.includes("eject")} onChange={(e)=>setCompletionActions((all)=>e.target.checked?[...new Set([...all,"eject" as const])]:all.filter((item)=>item!=="eject"))}/><span>达标后安全推出</span></label></div>
           {dests.map((p) => <div className="chosen-path" key={p}><FolderOpen size={18}/><span className="mono path">{p}</span><Button kind="icon" title="移除此目的地" onClick={() => setDests((all) => all.filter((value) => value !== p))}><X size={15}/></Button></div>)}
           {dests.length < 4 && <Button kind="subtle" onClick={() => void api.selectDirectory().then((p) => p && setDests((all) => all.includes(p) ? all : [...all, p])).catch((e) => setError(String(e)))}><Plus size={15}/>添加备份根目录</Button>}
           <div className="notice"><Info size={16}/><span>新项目保存后会按整个拍摄日期范围、设备及 A–E 机位创建完整目录结构。<br/>备份路径示例：<span className="mono">备份根目录/{folderName}/{start.replace(/-/g, "")}/{devices[0] || "设备"}/{positions[devices[0]]?.[0] ? `${positions[devices[0]][0]}/` : ""}{cleanPrefix(prefixes[devices[0]] || "Untitled_")}{previewVolumeTimestamp()}/</span></span></div>

@@ -11,6 +11,7 @@ const safeText = (value: unknown, label: string, required = true) => {
 /** Validate untrusted workstation JSON before it reaches the merge or persistence layer. */
 export function validateWorkspacePackage(value: unknown) {
   if (!plainObject(value) || value.application !== "Kocpy" || value.schema !== 1) throw new Error("不是受支持的 Kocpy 工作站配置包");
+  if(typeof value.integrity==="string"){const actual=createHash("sha256").update(JSON.stringify(Object.fromEntries(Object.entries(value).filter(([key])=>key!=="integrity")))).digest("hex");if(actual!==value.integrity)throw new Error("工作站配置包完整性校验失败，文件可能已被修改");}
   const projects = value.projects ?? [], tasks = value.tasks ?? [], templates = value.templates ?? [], healthRecords = value.healthRecords ?? [];
   if (!Array.isArray(projects) || !Array.isArray(tasks) || !Array.isArray(templates) || !Array.isArray(healthRecords)) throw new Error("工作站配置的数据列表无效");
   if (projects.length > 10_000 || tasks.length > 100_000 || templates.length > 10_000 || healthRecords.length > 10_000) throw new Error("工作站配置包含过多记录");

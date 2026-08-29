@@ -8,7 +8,7 @@ KOCPY_HARDWARE_DESTINATIONS='["/Volumes/EXFAT_TEST/Kocpy","/Volumes/NAS/Kocpy"]'
 
 Use empty test folders only. Disconnect, space-exhaustion and mount-identity scenarios are handled by the same engine paths but should be exercised on non-production media: cancel or detach during the large file, remount, and rerun; Kocpy must validate the partial prefix and continue. A different volume UUID at the same mount path must be refused.
 
-## 0.0.15 disposable-volume result
+## 0.1.0 disposable-volume result
 
 On 2026-08-29 the production backup engine completed the suite against two simultaneously mounted 640 MiB disposable disk images: one APFS and one exFAT. It copied a 256 MiB large file plus 1,500 small files to both volumes and independently read every destination back with SHA-256. Both destinations passed; duration was 91.26 seconds. These were real mounted file systems, but not physical readers, cables, disks, SMB, or NFS.
 

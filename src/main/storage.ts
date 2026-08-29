@@ -54,4 +54,6 @@ export const defaultSettings = {
   operator: "",
   theme: "dark",
   reportSyncPath: "",
+  thumbnailCacheGiB: 2,
+  notificationSound: true,
 };

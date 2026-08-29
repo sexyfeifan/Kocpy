@@ -100,8 +100,8 @@ Kocpy 支持真实深色与浅色外观，任务、项目、偏好、缩略图�
 
 从 [GitHub Releases](https://github.com/sexyfeifan/Kocpy/releases) 下载对应架构：
 
-- `Kocpy-0.0.15-arm64.dmg`：Apple Silicon Mac
-- `Kocpy-0.0.15-x64.dmg`：Intel Mac
+- `Kocpy-0.1.0-arm64.dmg`：Apple Silicon Mac
+- `Kocpy-0.1.0-x64.dmg`：Intel Mac
 
 打开 DMG，将 Kocpy 拖入“应用程序”。当前公开包尚未使用 Apple Developer ID 签名和公证。若 macOS 明确提示应用“已损坏”，请先确认文件来自本仓库官方 Release，再执行：
 

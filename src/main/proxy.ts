@@ -9,14 +9,14 @@ async function durationSeconds(binary: string, input: string) {
   try { await exec(binary, ["-nostdin", "-i", input], { maxBuffer: 4 * 1024 * 1024 }); return 0; }
   catch (e: any) { const m = String(e.stderr || "").match(/Duration:\s*(\d+):(\d+):([\d.]+)/); return m ? Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]) : 0; }
 }
-export async function makeProxy(input: string, outputDir: string, format: "h264" | "prores", resolution: "1080p" | "720p", options: { signal?: AbortSignal; onProgress?: (percent: number) => void; namingTemplate?: string } = {}) {
-  if (!["h264", "prores"].includes(format) || !["1080p", "720p"].includes(resolution)) throw new Error("无效代理参数");
+export async function makeProxy(input: string, outputDir: string, format: "h264" | "prores", resolution: string, options: { signal?: AbortSignal; onProgress?: (percent: number) => void; namingTemplate?: string; bitrateMbps?:number; container?:"mp4"|"mov"|"mkv" } = {}) {
+  if (!["h264", "prores"].includes(format) || !/^(?:\d{3,4}p|\d{3,5}x\d{3,5})$/.test(resolution)) throw new Error("无效代理参数");
   const st = await fs.stat(input); if (!st.isFile()) throw new Error("请选择视频文件");
   const name = path.basename(input, path.extname(input)); await fs.mkdir(outputDir, { recursive: true });
   const safeTemplate = (options.namingTemplate || "{name}_proxy_{resolution}").replaceAll("{name}", name).replaceAll("{resolution}", resolution).replaceAll("{format}", format).replace(/[/\\:\0]/g, "_").trim() || `${name}_proxy_${resolution}`;
-  const output = path.join(outputDir, `${safeTemplate}_${randomUUID().slice(0, 6)}.${format === "prores" ? "mov" : "mp4"}`), partial = output.replace(/\.(mov|mp4)$/, ".partial.$1");
-  const height = resolution === "1080p" ? 1080 : 720, binary = ffmpegPath(), duration = await durationSeconds(binary, input);
-  const args = ["-nostdin", "-n", "-i", input, "-map", "0:v:0", "-map", "0:a?", "-vf", `scale=-2:'min(${height},ih)'`, ...(format === "prores" ? ["-c:v", "prores_ks", "-profile:v", "0", "-pix_fmt", "yuv422p10le", "-c:a", "pcm_s16le"] : ["-c:v", "libx264", "-preset", "fast", "-crf", "23", "-pix_fmt", "yuv420p", "-c:a", "aac", "-movflags", "+faststart"]), "-map_metadata", "0", "-progress", "pipe:1", partial];
+  const container=options.container||(format === "prores" ? "mov" : "mp4"),output = path.join(outputDir, `${safeTemplate}_${randomUUID().slice(0, 6)}.${container}`), partial = output.replace(/\.(mov|mp4|mkv)$/, ".partial.$1");
+  const filter=resolution.includes("x")?`scale=${resolution.replace("x",":")}`:`scale=-2:'min(${Number(resolution.replace("p",""))},ih)'`, binary = ffmpegPath(), duration = await durationSeconds(binary, input),bitrate=options.bitrateMbps&&options.bitrateMbps>0?["-b:v",`${Math.min(500,options.bitrateMbps)}M`]:[];
+  const args = ["-nostdin", "-n", "-i", input, "-map", "0:v:0", "-map", "0:a?", "-vf", filter, ...(format === "prores" ? ["-c:v", "prores_ks", "-profile:v", "0", "-pix_fmt", "yuv422p10le",...bitrate, "-c:a", "pcm_s16le"] : ["-c:v", "libx264", "-preset", "fast",...(bitrate.length?bitrate:["-crf","23"]), "-pix_fmt", "yuv420p", "-c:a", "aac", ...(container==="mp4"?["-movflags", "+faststart"]:[])]), "-map_metadata", "0", "-progress", "pipe:1", partial];
   try {
     await new Promise<void>((resolve, reject) => {
       const child = spawn(binary, args, { stdio: ["ignore", "pipe", "pipe"] }); let error = "", pending = "";
