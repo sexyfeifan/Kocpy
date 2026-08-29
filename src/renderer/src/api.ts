@@ -1,5 +1,5 @@
-import type { BackupTask, TaskConfig, ProjectConfig, ProjectStructureReport, ProxyJob, TransferPerformance } from "../../main/types";
-export type { BackupTask, TaskConfig, ProjectConfig, ProjectStructureReport, ProxyJob, TransferPerformance };
+import type { ArchiveHealthRecord, BackupTask, TaskConfig, ProjectConfig, ProjectStructureReport, ProjectTemplate, ProxyJob, TransferPerformance, BenchmarkResult, WorkspaceMergeResult } from "../../main/types";
+export type { ArchiveHealthRecord, BackupTask, TaskConfig, ProjectConfig, ProjectStructureReport, ProjectTemplate, ProxyJob, TransferPerformance, BenchmarkResult, WorkspaceMergeResult };
 export interface Volume {
   name: string;
   path: string;
@@ -28,6 +28,7 @@ export interface Scan {
   skipped: number;
   sample: string[];
   breakdown: Record<"video" | "photo" | "audio" | "other", { files: number; bytes: number }>;
+  suggestion?: { duplicateTaskId?: string; duplicateTaskName?: string; projectId?: string; device?: string; cameraPosition?: string; nextVolume: number };
 }
 export interface UpdateInfo {
   current: string;
@@ -58,6 +59,20 @@ export interface API {
   ): Promise<{ total: number; free: number; used: number }>;
   ejectVolume(path: string): Promise<void>;
   ejectCompletedVolumes(): Promise<Array<{ path: string; ok: boolean; error?: string }>>;
+  runBenchmark(path: string, sizeMiB?: number): Promise<BenchmarkResult>;
+  getDiagnostics(): Promise<any>;
+  exportDiagnostics(): Promise<string | null>;
+  getArchiveHealth(): Promise<ArchiveHealthRecord[]>;
+  verifyProjectArchive(projectId: string): Promise<ArchiveHealthRecord>;
+  repairArchiveCopy(taskId: string, destinationId: string): Promise<{ repaired: number; preservedDamagedOriginals: number }>;
+  getProjectTemplates(): Promise<ProjectTemplate[]>;
+  createTemplateFromProject(projectId: string, name?: string): Promise<ProjectTemplate[]>;
+  deleteProjectTemplate(id: string): Promise<ProjectTemplate[]>;
+  applyProjectTemplate(templateId: string, projectId: string): Promise<ProjectConfig[]>;
+  addProjectHandoff(projectId: string, operator: string, note: string): Promise<ProjectConfig[]>;
+  exportWorkspace(): Promise<string | null>;
+  importWorkspace(): Promise<WorkspaceMergeResult | null>;
+  backupWorkspaceData(): Promise<string | null>;
   reveal(path: string): Promise<void>;
   checkUpdates(): Promise<UpdateInfo>;
   openUpdate(url:string): Promise<void>;
@@ -80,10 +95,14 @@ export interface API {
     out: string,
     format: "h264" | "prores",
     resolution: "1080p" | "720p",
+    options?: { preset?: "review" | "editorial" | "offline"; namingTemplate?: string },
   ): Promise<ProxyJob[]>;
   cancelProxy(id?: string): Promise<void>;
+  pauseProxy(id: string): Promise<void>;
+  resumeProxy(id: string): Promise<void>;
   retryProxy(id: string): Promise<void>;
   deleteProxy(id: string): Promise<void>;
+  exportProxyDelivery(format: "resolve" | "premiere" | "fcpxml" | "json"): Promise<string | null>;
   onProxyJobs(callback: (jobs: ProxyJob[]) => void): () => void;
   onTaskSettled(callback: (task: BackupTask) => void): () => void;
   onProgress(

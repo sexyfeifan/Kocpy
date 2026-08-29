@@ -9,11 +9,12 @@ async function durationSeconds(binary: string, input: string) {
   try { await exec(binary, ["-nostdin", "-i", input], { maxBuffer: 4 * 1024 * 1024 }); return 0; }
   catch (e: any) { const m = String(e.stderr || "").match(/Duration:\s*(\d+):(\d+):([\d.]+)/); return m ? Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]) : 0; }
 }
-export async function makeProxy(input: string, outputDir: string, format: "h264" | "prores", resolution: "1080p" | "720p", options: { signal?: AbortSignal; onProgress?: (percent: number) => void } = {}) {
+export async function makeProxy(input: string, outputDir: string, format: "h264" | "prores", resolution: "1080p" | "720p", options: { signal?: AbortSignal; onProgress?: (percent: number) => void; namingTemplate?: string } = {}) {
   if (!["h264", "prores"].includes(format) || !["1080p", "720p"].includes(resolution)) throw new Error("无效代理参数");
   const st = await fs.stat(input); if (!st.isFile()) throw new Error("请选择视频文件");
   const name = path.basename(input, path.extname(input)); await fs.mkdir(outputDir, { recursive: true });
-  const output = path.join(outputDir, `${name}_proxy_${resolution}_${randomUUID().slice(0, 6)}.${format === "prores" ? "mov" : "mp4"}`), partial = output.replace(/\.(mov|mp4)$/, ".partial.$1");
+  const safeTemplate = (options.namingTemplate || "{name}_proxy_{resolution}").replaceAll("{name}", name).replaceAll("{resolution}", resolution).replaceAll("{format}", format).replace(/[/\\:\0]/g, "_").trim() || `${name}_proxy_${resolution}`;
+  const output = path.join(outputDir, `${safeTemplate}_${randomUUID().slice(0, 6)}.${format === "prores" ? "mov" : "mp4"}`), partial = output.replace(/\.(mov|mp4)$/, ".partial.$1");
   const height = resolution === "1080p" ? 1080 : 720, binary = ffmpegPath(), duration = await durationSeconds(binary, input);
   const args = ["-nostdin", "-n", "-i", input, "-map", "0:v:0", "-map", "0:a?", "-vf", `scale=-2:'min(${height},ih)'`, ...(format === "prores" ? ["-c:v", "prores_ks", "-profile:v", "0", "-pix_fmt", "yuv422p10le", "-c:a", "pcm_s16le"] : ["-c:v", "libx264", "-preset", "fast", "-crf", "23", "-pix_fmt", "yuv420p", "-c:a", "aac", "-movflags", "+faststart"]), "-map_metadata", "0", "-progress", "pipe:1", partial];
   try {

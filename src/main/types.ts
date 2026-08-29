@@ -9,10 +9,13 @@ export type TaskStatus =
   | "cancelled";
 export type CopyMode = "normal" | "mirror";
 export type DuplicateStrategy = "skip" | "suffix";
-export type ProxyStatus = "pending" | "running" | "completed" | "failed" | "cancelled";
+export type ProxyStatus = "pending" | "running" | "paused" | "completed" | "failed" | "cancelled";
+export type ProxyPreset = "review" | "editorial" | "offline";
 export interface ProxyJob {
   id: string; input: string; name: string; outputDir: string; format: "h264" | "prores"; resolution: "1080p" | "720p";
   status: ProxyStatus; progress: number; createdAt: number; startedAt?: number; completedAt?: number; outputPath?: string; error?: string; timecode?: string;
+  preset?: ProxyPreset; namingTemplate?: string; sourceTaskId?: string; sourceRelativePath?: string; sourceFrameRate?: string; sourceAudio?: string;
+  validation?: { frameRate: "match" | "changed" | "unknown"; timecode: "match" | "changed" | "unknown"; audio: "present" | "missing" | "unknown"; notes: string[] };
 }
 
 export interface Destination {
@@ -132,6 +135,7 @@ export interface BackupTask {
   sourceCopyReadPerformance?: TransferPerformance;
   performanceSummary?: string;
   mediaBreakdown?: Record<"video" | "photo" | "audio" | "other", { files: number; bytes: number }>;
+  faultTimeline?: Array<{ at: number; phase: string; level: "info" | "warning" | "error"; message: string }>;
 }
 
 export interface TaskConfig {
@@ -191,6 +195,15 @@ export interface VolumeInfo {
   canEject?: boolean;
 }
 
+export interface BenchmarkResult {
+  path: string;
+  bytes: number;
+  writeBps: number;
+  readBps: number;
+  durationMs: number;
+  completedAt: number;
+}
+
 export interface ProjectConfig {
   id: string;
   name: string;
@@ -211,7 +224,18 @@ export interface ProjectConfig {
   restDays?: string[];
   unusedDevicesByDate?: Record<string, string[]>;
   requiredCopies?: number;
+  namingRule?: string;
+  completionActions?: Array<"report" | "delivery" | "eject">;
+  handoffNotes?: Array<{ id: string; at: number; operator: string; note: string }>;
 }
+
+export interface ArchiveHealthRecord {
+  id: string; projectId: string; checkedAt: number; taskCount: number; healthyTasks: number; failedTasks: number; missingCopies: number; repairedFiles?: number; notes: string[];
+}
+export interface ProjectTemplate {
+  id: string; name: string; devices: string[]; volumePrefix: string; requiredCopies: number; namingRule: string; completionActions: Array<"report" | "delivery" | "eject">; createdAt: number; updatedAt: number;
+}
+export interface WorkspaceMergeResult { projectsAdded: number; projectsUpdated: number; tasksAdded: number; duplicates: number; conflicts: string[]; importedAt: number; }
 
 export interface ProjectStructureDestination {
   destination: string;

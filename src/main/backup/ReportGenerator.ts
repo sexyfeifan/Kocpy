@@ -57,6 +57,7 @@ export async function generateReport(
     </tr>`,
     )
     .join("");
+  const eventRows = (task.faultTimeline || []).slice(-30).map((event) => `<tr><td>${new Date(event.at).toLocaleString("zh-CN")}</td><td>${esc(event.phase)}</td><td style="color:${event.level === "error" ? "#ef4444" : event.level === "warning" ? "#b7791f" : "#555"}">${esc(event.message)}</td></tr>`).join("");
 
   const fileRows = (
     await Promise.all(
@@ -178,7 +179,7 @@ export async function generateReport(
 <div class="header">
   <div>
     <h1>Kocpy</h1>
-    <p>VERIFIED MEDIA TRANSFER REPORT · v0.0.11</p>
+    <p>VERIFIED MEDIA TRANSFER REPORT · v0.0.12</p>
     <p style="margin-top:8px;font-size:12px;color:#aaa">生成时间：${new Date().toLocaleString("zh-CN")}</p>
   </div>
   <div class="badge">${statusLabel}</div>
@@ -190,6 +191,8 @@ export async function generateReport(
   <div><strong>${verifiedPhysicalCopyCount(task)} / ${task.destinations.length}</strong><span>PHYSICAL COPIES / 物理独立副本</span></div>
   <div><strong>${duration}</strong><span>DURATION / 总用时</span></div>
 </div>
+
+${eventRows ? `<div class="section"><h2>任务事件时间线</h2><table><thead><tr><th>时间</th><th>阶段</th><th>事件</th></tr></thead><tbody>${eventRows}</tbody></table></div>` : ""}
 
 <div class="section">
   <h2>任务信息</h2>

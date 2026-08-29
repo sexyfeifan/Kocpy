@@ -455,6 +455,8 @@ export function Composer({
                   <h3>把副本，放在可靠的地方。</h3>
                   <p>最多添加 4 个目的地。建议使用不同物理磁盘。</p>
                 </div>
+                {sources.some((source) => source.scan?.suggestion?.duplicateTaskId) && <div className="error-box"><AlertTriangle size={16}/>检测到与历史任务“{sources.find((source) => source.scan?.suggestion?.duplicateTaskId)?.scan?.suggestion?.duplicateTaskName}”相同的文件结构和容量。请确认这不是已经接收过的素材卡。</div>}
+                {!sources.some((source) => source.scan?.suggestion?.duplicateTaskId) && sources.some((source) => source.scan?.suggestion?.projectId) && <div className="notice"><Info size={15}/>根据素材卡历史记录，建议继续项目“{projects.find((item) => item.id === sources.find((source) => source.scan?.suggestion?.projectId)?.scan?.suggestion?.projectId)?.name || "历史项目"}”、设备 {sources.find((source) => source.scan?.suggestion?.device)?.scan?.suggestion?.device}，下一卷号 {sources.find((source) => source.scan?.suggestion?.nextVolume)?.scan?.suggestion?.nextVolume}。Kocpy 不会自动开始写入。</div>}
                 {sources.some((source) => source.scan?.breakdown) && <div className="source-breakdown">{(["video","photo","audio","other"] as const).map((kind) => { const files = sources.reduce((sum, source) => sum + (source.scan?.breakdown?.[kind]?.files || 0), 0), size = sources.reduce((sum, source) => sum + (source.scan?.breakdown?.[kind]?.bytes || 0), 0); return <div key={kind}><strong>{files}</strong><span>{({video:"视频",photo:"照片 / RAW",audio:"音频",other:"其他"})[kind]} · {bytes(size)}</span></div>; })}</div>}
                 {mode === "project" && (
                   <div className="project-form">

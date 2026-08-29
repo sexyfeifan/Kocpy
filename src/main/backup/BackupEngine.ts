@@ -117,6 +117,7 @@ export class BackupEngine extends EventEmitter {
       priority: config.priority || false, duplicateStrategy: config.duplicateStrategy || "skip",
       includeHidden: config.includeHidden ?? true, volumeNumber: config.volumeNumber,
       generateThumbnails: config.generateThumbnails ?? true,
+      faultTimeline: [{ at: Date.now(), phase: "created", level: "info", message: "任务已创建" }],
       destinations: config.destinationPaths.map((p) => ({ id: randomUUID(), path: p, label: path.basename(p), verified: false, bytesWritten: 0, copiedBytes: 0, verifiedBytes: 0, copyProgress: 0, verifyProgress: 0, speedBps: 0, verifySpeedBps: 0 })),
     };
     this.tasks.set(id, task);
@@ -142,11 +143,11 @@ export class BackupEngine extends EventEmitter {
   pauseTask(id: string) {
     const task = this.tasks.get(id);
     if (!task || !this.active.has(id) || !["running", "verifying"].includes(task.status)) return;
-    this.paused.add(id); task.status = "paused"; task.pausedAt = Date.now(); task.speedBps = 0; task.aggregateSpeedBps = 0; task.verifySpeedBps = 0; this.emitProgress(task);
+    this.paused.add(id); task.status = "paused"; task.pausedAt = Date.now(); task.speedBps = 0; task.aggregateSpeedBps = 0; task.verifySpeedBps = 0; this.record(task, "paused", "warning", "任务已暂停，检查点已保留"); this.emitProgress(task);
   }
   resumeTask(id: string) {
     const task = this.tasks.get(id); if (!task || !this.paused.has(id)) return;
-    this.paused.delete(id); task.pausedAt = undefined; task.status = task.verifyProgress && task.verifyProgress > 0 ? "verifying" : "running";
+    this.paused.delete(id); task.pausedAt = undefined; task.status = task.verifyProgress && task.verifyProgress > 0 ? "verifying" : "running"; this.record(task, "resumed", "info", "任务已从检查点继续");
     for (const wake of this.pauseWaiters.get(id) || []) wake(); this.pauseWaiters.delete(id); this.emitProgress(task);
   }
   cancelTask(id: string) {
@@ -188,6 +189,9 @@ export class BackupEngine extends EventEmitter {
     if (!force && now - previous < 300) return;
     this.lastProgressEmit.set(task.id, now); task.lastCheckpointAt = now;
     this.emit("progress", { ...task, taskId: task.id, fileRecords: undefined });
+  }
+  private record(task: BackupTask, phase: string, level: "info" | "warning" | "error", message: string) {
+    task.faultTimeline = [...(task.faultTimeline || []).slice(-99), { at: Date.now(), phase, level, message }];
   }
   private processQueue() {
     if (this.active.size || !this.queue.length) return;
@@ -331,6 +335,7 @@ export class BackupEngine extends EventEmitter {
     const previousRecords = retryTargetIds ? new Map(task.fileRecords.map((record) => [record.relativePath, record])) : new Map<string, FileRecord>();
     let completionNotified = false;
     Object.assign(task, { status: "running", startedAt: Date.now(), completedAt: undefined, completedFiles: 0, transferredBytes: 0, physicalWrittenBytes: 0, verifiedBytes: 0, copyProgress: 0, verifyProgress: 0, fileRecords: [], verifyLog: [], verifyCompletedFiles: 0, verifyTotalFiles: 0, speedBps: 0, aggregateSpeedBps: 0, verifySpeedBps: 0, verifyEta: 0, sourceReadSpeedBps: 0, sourceHashSpeedBps: 0, sourceCopyReadSpeedBps: 0, sourceSpeedHistory: [], sourceHashHistory: [], sourceCopyReadHistory: [], volumeWarnings: [] });
+    this.record(task, "preflight", "info", "开始扫描素材源并检查目的地");
     for (const d of task.destinations) {
       if (!retryTargetIds || retryTargetIds.has(d.id)) Object.assign(d, { verified: false, error: undefined, available: true, resolvedPath: undefined, bytesWritten: 0, copiedBytes: 0, verifiedBytes: 0, copyProgress: 0, verifyProgress: 0, speedBps: 0, verifySpeedBps: 0, speedHistory: [], copySpeedSamples: [], verifySpeedSamples: [], performance: undefined, verifyPerformance: undefined });
       else Object.assign(d, { available: true, copiedBytes: task.totalBytes, verifiedBytes: task.totalBytes, copyProgress: 100, verifyProgress: 100, speedBps: 0, verifySpeedBps: 0 });
@@ -410,7 +415,7 @@ export class BackupEngine extends EventEmitter {
           previous.need += required; previous.largest = Math.max(previous.largest, largest); previous.labels.push(d.label); volumeNeeds.set(identity.id, previous);
           for (const rel of inventory.directories) await fs.mkdir(await safeChild(d.resolvedPath, rel), { recursive: true });
         } catch (e: any) {
-          d.available = false; d.resolvedPath = undefined; d.error = `预检失败：${e.message || String(e)}`; task.verifyLog.push(`✗ ${d.label} · ${d.error}`);
+          d.available = false; d.resolvedPath = undefined; d.error = `预检失败：${e.message || String(e)}`; task.verifyLog.push(`✗ ${d.label} · ${d.error}`); this.record(task, "preflight", "error", `${d.label}：${d.error}`);
         }
       }
       for (const [volumeId, volume] of volumeNeeds) {
@@ -466,7 +471,7 @@ export class BackupEngine extends EventEmitter {
       }
       clearInterval(telemetry); task.speedBps = 0; task.aggregateSpeedBps = 0; task.eta = 0; task.sourceHashPerformance = summarizeSpeeds((task.sourceHashHistory || []).map((point) => point.speed)); task.sourceCopyReadPerformance = summarizeSpeeds((task.sourceCopyReadHistory || []).map((point) => point.speed)); for (const d of task.destinations) { d.speedBps = 0; if (!retryTargetIds || retryTargetIds.has(d.id)) d.performance = summarizeSpeeds(d.copySpeedSamples || []); } await this.verifyRecords(task, signal, retryTargetIds); signal.throwIfAborted();
       if (task.destinations.some((d) => !d.verified)) throw new Error("部分目的地未通过校验。成功的副本已保留，可单独重试失败目标。");
-      task.status = "completed"; task.lastVerifiedAt = Date.now(); task.completedAt = Date.now(); task.currentFile = "";
+      task.status = "completed"; task.lastVerifiedAt = Date.now(); task.completedAt = Date.now(); task.currentFile = ""; this.record(task, "completed", "info", "所有可用目的地均已完成独立回读校验");
       for (const destination of task.destinations) if (!retryTargetIds || retryTargetIds.has(destination.id)) destination.verifyPerformance = summarizeSpeeds(destination.verifySpeedSamples || []);
       const averageCopySpeed = (destination: Destination) => destination.performance?.average || Number.POSITIVE_INFINITY;
       const slowest = [...task.destinations].filter((d) => Number.isFinite(averageCopySpeed(d))).sort((a, b) => averageCopySpeed(a) - averageCopySpeed(b))[0];
@@ -477,7 +482,7 @@ export class BackupEngine extends EventEmitter {
         this.emitProgress(task, true);
         this.emit("metadata", task);
       }).catch(() => {});
-    } catch (e: any) { task.status = signal.aborted ? "cancelled" : "failed"; task.errorMessage = e.message || String(e); }
+    } catch (e: any) { task.status = signal.aborted ? "cancelled" : "failed"; task.errorMessage = e.message || String(e); this.record(task, task.status, "error", task.errorMessage || "任务失败"); }
     finally { clearInterval(telemetry); this.retryTargets.delete(id); this.paused.delete(id); this.active.delete(id); task.completedAt ||= Date.now(); task.speedBps = 0; task.aggregateSpeedBps = 0; task.verifySpeedBps = 0; task.eta = 0; task.verifyEta = 0; task.currentFile = ""; for (const d of task.destinations) { d.speedBps = 0; d.verifySpeedBps = 0; } if (!completionNotified) { this.emitProgress(task, true); this.emit("settled", task); } }
   }
 }

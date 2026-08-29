@@ -6,6 +6,7 @@ import path from "node:path";
 import os from "node:os";
 import { makeProxy } from "../src/main/proxy";
 import { ffmpegPath } from "../src/main/ffmpeg";
+import { generateDeliveryManifest } from "../src/main/delivery";
 import { BackupEngine } from "../src/main/backup/BackupEngine";
 const exec = promisify(execFile);
 const ffmpeg = ffmpegPath();
@@ -79,4 +80,22 @@ it("reports proxy progress and removes partial output after cancellation", async
     await expect(makeProxy(input,out,"h264","720p",{signal:controller.signal,onProgress:(p)=>{progress=Math.max(progress,p);if(p>0)controller.abort(new Error("test cancel"));}})).rejects.toThrow();
     expect(progress).toBeGreaterThan(0); expect(await fs.readdir(out)).not.toContain(expect.stringContaining(".partial."));
   } finally { await fs.rm(root,{recursive:true,force:true}); }
+});
+it("applies proxy naming templates without overwriting existing files", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "kocpy-proxy-name-"));
+  try {
+    const input = path.join(root, "A001.mp4"), out = path.join(root, "out");
+    await exec(ffmpeg!, ["-f", "lavfi", "-i", "testsrc2=size=160x90:rate=24", "-t", "0.5", "-c:v", "libx264", input]);
+    const first = await makeProxy(input, out, "h264", "720p", { namingTemplate: "{name}_{format}_{resolution}" });
+    const second = await makeProxy(input, out, "h264", "720p", { namingTemplate: "{name}_{format}_{resolution}" });
+    expect(path.basename(first.outputPath)).toMatch(/^A001_h264_720p_[a-f0-9]{6}\.mp4$/);
+    expect(second.outputPath).not.toBe(first.outputPath);
+  } finally { await fs.rm(root, { recursive: true, force: true }); }
+});
+it("exports Resolve, Premiere, Final Cut and JSON proxy delivery manifests", () => {
+  const jobs: any[] = [{ id: "p1", input: "/media/A001.mov", name: "A001.mov", outputDir: "/proxy", outputPath: "/proxy/A001_proxy.mov", format: "prores", resolution: "1080p", status: "completed", progress: 100, createdAt: 1, timecode: "01:00:00:00", sourceFrameRate: "25", sourceAudio: "pcm" }];
+  expect(generateDeliveryManifest(jobs, "resolve")).toContain("Media Path,Clip Name");
+  expect(generateDeliveryManifest(jobs, "premiere")).toContain("Start Timecode");
+  expect(generateDeliveryManifest(jobs, "fcpxml")).toContain("<fcpxml version=\"1.10\">");
+  expect(JSON.parse(generateDeliveryManifest(jobs, "json")).proxies).toHaveLength(1);
 });

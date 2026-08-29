@@ -55,6 +55,10 @@ import {
   Activity,
   Pause,
   Github,
+  Gauge,
+  PackageSearch,
+  Database,
+  Share2,
 } from "lucide-react";
 import {
   api,
@@ -86,6 +90,8 @@ type Page =
   | "processing"
   | "reports"
   | "storage"
+  | "diagnostics"
+  | "maintenance"
   | "settings";
 const navigation: [Page, string, typeof LayoutDashboard][] = [
   ["overview", "工作台", LayoutDashboard],
@@ -96,6 +102,8 @@ const navigation: [Page, string, typeof LayoutDashboard][] = [
   ["processing", "代理队列", Activity],
   ["reports", "报告中心", FileCheck2],
   ["storage", "存储设备", HardDrive],
+  ["diagnostics", "诊断中心", Gauge],
+  ["maintenance", "归档维护", Database],
 ];
 const projectDates = (project: ProjectConfig, tasks: BackupTask[]) => {
   const result: string[] = [], start = project.shootingDateStart, end = project.shootingDateEnd || start;
@@ -470,7 +478,7 @@ export function App() {
           <img src="./icon.png" alt="Kocpy 图标" />
           <div>
             <strong>
-              Kocpy<span>0.0.11</span>
+              Kocpy<span>0.0.12</span>
             </strong>
             <small>素材工作台</small>
           </div>
@@ -517,7 +525,7 @@ export function App() {
             <button className={`sidebar-update ${updateInfo?.available ? "available" : ""}`} title="检查 Kocpy 更新" onClick={() => void checkForUpdates()}>
               <RefreshCw size={13}/>
               <span>{updateInfo?.available ? `可升级 ${updateInfo.latest}` : "检查更新"}</span>
-              <b>v0.0.11</b>
+              <b>v0.0.12</b>
             </button>
             <div className="sidebar-author-links">
               <span><i className="live-dot"/><b>@sexyfeifan</b></span>
@@ -571,6 +579,8 @@ export function App() {
                     processing: "PROXY PROCESSING",
                     reports: "TRANSFER RECORDS",
                     storage: "CONNECTED STORAGE",
+                    diagnostics: "RELIABILITY DIAGNOSTICS",
+                    maintenance: "ARCHIVE LIFECYCLE",
                     settings: "MAKE IT YOURS",
                   }[page]
                 }
@@ -586,6 +596,8 @@ export function App() {
                     processing: "代理队列",
                     reports: "报告中心",
                     storage: "存储设备",
+                    diagnostics: "诊断中心",
+                    maintenance: "归档维护",
                     settings: "偏好设置",
                   }[page]
                 }
@@ -601,6 +613,8 @@ export function App() {
                     processing: "批量转码、进度、取消与失败重试。",
                     reports: "每一次传输都有据可查，每一份交付都有记录。",
                     storage: "识别已挂载的本地磁盘、素材卡和网络存储。",
+                    diagnostics: "性能预检、恢复结论与脱敏诊断记录。",
+                    maintenance: "长期复校验、项目模板、数据备份与工作站合并。",
                     settings: "为你的工作方式设定可靠的默认值。",
                   }[page]
                 }
@@ -1171,6 +1185,8 @@ export function App() {
                 />
               )}
               {page === "processing" && <ProxyQueue jobs={proxyJobs} act={act} refresh={async () => setProxyJobs(await api.getProxyJobs())} />}
+              {page === "diagnostics" && <DiagnosticsPage tasks={tasks} volumes={volumes} notify={notify} />}
+              {page === "maintenance" && <MaintenancePage tasks={tasks} projects={projects} refreshProjects={async () => setProjects(await api.getProjects())} notify={notify} />}
               {page === "settings" && (
                 <SettingsPage
                   settings={settings}
@@ -1735,14 +1751,43 @@ function Library({
     </section>
   );
 }
+function MaintenancePage({ tasks, projects, refreshProjects, notify }: { tasks: BackupTask[]; projects: ProjectConfig[]; refreshProjects: () => Promise<void>; notify: (message: string, error?: boolean) => void }) {
+  const [health, setHealth] = useState<import("./api").ArchiveHealthRecord[]>([]), [templates, setTemplates] = useState<import("./api").ProjectTemplate[]>([]), [busy, setBusy] = useState<string | null>(null), [handoff, setHandoff] = useState("");
+  const reload = useCallback(async () => { const [records, values] = await Promise.all([api.getArchiveHealth(), api.getProjectTemplates()]); setHealth(records); setTemplates(values); }, []);
+  useEffect(() => { void reload().catch((error) => notify(String(error), true)); }, [reload, notify]);
+  const run = async (key: string, action: () => Promise<unknown>, success: string) => { setBusy(key); try { await action(); await reload(); await refreshProjects(); notify(success); } catch (error) { notify(String(error).replace(/^Error: /, ""), true); } finally { setBusy(null); } };
+  const lastHealth = (projectId: string) => [...health].reverse().find((record) => record.projectId === projectId);
+  return <div className="maintenance-center">
+    <section className="panel diagnostics-hero"><div><span className="mini-label"><span className="live-dot"/> ARCHIVE LIFECYCLE</span><h2>从现场接收到长期归档</h2><p>复校验项目副本、保存健康变化、复用项目模板，并在不同工作站之间合并任务记录。</p></div><div className="row"><Button kind="subtle" onClick={() => void run("backup", async () => { const file = await api.backupWorkspaceData(); if (file) await api.reveal(file); }, "本地数据备份已导出")}><Archive size={14}/>备份本地数据</Button><Button kind="subtle" onClick={() => void run("export", async () => { const file = await api.exportWorkspace(); if (file) await api.reveal(file); }, "工作站配置包已导出")}><Share2 size={14}/>导出工作站包</Button><Button kind="primary" onClick={() => void run("import", async () => { const result = await api.importWorkspace(); if (result) notify(`合并完成：新增 ${result.tasksAdded} 个任务，跳过 ${result.duplicates} 个重复项${result.conflicts.length ? `，${result.conflicts.length} 个冲突已记录` : ""}`); }, "工作站记录已合并")}><Download size={14}/>合并工作站包</Button></div></section>
+    <section className="panel"><div className="section-title"><div><h2><ShieldCheck size={18}/>项目归档健康</h2><span className="muted small">复校验会重新读取每个副本，不依赖历史完成状态</span></div></div><div className="maintenance-projects">{projects.map((project) => { const related = tasks.filter((task) => task.projectId === project.id), last = lastHealth(project.id), failed = related.flatMap((task) => task.destinations.filter((destination) => !destination.verified).map((destination) => ({ task, destination }))); return <div className="maintenance-project" key={project.id}><div><strong>{project.name}</strong><small>{last ? `${new Date(last.checkedAt).toLocaleString("zh-CN")} · ${last.healthyTasks}/${last.taskCount} 个任务健康` : "尚未执行长期复校验"}</small></div><div className="row"><Button kind="subtle" disabled={busy !== null || !related.length} onClick={() => void run(`verify-${project.id}`, () => api.verifyProjectArchive(project.id), `${project.name} 长期复校验完成`)}>{busy === `verify-${project.id}` ? <LoaderCircle size={14} className="spin"/> : <RefreshCw size={14}/>}复校验项目</Button><Button kind="subtle" disabled={busy !== null} onClick={() => void run(`template-${project.id}`, () => api.createTemplateFromProject(project.id), "项目模板已保存")}><Copy size={14}/>保存为模板</Button>{failed.slice(0, 1).map(({task, destination}) => <Button key={destination.id} kind="danger" disabled={busy !== null} onClick={() => void run(`repair-${destination.id}`, () => api.repairArchiveCopy(task.id, destination.id), "副本已从健康来源修复；原损坏文件已保留")}><ShieldCheck size={14}/>修复失败副本</Button>)}</div></div>; })}</div></section>
+    <section className="panel"><div className="section-title"><div><h2><FolderKanban size={18}/>项目模板与交接</h2><span className="muted small">模板保存设备、副本标准、命名规则与完成动作；交接记录随工作站包合并</span></div><span className="muted small">{templates.length} 个模板</span></div>{templates.length ? <div className="template-list">{templates.map((template) => <div key={template.id}><span><strong>{template.name}</strong><small>{template.devices.join(" / ")} · {template.requiredCopies} 份副本 · {template.namingRule}</small></span><div className="row"><select id={`template-project-${template.id}`} aria-label="应用模板到项目">{projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select><Button kind="subtle" disabled={!projects.length} onClick={() => { const select = document.getElementById(`template-project-${template.id}`) as HTMLSelectElement; void run(`apply-${template.id}`, () => api.applyProjectTemplate(template.id, select.value), "模板已应用到项目"); }}>应用</Button><Button kind="icon" title="删除模板" onClick={() => void run(`delete-${template.id}`, () => api.deleteProjectTemplate(template.id), "模板已删除")}><Trash2 size={14}/></Button></div></div>)}</div> : <Empty icon={Copy} title="还没有项目模板" detail="在上方项目中选择“保存为模板”，即可复用设备和收工标准。"/>}<div className="handoff-row"><select id="handoff-project" aria-label="交接项目">{projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select><input value={handoff} onChange={(event) => setHandoff(event.target.value)} placeholder="记录磁盘交接、异常说明或下一班注意事项"/><Button kind="primary" disabled={!projects.length || !handoff.trim()} onClick={() => { const select = document.getElementById("handoff-project") as HTMLSelectElement; void run("handoff", () => api.addProjectHandoff(select.value, "@sexyfeifan", handoff), "交接记录已保存").then(() => setHandoff("")); }}><Check size={14}/>保存交接</Button></div></section>
+  </div>;
+}
+
+function DiagnosticsPage({ tasks, volumes, notify }: { tasks: BackupTask[]; volumes: Volume[]; notify: (message: string, error?: boolean) => void }) {
+  const [running, setRunning] = useState<string | null>(null), [results, setResults] = useState<Record<string, { writeBps: number; readBps: number; durationMs: number }>>({});
+  const attention = tasks.filter((task) => ["failed", "paused", "cancelled"].includes(task.status) || task.destinations.some((destination) => !destination.verified && task.status !== "running" && task.status !== "verifying"));
+  const run = async (volume: Volume) => {
+    setRunning(volume.path);
+    try { const result = await api.runBenchmark(volume.path, 64); setResults((current) => ({ ...current, [volume.path]: result })); notify(`${volume.name} 性能预检完成，临时测试文件已清理`); }
+    catch (error) { notify(String(error).replace(/^Error: /, ""), true); }
+    finally { setRunning(null); }
+  };
+  return <div className="diagnostics-center">
+    <section className="panel diagnostics-hero"><div><span className="mini-label"><span className={attention.length ? "alert-dot" : "live-dot"}/> RELIABILITY STATUS</span><h2>{attention.length ? `${attention.length} 个任务需要诊断` : "当前记录未发现待恢复风险"}</h2><p>诊断数据仅保留卷名、脱敏卷标识、容量、性能统计和错误类型，不包含素材内容与完整私人路径。</p></div><Button kind="primary" onClick={() => void api.exportDiagnostics().then((file) => file && notify(`诊断包已保存：${file}`)).catch((error) => notify(String(error), true))}><PackageSearch size={15}/>导出脱敏诊断包</Button></section>
+    <section className="panel"><div className="section-title"><div><h2><Gauge size={18}/>磁盘性能预检</h2><span className="muted small">写入并回读 64 MiB 临时文件；测试结束自动清理，备份运行时禁止执行</span></div></div><div className="benchmark-grid">{volumes.map((volume) => { const result = results[volume.path]; return <div className="benchmark-card" key={volume.path}><div><HardDrive size={18}/><span><strong>{volume.name}</strong><small>{volume.isNetwork ? `${volume.protocol || "网络"} · ${volume.latencyMs || 0} ms` : volume.deviceType === "source" ? "素材设备" : "本地存储"}</small></span></div>{result ? <div className="benchmark-result"><span><b>{bytes(result.writeBps)}/s</b>写入</span><span><b>{bytes(result.readBps)}/s</b>回读</span></div> : <p>{bytes(volume.free)} 可用 · {volume.writable === false ? "只读" : "可写"}</p>}<Button kind="subtle" disabled={running !== null || volume.writable === false} onClick={() => void run(volume)}>{running === volume.path ? <LoaderCircle size={14} className="spin"/> : <Play size={14}/>}开始预检</Button></div>; })}</div></section>
+    <section className="panel"><div className="section-title"><div><h2><RefreshCw size={18}/>恢复诊断</h2><span className="muted small">按当前任务状态明确区分素材源、目的地、断点和校验问题</span></div></div>{attention.length ? <div className="diagnostic-list">{attention.slice(0, 50).map((task) => { const offline = task.destinations.filter((destination) => destination.available === false).length, failed = task.destinations.filter((destination) => destination.error).length, unverified = task.destinations.filter((destination) => !destination.verified).length; const summary = task.status === "paused" ? "可从当前检查点继续" : /素材源|source/i.test(task.errorMessage || "") ? "素材源未连接或身份变化" : offline ? `${offline} 个目的地未连接` : failed ? `${failed} 个目的地写入或校验失败` : task.transferredBytes > 0 && task.transferredBytes < task.totalBytes ? "存在可复用的安全断点" : `${unverified} 个副本尚未通过校验`; return <div key={task.id}><AlertTriangle size={17}/><span><strong>{task.name}</strong><small>{summary}</small></span><Badge status={task.status}/></div>; })}</div> : <Empty icon={CheckCheck} title="诊断状态正常" detail="没有暂停、中断、失败或未完成校验的任务。"/>}</section>
+  </div>;
+}
+
 function ProxyQueue({ jobs, act, refresh }: { jobs: ProxyJob[]; act: (fn: () => Promise<unknown>, success?: string) => Promise<void>; refresh: () => Promise<void> }) {
   const rows = [...jobs].reverse();
   return <section className="panel">
-    <div className="section-title"><h2>代理处理队列 <span>{jobs.filter((j) => ["pending", "running"].includes(j.status)).length}</span></h2><span className="muted small">队列按顺序处理，应用重启后可继续重试</span></div>
+    <div className="section-title"><div><h2>代理处理队列 <span>{jobs.filter((j) => ["pending", "running", "paused"].includes(j.status)).length}</span></h2><span className="muted small">队列按顺序处理，保留原素材关联并检查帧率、时间码与音轨</span></div><div className="row"><Button kind="subtle" onClick={() => void act(async () => { const file = await api.exportProxyDelivery("resolve"); if (file) await api.reveal(file); }, "Resolve 交付清单已导出")}>Resolve CSV</Button><Button kind="subtle" onClick={() => void act(async () => { const file = await api.exportProxyDelivery("premiere"); if (file) await api.reveal(file); }, "Premiere 交付清单已导出")}>Premiere CSV</Button><Button kind="subtle" onClick={() => void act(async () => { const file = await api.exportProxyDelivery("fcpxml"); if (file) await api.reveal(file); }, "Final Cut XML 已导出")}>Final Cut XML</Button></div></div>
     {rows.length ? <div className="proxy-job-list">{rows.map((job) => <div className="proxy-job" key={job.id}>
       <span className={`file-icon ${job.status === "completed" ? "green" : ""}`}><Clapperboard size={19}/></span>
-      <div className="proxy-job-main"><div className="row between"><strong>{job.name}</strong><span className={`badge ${job.status}`}>{({pending:"等待处理",running:"正在转码",completed:"已完成",failed:"失败",cancelled:"已取消"} as Record<string,string>)[job.status]}</span></div><p>{job.format.toUpperCase()} · {job.resolution}{job.timecode ? ` · TC ${job.timecode}` : ""}</p><div className="progress-track"><i style={{width:`${job.progress}%`}} /></div>{job.error && <small className="red-text">{job.error}</small>}</div>
-      <div className="row">{job.status === "running" || job.status === "pending" ? <Button kind="danger" onClick={() => void act(async () => { await api.cancelProxy(job.id); await refresh(); }, "代理任务已取消")}><Square size={12}/>取消</Button> : null}{["failed","cancelled"].includes(job.status) && <Button kind="subtle" onClick={() => void act(async () => { await api.retryProxy(job.id); await refresh(); }, "已重新加入队列")}><RefreshCw size={13}/>重试</Button>}{job.outputPath && <Button kind="icon" title="在 Finder 中显示" onClick={() => void api.reveal(job.outputPath!)}><FolderOpen size={15}/></Button>}{!["running","pending"].includes(job.status) && <Button kind="icon" title="删除队列记录" onClick={() => void act(async () => { await api.deleteProxy(job.id); await refresh(); })}><Trash2 size={15}/></Button>}</div>
+      <div className="proxy-job-main"><div className="row between"><strong>{job.name}</strong><span className={`badge ${job.status}`}>{({pending:"等待处理",running:"正在转码",paused:"已暂停",completed:"已完成",failed:"失败",cancelled:"已取消"} as Record<string,string>)[job.status]}</span></div><p>{job.preset === "editorial" ? "剪辑代理" : job.preset === "offline" ? "离线剪辑" : "通用审片"} · {job.format.toUpperCase()} · {job.resolution}{job.timecode ? ` · TC ${job.timecode}` : ""}</p><div className="progress-track"><i style={{width:`${job.progress}%`}} /></div>{job.validation && <small className={job.validation.notes.length ? "amber-text" : "green-text"}>{job.validation.notes.length ? job.validation.notes.join(" · ") : "帧率、时间码与音轨检查未发现异常"}</small>}{job.error && <small className="red-text">{job.error}</small>}</div>
+      <div className="row">{job.status === "running" && <Button kind="subtle" onClick={() => void act(async () => { await api.pauseProxy(job.id); await refresh(); }, "代理任务正在安全暂停")}><Pause size={12}/>暂停</Button>}{job.status === "paused" && <Button kind="primary" onClick={() => void act(async () => { await api.resumeProxy(job.id); await refresh(); }, "代理任务已继续")}><Play size={12}/>继续</Button>}{job.status === "running" || job.status === "pending" ? <Button kind="danger" onClick={() => void act(async () => { await api.cancelProxy(job.id); await refresh(); }, "代理任务已取消")}><Square size={12}/>取消</Button> : null}{["failed","cancelled"].includes(job.status) && <Button kind="subtle" onClick={() => void act(async () => { await api.retryProxy(job.id); await refresh(); }, "已重新加入队列")}><RefreshCw size={13}/>重试</Button>}{job.outputPath && <Button kind="icon" title="在 Finder 中显示" onClick={() => void api.reveal(job.outputPath!)}><FolderOpen size={15}/></Button>}{!["running","pending"].includes(job.status) && <Button kind="icon" title="删除队列记录" onClick={() => void act(async () => { await api.deleteProxy(job.id); await refresh(); })}><Trash2 size={15}/></Button>}</div>
     </div>)}</div> : <Empty icon={Activity} title="代理队列为空" detail="在素材库中选择已校验的视频并加入队列，可连续处理多个代理任务。"/>}
   </section>;
 }
@@ -1915,7 +1960,7 @@ function SettingsPage({
         <img src="./icon.png" alt="Kocpy 图标" />
         <div>
           <h3>
-            Kocpy <span>0.0.11</span>
+            Kocpy <span>0.0.12</span>
           </h3>
           <p>
             从现场接卡、项目归档到交付报告，为每一份创作保留可靠副本。
@@ -1942,13 +1987,15 @@ function ProxyDialog({
   const [out, setOut] = useState(""),
     [format, setFormat] = useState<"h264" | "prores">("h264"),
     [res, setRes] = useState<"1080p" | "720p">("1080p"),
+    [preset, setPreset] = useState<"review" | "editorial" | "offline">("review"),
+    [namingTemplate, setNamingTemplate] = useState("{name}_proxy_{resolution}"),
     [result, setResult] = useState(""),
     [error, setError] = useState("");
   async function run() {
     setBusy(true);
     setError("");
     try {
-      await api.enqueueProxy(file.paths || [file.path], out, format, res);
+      await api.enqueueProxy(file.paths || [file.path], out, format, res, { preset, namingTemplate });
       setResult("已加入代理队列");
       notify("视频已加入代理队列");
     } catch (e) {
@@ -1990,6 +2037,14 @@ function ProxyDialog({
           </label>
           <div className="form-grid">
             <label>
+              代理预设
+              <select value={preset} onChange={(e) => { const value = e.target.value as "review" | "editorial" | "offline"; setPreset(value); if (value === "editorial") { setFormat("prores"); setRes("1080p"); } else if (value === "offline") { setFormat("h264"); setRes("720p"); } else { setFormat("h264"); setRes("1080p"); } }} disabled={busy}>
+                <option value="review">通用审片 · H.264 1080p</option>
+                <option value="editorial">剪辑代理 · ProRes 1080p</option>
+                <option value="offline">离线剪辑 · H.264 720p</option>
+              </select>
+            </label>
+            <label>
               编码格式
               <select
                 value={format}
@@ -2012,6 +2067,11 @@ function ProxyDialog({
               </select>
             </label>
           </div>
+          <label>
+            输出命名规则
+            <input value={namingTemplate} onChange={(e) => setNamingTemplate(e.target.value)} disabled={busy} placeholder="{name}_proxy_{resolution}" />
+            <span className="muted small">支持 {'{name}'}、{'{resolution}'}、{'{format}'}；始终追加唯一短码且不覆盖已有文件。</span>
+          </label>
           <label>
             输出文件夹
             <div className="path-input">

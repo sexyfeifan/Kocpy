@@ -2206,6 +2206,30 @@ small {
 .recovery-list > div { display:grid; grid-template-columns:auto 1fr auto; align-items:center; gap:12px; padding:13px; border-top:1px solid var(--line); }
 .recovery-list > div:first-child { border-top:0; }
 .recovery-list p,.recovery-list small { color:var(--muted); margin:3px 0 0; }
+.diagnostics-center { display:grid; gap:16px; }
+.diagnostics-hero { display:flex; align-items:center; justify-content:space-between; gap:24px; }
+.diagnostics-hero h2 { margin:8px 0 7px; font-size:20px; }
+.diagnostics-hero p { margin:0; color:var(--muted); max-width:720px; line-height:1.7; }
+.benchmark-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:12px; }
+.benchmark-card { display:grid; gap:13px; padding:15px; border:1px solid var(--border); border-radius:11px; background:var(--panel2); }
+.benchmark-card > div:first-child { display:flex; align-items:center; gap:10px; }
+.benchmark-card strong,.benchmark-card small { display:block; }
+.benchmark-card small,.benchmark-card p { color:var(--muted); margin:3px 0 0; }
+.benchmark-result { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+.benchmark-result span { padding:9px; border-radius:8px; background:var(--panel); color:var(--muted); font-size:9px; }
+.benchmark-result b { display:block; color:var(--text); font-size:12px; margin-bottom:3px; }
+.diagnostic-list { display:grid; border:1px solid var(--border); border-radius:10px; overflow:hidden; }
+.diagnostic-list > div { display:grid; grid-template-columns:auto 1fr auto; align-items:center; gap:11px; padding:12px 13px; border-top:1px solid var(--line); }
+.diagnostic-list > div:first-child { border-top:0; }
+.diagnostic-list strong,.diagnostic-list small { display:block; }
+.diagnostic-list small { color:var(--muted); margin-top:4px; }
+.maintenance-center { display:grid; gap:16px; }
+.maintenance-projects,.template-list { display:grid; border:1px solid var(--border); border-radius:11px; overflow:hidden; }
+.maintenance-project,.template-list > div { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:14px; border-top:1px solid var(--line); }
+.maintenance-project:first-child,.template-list > div:first-child { border-top:0; }
+.maintenance-project strong,.maintenance-project small,.template-list strong,.template-list small { display:block; }
+.maintenance-project small,.template-list small { margin-top:4px; color:var(--muted); }
+.handoff-row { display:grid; grid-template-columns:180px 1fr auto; gap:9px; margin-top:14px; }
 .speed-sparkline { width:100%; height:34px; display:block; }
 .performance-card { display:grid; grid-template-columns:180px 1fr; gap:14px; align-items:center; margin:12px 0; padding:11px; border:1px solid var(--border); border-radius:9px; background:var(--panel2); }
 .performance-card strong,.performance-card span { display:block; }

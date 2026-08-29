@@ -1,4 +1,4 @@
-# Kocpy 0.0.1 architecture
+# Kocpy 0.0.12 architecture
 
 ## Transfer pipeline
 
@@ -22,3 +22,9 @@ The UI reports two rates. `aggregateSpeedBps` is physical bytes written across a
 ## Compatibility
 
 Kocpy ships separate native FFmpeg binaries for Apple Silicon and Intel. All tasks, projects, preferences, thumbnails, and proxy records remain in the Kocpy local data directory.
+
+## Reliability diagnostics
+
+The diagnostics module classifies recovery state without reading media content. Exported snapshots include application and system versions, volume capacity and anonymized identity, transfer performance summaries, recent fault events, and benchmark history. Full source and destination paths and file lists are excluded.
+
+The optional volume benchmark writes and reads a bounded 64 MiB temporary file in a user-selected directory, synchronizes it before readback, and removes it in a `finally` path. It cannot run while backup or proxy work is active.

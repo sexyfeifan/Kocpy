@@ -10,7 +10,8 @@ import {
   nativeTheme,
 } from "electron";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import os from "node:os";
 import { promises as fs } from "node:fs";
 import { BackupEngine, hashFile } from "./backup/BackupEngine";
 import {
@@ -26,10 +27,13 @@ import { makeProxy } from "./proxy";
 import { inspectMedia, isThumbnailMedia } from "./media";
 import { generateReport, generateDailyReport, generateProjectReport } from "./backup/ReportGenerator";
 import { generateMhl, generateAscMhl } from "./backup/ManifestGenerator";
-import type { BackupTask, ProjectConfig, TaskConfig, ProxyJob } from "./types";
+import type { ArchiveHealthRecord, BackupTask, ProjectConfig, ProjectTemplate, TaskConfig, ProxyJob } from "./types";
 import { compareVersions, selectMacAsset, type GitHubRelease } from "./update";
 import { claimTimestampedVolume, createProjectStructure, formatVolumeTimestamp, inspectProjectStructure, makeProjectFolderName } from "./project-path";
 import { verifiedPhysicalCopyCount } from "./project-closeout";
+import { benchmarkDirectory, buildDiagnosticSnapshot, type BenchmarkResult } from "./diagnostics";
+import { generateDeliveryManifest } from "./delivery";
+import { mergeWorkspace, sourceSuggestion, templateFromProject } from "./lifecycle";
 
 app.setName("Kocpy");
 const appDataRoot = app.getPath("appData");
@@ -83,7 +87,10 @@ let main: BrowserWindow | null = null,
   blocker: number | undefined,
   proxyBusy = false,
   proxyController: AbortController | undefined,
+  proxyPauseRequested: string | undefined,
   proxyJobs: ProxyJob[] = [];
+let benchmarkHistory: BenchmarkResult[] = [];
+let healthRecords: ArchiveHealthRecord[] = [], projectTemplates: ProjectTemplate[] = [];
 const persist = () =>
   store.write("tasks.json", engine.getAllTasks().slice().reverse());
 app.on("second-instance", () => {
@@ -115,10 +122,13 @@ async function processProxyQueue() {
   proxyBusy = true; proxyController = new AbortController(); Object.assign(job, { status: "running", progress: 0, startedAt: Date.now(), error: undefined });
   emitProxyJobs(); await persistProxyJobs(); const lock = powerSaveBlocker.start("prevent-app-suspension");
   try {
-    const result = await makeProxy(job.input, job.outputDir, job.format, job.resolution, { signal: proxyController.signal, onProgress: (progress) => { job.progress = progress; emitProxyJobs(); } });
-    Object.assign(job, { status: "completed", progress: 100, outputPath: result.outputPath, completedAt: Date.now() });
-  } catch (e: any) { Object.assign(job, { status: proxyController.signal.aborted ? "cancelled" : "failed", error: e.message || String(e), completedAt: Date.now() }); }
-  finally { proxyBusy = false; proxyController = undefined; powerSaveBlocker.stop(lock); await persistProxyJobs(); emitProxyJobs(); void processProxyQueue(); }
+    const result = await makeProxy(job.input, job.outputDir, job.format, job.resolution, { signal: proxyController.signal, namingTemplate: job.namingTemplate, onProgress: (progress) => { job.progress = progress; emitProxyJobs(); } });
+    const outputMetadata = await inspectMedia(result.outputPath, path.join(app.getPath("userData"), "thumbnails")).catch(() => ({} as any));
+    const notes: string[] = [], frameRate = !job.sourceFrameRate || !outputMetadata.frameRate ? "unknown" : Math.abs(Number(job.sourceFrameRate) - Number(outputMetadata.frameRate)) < 0.02 ? "match" : "changed", timecode = !job.timecode || !outputMetadata.timecode ? "unknown" : job.timecode === outputMetadata.timecode ? "match" : "changed", audio = !job.sourceAudio ? "unknown" : outputMetadata.audio ? "present" : "missing";
+    if (frameRate === "changed") notes.push(`帧率由 ${job.sourceFrameRate} 变为 ${outputMetadata.frameRate}`); if (timecode === "changed") notes.push("输出时间码与源素材不同"); if (audio === "missing") notes.push("源素材包含音轨，但代理未检测到音轨");
+    Object.assign(job, { status: "completed", progress: 100, outputPath: result.outputPath, completedAt: Date.now(), validation: { frameRate, timecode, audio, notes } });
+  } catch (e: any) { const paused = proxyPauseRequested === job.id; Object.assign(job, { status: paused ? "paused" : proxyController.signal.aborted ? "cancelled" : "failed", error: paused ? undefined : e.message || String(e), completedAt: paused ? undefined : Date.now() }); }
+  finally { proxyBusy = false; proxyController = undefined; proxyPauseRequested = undefined; powerSaveBlocker.stop(lock); await persistProxyJobs(); emitProxyJobs(); void processProxyQueue(); }
 }
 function createWindow() {
   main = new BrowserWindow({
@@ -155,6 +165,9 @@ app.whenReady().then(async () => {
   const initialSettings = await store.read("settings.json", defaultSettings);
   nativeTheme.themeSource = initialSettings.theme === "light" ? "light" : "dark";
   proxyJobs = await store.read<ProxyJob[]>("proxy-jobs.json", []);
+  benchmarkHistory = await store.read<BenchmarkResult[]>("benchmarks.json", []);
+  healthRecords = await store.read<ArchiveHealthRecord[]>("archive-health.json", []);
+  projectTemplates = await store.read<ProjectTemplate[]>("project-templates.json", []);
   for (const job of proxyJobs) if (job.status === "running") { job.status = "failed"; job.error = "上次转码被中断，可点击重试"; }
   const saved = await store.read<BackupTask[]>("tasks.json", []);
   for (const task of saved) {
@@ -241,6 +254,7 @@ app.whenReady().then(async () => {
       skipped: r.skipped,
       sample: r.files.slice(0, 6).map((f) => f.relativePath),
       breakdown,
+      suggestion: sourceSuggestion(engine.getAllTasks(), { volumeId: await volumeIdentity(source).then((identity) => identity.uuid || identity.id, () => undefined), files: r.files.map((file) => ({ relativePath: file.relativePath, size: file.size })) }),
     };
   });
   handle("volumes:list", listVolumes);
@@ -275,6 +289,53 @@ app.whenReady().then(async () => {
     }
     return results;
   });
+  const diagnosticSnapshot = async () => buildDiagnosticSnapshot({ version: app.getVersion(), tasks: engine.getAllTasks(), volumes: await listVolumes(), benchmarks: benchmarkHistory });
+  handle("diagnostics:benchmark", async (directory: string, sizeMiB = 64) => {
+    if (!path.isAbsolute(directory)) throw new Error("请选择有效的性能预检目录");
+    if (engine.hasActive() || proxyBusy) throw new Error("请在没有备份或代理任务运行时执行性能预检");
+    const result = await benchmarkDirectory(directory, sizeMiB);
+    benchmarkHistory = [...benchmarkHistory.slice(-19), result];
+    await store.write("benchmarks.json", benchmarkHistory);
+    return result;
+  });
+  handle("diagnostics:get", diagnosticSnapshot);
+  handle("diagnostics:export", async () => {
+    const result = await dialog.showSaveDialog({ defaultPath: `Kocpy_诊断包_${new Date().toLocaleDateString("sv-SE")}.json`, filters: [{ name: "JSON", extensions: ["json"] }] });
+    if (!result.filePath) return null;
+    await fs.writeFile(result.filePath, JSON.stringify(await diagnosticSnapshot(), null, 2), "utf8");
+    return result.filePath;
+  });
+  handle("archive:health-list", () => healthRecords);
+  handle("archive:verify-project", async (projectId: string) => {
+    if (engine.hasActive() || proxyBusy) throw new Error("请等待当前备份或代理任务结束");
+    const tasks = engine.getAllTasks().filter((task) => task.projectId === projectId && task.fileRecords.length), notes: string[] = [];
+    if (!tasks.length) throw new Error("项目没有可复校验的素材记录");
+    let healthyTasks = 0, missingCopies = 0;
+    for (const task of tasks) { try { await engine.reverifyTask(task.id); if (task.status === "completed") healthyTasks++; else notes.push(`${task.name} 未通过复校验`); } catch (error: any) { notes.push(`${task.name}：${error.message || String(error)}`); } missingCopies += task.destinations.filter((destination) => !destination.verified).length; }
+    const record: ArchiveHealthRecord = { id: randomUUID(), projectId, checkedAt: Date.now(), taskCount: tasks.length, healthyTasks, failedTasks: tasks.length - healthyTasks, missingCopies, notes };
+    healthRecords = [...healthRecords.slice(-199), record]; await store.write("archive-health.json", healthRecords); await persist(); return record;
+  });
+  handle("archive:repair-copy", async (taskId: string, destinationId: string) => {
+    if (engine.hasActive() || proxyBusy) throw new Error("请等待当前任务结束");
+    const task = engine.getTask(taskId); if (!task) throw new Error("任务不存在"); const target = task.destinations.find((destination) => destination.id === destinationId); if (!target) throw new Error("目标副本不存在");
+    let repaired = 0;
+    for (const record of task.fileRecords) {
+      const targetRecord = record.destinations.find((entry) => inside(entry.path, target.resolvedPath || target.path)); if (!targetRecord || targetRecord.verified) continue;
+      const healthy = record.destinations.find((entry) => entry.verified && entry.path !== targetRecord.path); if (!healthy) throw new Error(`${record.relativePath} 没有可用于修复的健康副本`);
+      const partial = `${targetRecord.path}.kocpy-repair.partial`; await fs.mkdir(path.dirname(targetRecord.path), { recursive: true }); await fs.copyFile(healthy.path, partial);
+      if (await hashFile(partial, task.hashAlgorithm) !== record.srcChecksum) { await fs.unlink(partial).catch(() => {}); throw new Error(`${record.relativePath} 修复副本校验失败`); }
+      const exists = await fs.access(targetRecord.path).then(() => true, () => false); if (exists) await fs.rename(targetRecord.path, `${targetRecord.path}.kocpy-damaged-${Date.now()}`); await fs.rename(partial, targetRecord.path); targetRecord.verified = true; targetRecord.checksum = record.srcChecksum; repaired++;
+    }
+    target.verified = task.fileRecords.every((record) => record.destinations.filter((entry) => inside(entry.path, target.resolvedPath || target.path)).every((entry) => entry.verified)); target.error = undefined; await persist(); return { repaired, preservedDamagedOriginals: repaired };
+  });
+  handle("templates:list", () => projectTemplates);
+  handle("templates:from-project", async (projectId: string, name?: string) => { const project = (await store.read<ProjectConfig[]>("projects.json", [])).find((item) => item.id === projectId); if (!project) throw new Error("项目不存在"); const template = templateFromProject(project, name); const index = projectTemplates.findIndex((item) => item.id === template.id); if (index < 0) projectTemplates.push(template); else projectTemplates[index] = { ...template, createdAt: projectTemplates[index].createdAt }; await store.write("project-templates.json", projectTemplates); return projectTemplates; });
+  handle("templates:delete", async (id: string) => { projectTemplates = projectTemplates.filter((item) => item.id !== id); await store.write("project-templates.json", projectTemplates); return projectTemplates; });
+  handle("templates:apply", async (templateId: string, projectId: string) => { const template = projectTemplates.find((item) => item.id === templateId); if (!template) throw new Error("模板不存在"); const projects = (await store.read<ProjectConfig[]>("projects.json", [])).map(normalizeProject), project = projects.find((item) => item.id === projectId); if (!project) throw new Error("项目不存在"); Object.assign(project, { devices: [...template.devices], volumePrefix: template.volumePrefix, requiredCopies: template.requiredCopies, namingRule: template.namingRule, completionActions: [...template.completionActions] }); if ((project.destinationPaths?.length || 0) < template.requiredCopies) throw new Error(`模板要求 ${template.requiredCopies} 份副本，当前项目目的地不足`); await store.write("projects.json", projects); return projects; });
+  handle("projects:add-handoff", async (projectId: string, operator: string, note: string) => { const projects = (await store.read<ProjectConfig[]>("projects.json", [])).map(normalizeProject), project = projects.find((item) => item.id === projectId); if (!project) throw new Error("项目不存在"); if (!note.trim()) throw new Error("请输入交接内容"); project.handoffNotes = [...(project.handoffNotes || []).slice(-199), { id: randomUUID(), at: Date.now(), operator: operator.trim() || "未署名", note: note.trim() }]; await store.write("projects.json", projects); return projects; });
+  handle("workspace:export", async () => { const result = await dialog.showSaveDialog({ defaultPath: `Kocpy_工作站配置_${Date.now()}.json`, filters: [{ name: "JSON", extensions: ["json"] }] }); if (!result.filePath) return null; const projects = await store.read<ProjectConfig[]>("projects.json", []); const payload = { schema: 1, application: "Kocpy", version: app.getVersion(), workstation: createHash("sha256").update(os.hostname()).digest("hex").slice(0, 12), exportedAt: Date.now(), projects, tasks: engine.getAllTasks(), templates: projectTemplates, healthRecords }; await fs.writeFile(result.filePath, JSON.stringify(payload, null, 2), "utf8"); return result.filePath; });
+  handle("workspace:import", async () => { const chosen = await dialog.showOpenDialog({ properties: ["openFile"], filters: [{ name: "Kocpy 工作站配置", extensions: ["json"] }] }); if (chosen.canceled) return null; const incoming = JSON.parse(await fs.readFile(chosen.filePaths[0], "utf8")); if (incoming.application !== "Kocpy" || incoming.schema !== 1) throw new Error("不是受支持的 Kocpy 工作站配置包"); const currentProjects = await store.read<ProjectConfig[]>("projects.json", []), merged = mergeWorkspace({ projects: currentProjects, tasks: engine.getAllTasks() }, incoming); await store.write("projects.json", merged.projects); for (const task of merged.tasks) if (!engine.getTask(task.id)) engine.loadTask(task); projectTemplates = [...projectTemplates, ...(incoming.templates || [])].filter((item, index, all) => all.findIndex((other) => other.id === item.id) === index); healthRecords = [...healthRecords, ...(incoming.healthRecords || [])].filter((item, index, all) => all.findIndex((other) => other.id === item.id) === index).slice(-500); await Promise.all([store.write("project-templates.json", projectTemplates), store.write("archive-health.json", healthRecords), persist()]); return merged.result; });
+  handle("workspace:backup-data", async () => { const result = await dialog.showSaveDialog({ defaultPath: `Kocpy_本地数据备份_${Date.now()}.json`, filters: [{ name: "JSON", extensions: ["json"] }] }); if (!result.filePath) return null; await fs.writeFile(result.filePath, JSON.stringify({ schema: 1, version: app.getVersion(), createdAt: Date.now(), tasks: engine.getAllTasks(), projects: await store.read<ProjectConfig[]>("projects.json", []), settings: await store.read("settings.json", defaultSettings), proxyJobs, projectTemplates, healthRecords, benchmarkHistory }, null, 2), "utf8"); return result.filePath; });
   handle("system:reveal", (file: string) => shell.showItemInFolder(file));
   handle("updates:check", async () => {
     const response = await fetch("https://api.github.com/repos/sexyfeifan/Kocpy/releases/latest", { headers: { "Accept": "application/vnd.github+json", "User-Agent": `Kocpy/${app.getVersion()}` } });
@@ -445,18 +506,25 @@ app.whenReady().then(async () => {
     return inspectMedia(input, path.join(app.getPath("userData"), "thumbnails"));
   });
   handle("proxy:list", () => proxyJobs);
-  handle("proxy:enqueue", async (inputs: string[], out: string, format: "h264" | "prores", resolution: "1080p" | "720p") => {
+  handle("proxy:enqueue", async (inputs: string[], out: string, format: "h264" | "prores", resolution: "1080p" | "720p", options: { preset?: "review" | "editorial" | "offline"; namingTemplate?: string } = {}) => {
     if (!inputs.length) throw new Error("请选择至少一个视频");
     const canonicalOut = await canonical(out);
     for (const task of engine.getAllTasks()) if (inside(canonicalOut, await canonical(task.sourcePath))) throw new Error("代理不能写入素材源目录");
-    const tracked = new Set(engine.getAllTasks().flatMap((t) => t.fileRecords).flatMap((f) => f.destinations.filter((d) => d.verified).map((d) => d.path)));
+    const tracked = new Map(engine.getAllTasks().flatMap((task) => task.fileRecords.flatMap((record) => record.destinations.filter((destination) => destination.verified).map((destination) => [destination.path, { taskId: task.id, relativePath: record.relativePath }] as const))));
     for (const input of inputs) if (!tracked.has(input)) throw new Error("只能为已校验的备份文件生成代理");
-    const jobs = await Promise.all(inputs.map(async (input): Promise<ProxyJob> => { const metadata = await inspectMedia(input, path.join(app.getPath("userData"), "thumbnails")).catch(() => ({} as any)); return { id: randomUUID(), input, name: path.basename(input), outputDir: out, format, resolution, status: "pending", progress: 0, createdAt: Date.now(), timecode: metadata.timecode }; }));
+    const jobs = await Promise.all(inputs.map(async (input): Promise<ProxyJob> => { const metadata = await inspectMedia(input, path.join(app.getPath("userData"), "thumbnails")).catch(() => ({} as any)), source = tracked.get(input)!; return { id: randomUUID(), input, name: path.basename(input), outputDir: out, format, resolution, preset: options.preset || (format === "prores" ? "editorial" : "review"), namingTemplate: options.namingTemplate || "{name}_proxy_{resolution}", sourceTaskId: source.taskId, sourceRelativePath: source.relativePath, status: "pending", progress: 0, createdAt: Date.now(), timecode: metadata.timecode, sourceFrameRate: metadata.frameRate, sourceAudio: metadata.audio }; }));
     proxyJobs.push(...jobs); await persistProxyJobs(); emitProxyJobs(); void processProxyQueue(); return jobs;
   });
   handle("proxy:cancel", async (id?: string) => { const job = id ? proxyJobs.find((j) => j.id === id) : proxyJobs.find((j) => j.status === "running"); if (!job) return false; if (job.status === "running") proxyController?.abort(new Error("用户取消代理任务")); else if (job.status === "pending") job.status = "cancelled"; await persistProxyJobs(); emitProxyJobs(); return true; });
+  handle("proxy:pause", async (id: string) => { const job = proxyJobs.find((item) => item.id === id); if (!job || job.status !== "running") throw new Error("只有正在转码的任务可以暂停"); proxyPauseRequested = id; proxyController?.abort(new Error("用户暂停代理任务")); return true; });
+  handle("proxy:resume", async (id: string) => { const job = proxyJobs.find((item) => item.id === id); if (!job || job.status !== "paused") throw new Error("该代理任务未暂停"); Object.assign(job, { status: "pending", progress: 0, error: undefined }); await persistProxyJobs(); emitProxyJobs(); void processProxyQueue(); return true; });
   handle("proxy:retry", async (id: string) => { const job = proxyJobs.find((j) => j.id === id); if (!job || !["failed", "cancelled"].includes(job.status)) throw new Error("该任务不能重试"); Object.assign(job, { status: "pending", progress: 0, error: undefined, completedAt: undefined }); await persistProxyJobs(); emitProxyJobs(); void processProxyQueue(); return true; });
   handle("proxy:delete", async (id: string) => { const job = proxyJobs.find((j) => j.id === id); if (!job || ["running", "pending"].includes(job.status)) throw new Error("请先取消代理任务"); proxyJobs = proxyJobs.filter((j) => j.id !== id); await persistProxyJobs(); emitProxyJobs(); return true; });
+  handle("proxy:export-delivery", async (format: "resolve" | "premiere" | "fcpxml" | "json") => {
+    if (!["resolve", "premiere", "fcpxml", "json"].includes(format)) throw new Error("不支持的交付格式");
+    const extension = format === "fcpxml" ? "fcpxml" : format === "json" ? "json" : "csv", result = await dialog.showSaveDialog({ defaultPath: `Kocpy_代理交付_${format}.${extension}`, filters: [{ name: extension.toUpperCase(), extensions: [extension] }] });
+    if (!result.filePath) return null; await fs.writeFile(result.filePath, generateDeliveryManifest(proxyJobs, format), "utf8"); return result.filePath;
+  });
   engine.on("progress", (payload) => {
     clearTimeout(persistTimer);
     persistTimer = setTimeout(() => void persist().catch(() => {}), 1000);
