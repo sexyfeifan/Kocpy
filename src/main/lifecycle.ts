@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { BackupTask, ProjectConfig, ProjectTemplate, WorkspaceMergeResult } from "./types";
+import type { ArchiveChangeRecord, BackupTask, ProjectConfig, ProjectTemplate, WorkspaceMergeResult } from "./types";
 
 const taskStatuses = new Set(["pending", "running", "paused", "verifying", "completed", "failed", "cancelled"]);
 const hashes = new Set(["md5", "sha1", "sha256"]);
@@ -12,9 +12,9 @@ const safeText = (value: unknown, label: string, required = true) => {
 export function validateWorkspacePackage(value: unknown) {
   if (!plainObject(value) || value.application !== "Kocpy" || value.schema !== 1) throw new Error("不是受支持的 Kocpy 工作站配置包");
   if(typeof value.integrity==="string"){const actual=createHash("sha256").update(JSON.stringify(Object.fromEntries(Object.entries(value).filter(([key])=>key!=="integrity")))).digest("hex");if(actual!==value.integrity)throw new Error("工作站配置包完整性校验失败，文件可能已被修改");}
-  const projects = value.projects ?? [], tasks = value.tasks ?? [], templates = value.templates ?? [], healthRecords = value.healthRecords ?? [];
-  if (!Array.isArray(projects) || !Array.isArray(tasks) || !Array.isArray(templates) || !Array.isArray(healthRecords)) throw new Error("工作站配置的数据列表无效");
-  if (projects.length > 10_000 || tasks.length > 100_000 || templates.length > 10_000 || healthRecords.length > 10_000) throw new Error("工作站配置包含过多记录");
+  const projects = value.projects ?? [], tasks = value.tasks ?? [], templates = value.templates ?? [], healthRecords = value.healthRecords ?? [], archiveChanges = value.archiveChanges ?? [];
+  if (!Array.isArray(projects) || !Array.isArray(tasks) || !Array.isArray(templates) || !Array.isArray(healthRecords) || !Array.isArray(archiveChanges)) throw new Error("工作站配置的数据列表无效");
+  if (projects.length > 10_000 || tasks.length > 100_000 || templates.length > 10_000 || healthRecords.length > 10_000 || archiveChanges.length > 100_000) throw new Error("工作站配置包含过多记录");
   for (const item of projects) {
     if (!plainObject(item) || !Array.isArray(item.devices)) throw new Error("工作站配置中的项目记录无效");
     safeText(item.id, "项目 ID"); safeText(item.name, "项目名称"); safeText(item.volumePrefix, "卷名前缀");
@@ -27,7 +27,7 @@ export function validateWorkspacePackage(value: unknown) {
     for (const destination of item.destinations) { if (!plainObject(destination)) throw new Error("工作站配置中的目的地记录无效"); safeText(destination.id, "目的地 ID"); safeText(destination.path, "目的地路径"); }
     for (const file of item.fileRecords) { if (!plainObject(file) || !Array.isArray(file.destinations)) throw new Error("工作站配置中的文件记录无效"); safeText(file.relativePath, "相对路径"); if (typeof file.size !== "number" || file.size < 0 || !Number.isFinite(file.size)) throw new Error("工作站配置中的文件大小无效"); }
   }
-  return value as unknown as { application: "Kocpy"; schema: 1; projects: ProjectConfig[]; tasks: BackupTask[]; templates?: ProjectTemplate[]; healthRecords?: unknown[] };
+  return value as unknown as { application: "Kocpy"; schema: 1; projects: ProjectConfig[]; tasks: BackupTask[]; templates?: ProjectTemplate[]; healthRecords?: unknown[]; archiveChanges?: ArchiveChangeRecord[] };
 }
 
 export const taskFingerprint = (task: BackupTask) => createHash("sha256").update(JSON.stringify({ sourceVolume: task.sourceVolumeUuid || task.sourceVolumeId, files: task.fileRecords.map((file) => [file.relativePath, file.size, file.srcChecksum]).sort() })).digest("hex");

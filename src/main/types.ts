@@ -9,13 +9,53 @@ export type TaskStatus =
   | "cancelled";
 export type CopyMode = "normal" | "mirror";
 export type DuplicateStrategy = "skip" | "suffix";
-export type ProxyStatus = "pending" | "running" | "paused" | "completed" | "failed" | "cancelled";
+export type ProxyStatus =
+  "pending" | "running" | "paused" | "completed" | "failed" | "cancelled";
 export type ProxyPreset = "review" | "editorial" | "offline";
+export interface SavedProxyPreset {
+  id: string;
+  name: string;
+  format: "h264" | "prores";
+  resolution: string;
+  bitrateMbps?: number;
+  container: "mp4" | "mov" | "mkv";
+  namingTemplate: string;
+  createdAt: number;
+  updatedAt: number;
+}
 export interface ProxyJob {
-  id: string; input: string; name: string; outputDir: string; format: "h264" | "prores"; resolution: string; bitrateMbps?: number; container?: "mp4"|"mov"|"mkv";
-  status: ProxyStatus; progress: number; createdAt: number; startedAt?: number; completedAt?: number; outputPath?: string; error?: string; timecode?: string;
-  preset?: ProxyPreset; namingTemplate?: string; sourceTaskId?: string; sourceRelativePath?: string; sourceFrameRate?: string; sourceAudio?: string;
-  sourceColorSpace?:string; validation?: { frameRate: "match" | "changed" | "unknown"; timecode: "match" | "changed" | "unknown"; audio: "present" | "missing" | "unknown"; colorSpace?:"match"|"changed"|"unknown"; notes: string[] };
+  id: string;
+  input: string;
+  name: string;
+  outputDir: string;
+  format: "h264" | "prores";
+  resolution: string;
+  bitrateMbps?: number;
+  container?: "mp4" | "mov" | "mkv";
+  status: ProxyStatus;
+  progress: number;
+  createdAt: number;
+  startedAt?: number;
+  completedAt?: number;
+  outputPath?: string;
+  error?: string;
+  timecode?: string;
+  preset?: ProxyPreset;
+  namingTemplate?: string;
+  sourceTaskId?: string;
+  sourceRelativePath?: string;
+  sourceFrameRate?: string;
+  sourceAudio?: string;
+  sourceDuration?: string;
+  sourceColorSpace?: string;
+  dependsOn?: string[];
+  validation?: {
+    frameRate: "match" | "changed" | "unknown";
+    timecode: "match" | "changed" | "unknown";
+    audio: "present" | "missing" | "unknown";
+    colorSpace?: "match" | "changed" | "unknown";
+    notes: string[];
+  };
 }
 
 export interface Destination {
@@ -70,11 +110,16 @@ export interface FileRecord {
 }
 
 export interface BackupTask {
-  provenance?: "kocpy-transfer" | "manifest-import" | "external-baseline" | "unverified-import";
+  provenance?:
+    | "kocpy-transfer"
+    | "manifest-import"
+    | "external-baseline"
+    | "unverified-import";
   importedAt?: number;
   confidence?: "verified" | "baseline" | "unverified";
   projectId?: string;
   projectFolderName?: string;
+  projectNamingRule?: string;
   shootingDate?: string;
   cameraPosition?: string;
   createdAt?: number;
@@ -137,8 +182,16 @@ export interface BackupTask {
   sourceHashPerformance?: TransferPerformance;
   sourceCopyReadPerformance?: TransferPerformance;
   performanceSummary?: string;
-  mediaBreakdown?: Record<"video" | "photo" | "audio" | "other", { files: number; bytes: number }>;
-  faultTimeline?: Array<{ at: number; phase: string; level: "info" | "warning" | "error"; message: string }>;
+  mediaBreakdown?: Record<
+    "video" | "photo" | "audio" | "other",
+    { files: number; bytes: number }
+  >;
+  faultTimeline?: Array<{
+    at: number;
+    phase: string;
+    level: "info" | "warning" | "error";
+    message: string;
+  }>;
 }
 
 export interface TaskConfig {
@@ -154,6 +207,7 @@ export interface TaskConfig {
   projectName?: string;
   projectStartDate?: string;
   projectFolderName?: string;
+  projectNamingRule?: string;
   copyMode?: CopyMode;
   duplicateStrategy?: DuplicateStrategy;
   generateThumbnails?: boolean;
@@ -206,6 +260,20 @@ export interface BenchmarkResult {
   durationMs: number;
   completedAt: number;
 }
+export interface ReliabilityValidationRecord {
+  id: string;
+  path: string;
+  volumeName: string;
+  fileSystem: string;
+  checkedAt: number;
+  status: "passed" | "failed";
+  largeFileBytes: number;
+  smallFiles: number;
+  writeBps?: number;
+  readBps?: number;
+  durationMs: number;
+  error?: string;
+}
 
 export interface ProjectConfig {
   id: string;
@@ -223,36 +291,166 @@ export interface ProjectConfig {
   devicePositions?: Record<string, string[]>;
   destinationPaths?: string[];
   status?: "active" | "archived";
+  coldArchivedAt?: number;
+  coldArchiveFile?: string;
   createdAt?: number;
   restDays?: string[];
   unusedDevicesByDate?: Record<string, string[]>;
   requiredCopies?: number;
   namingRule?: string;
-  completionActions?: Array<"report" | "delivery" | "eject">;
-  handoffNotes?: Array<{ id: string; at: number; operator: string; note: string }>;
+  completionActions?: Array<"report" | "delivery" | "proxy" | "eject">;
+  handoffNotes?: Array<{
+    id: string;
+    at: number;
+    operator: string;
+    note: string;
+  }>;
   managedSince?: string;
   expectedVolumes?: number;
-  productionType?: "commercial" | "documentary" | "short" | "variety" | "feature" | "custom";
-  crew?: Array<{ id: string; name: string; role: "DIT" | "cinematographer" | "data-manager" | "assistant" | "other" }>;
-  checklists?: Array<{ id: string; phase: "start" | "close"; label: string; required: boolean }>;
-  checklistRuns?: Array<{ id: string; date: string; phase: "start" | "close"; completed: string[]; operator: string; signedAt?: number; signature?: string }>;
-  boundRoots?: Array<{ id: string; path: string; boundAt: number; provenance: "manifest-import" | "external-baseline" | "unverified-import" }>;
+  productionType?:
+    "commercial" | "documentary" | "short" | "variety" | "feature" | "custom";
+  crew?: Array<{
+    id: string;
+    name: string;
+    role: "DIT" | "cinematographer" | "data-manager" | "assistant" | "other";
+  }>;
+  checklists?: Array<{
+    id: string;
+    phase: "start" | "close";
+    label: string;
+    required: boolean;
+  }>;
+  checklistRuns?: Array<{
+    id: string;
+    date: string;
+    phase: "start" | "close";
+    completed: string[];
+    operator: string;
+    signedAt?: number;
+    signature?: string;
+  }>;
+  boundRoots?: Array<{
+    id: string;
+    path: string;
+    boundAt: number;
+    provenance: "manifest-import" | "external-baseline" | "unverified-import";
+  }>;
   nasPresetId?: string;
 }
 
 export interface ArchiveHealthRecord {
-  id: string; projectId: string; checkedAt: number; taskCount: number; healthyTasks: number; failedTasks: number; missingCopies: number; repairedFiles?: number; notes: string[];
+  id: string;
+  projectId: string;
+  checkedAt: number;
+  taskCount: number;
+  healthyTasks: number;
+  failedTasks: number;
+  missingCopies: number;
+  repairedFiles?: number;
+  durationMs?: number;
+  bytesVerified?: number;
+  averageReadBps?: number;
+  risk?: "healthy" | "attention" | "critical";
+  scope?: "disk" | "project" | "day" | "card" | "file";
+  notes: string[];
 }
 export interface ProjectTemplate {
-  id: string; name: string; devices: string[]; volumePrefix: string; requiredCopies: number; namingRule: string; completionActions: Array<"report" | "delivery" | "eject">; createdAt: number; updatedAt: number;
+  id: string;
+  name: string;
+  devices: string[];
+  volumePrefix: string;
+  requiredCopies: number;
+  namingRule: string;
+  completionActions: Array<"report" | "delivery" | "proxy" | "eject">;
+  createdAt: number;
+  updatedAt: number;
 }
-export interface WorkspaceMergeResult { projectsAdded: number; projectsUpdated: number; tasksAdded: number; duplicates: number; conflicts: string[]; importedAt: number; }
+export interface WorkspaceMergeResult {
+  projectsAdded: number;
+  projectsUpdated: number;
+  tasksAdded: number;
+  duplicates: number;
+  conflicts: string[];
+  importedAt: number;
+}
 
-export interface ArchiveChangeRecord { id: string; projectId: string; taskId?: string; at: number; kind: "verified" | "missing" | "damaged" | "modified" | "added" | "moved" | "disk-replaced" | "repaired"; path?: string; from?: string; to?: string; note: string; }
-export interface ArchiveReminder { id: string; projectId: string; intervalDays: number; nextAt: number; enabled: boolean; lastNotifiedAt?: number; }
-export interface NasPreset { id: string; name: string; path: string; protocol: "smb" | "nfs" | "afp" | "network"; expectedHost?: string; minimumWriteBps?: number; createdAt: number; }
-export interface ProjectCoverage { recorded: number; verified: number; compliant: number; attention: number; byProvenance: Record<string, number>; managedSince?: string; expected?: number; coveragePercent?: number; }
-export interface ExistingImportPreview { root: string; files: number; bytes: number; manifest?: string; suggestedDate?: string; suggestedDevice?: string; suggestedCard?: string; groups: Array<{ key: string; relativeRoot: string; files: number; bytes: number; suggestedDate?: string; suggestedDevice?: string; suggestedCard?: string }>; candidates: Array<{ relativeRoot: string; files: number; bytes: number; shootingDate?: string; device?: string; card?: string }>; }
+export interface ArchiveChangeRecord {
+  id: string;
+  projectId: string;
+  taskId?: string;
+  at: number;
+  kind:
+    | "verified"
+    | "missing"
+    | "damaged"
+    | "modified"
+    | "added"
+    | "moved"
+    | "disk-replaced"
+    | "repaired";
+  path?: string;
+  from?: string;
+  to?: string;
+  note: string;
+}
+export interface ArchiveReminder {
+  id: string;
+  projectId: string;
+  intervalDays: number;
+  nextAt: number;
+  enabled: boolean;
+  lastNotifiedAt?: number;
+}
+export interface NasPreset {
+  id: string;
+  name: string;
+  path: string;
+  protocol: "smb" | "nfs" | "afp" | "network";
+  expectedHost?: string;
+  minimumWriteBps?: number;
+  createdAt: number;
+  lastCheckedAt?: number;
+  online?: boolean;
+  lastLatencyMs?: number;
+  lastWriteBps?: number;
+  lastError?: string;
+}
+export interface ProjectCoverage {
+  recorded: number;
+  verified: number;
+  compliant: number;
+  attention: number;
+  byProvenance: Record<string, number>;
+  managedSince?: string;
+  expected?: number;
+  coveragePercent?: number;
+}
+export interface ExistingImportPreview {
+  root: string;
+  files: number;
+  bytes: number;
+  manifest?: string;
+  suggestedDate?: string;
+  suggestedDevice?: string;
+  suggestedCard?: string;
+  groups: Array<{
+    key: string;
+    relativeRoot: string;
+    files: number;
+    bytes: number;
+    suggestedDate?: string;
+    suggestedDevice?: string;
+    suggestedCard?: string;
+  }>;
+  candidates: Array<{
+    relativeRoot: string;
+    files: number;
+    bytes: number;
+    shootingDate?: string;
+    device?: string;
+    card?: string;
+  }>;
+}
 
 export interface ProjectStructureDestination {
   destination: string;

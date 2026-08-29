@@ -19,10 +19,10 @@ export async function previewExistingBackup(root: string): Promise<ExistingImpor
   }
   const manifestFile = result.files.find((file) => /(?:\.mhl|sha256sums\.txt|manifest.*\.json)$/i.test(file.name));
   const sample = result.files.slice(0, 200).map((file) => file.relativePath).join("/");
-  const candidateMap = new Map<string, ExistingImportPreview["candidates"][number]>();
-  for (const file of result.files) {
+  const candidateMap = new Map<string, ExistingImportPreview["candidates"][number]>(), mediaFiles = result.files.filter((file) => !/(?:\.mhl|sha256sums\.txt|manifest.*\.json)$/i.test(file.name));
+  for (const file of mediaFiles) {
     const parts = file.relativePath.split(path.sep), cardIndex = parts.findIndex((part) => cardPattern.test(part));
-    const end = cardIndex >= 0 ? cardIndex + 1 : Math.min(Math.max(1, parts.length - 1), 3), relativeRoot = parts.slice(0, end).join(path.sep);
+    const end = cardIndex >= 0 ? cardIndex + 1 : parts.length === 1 ? 0 : 1, relativeRoot = end ? parts.slice(0, end).join(path.sep) : ".";
     const value = candidateMap.get(relativeRoot) || { relativeRoot, files: 0, bytes: 0, shootingDate: normalizedDate(relativeRoot.match(datePattern)?.[0]), device: relativeRoot.match(cameraPattern)?.[0]?.toUpperCase(), card: parts[cardIndex >= 0 ? cardIndex : end - 1] };
     value.files++; value.bytes += file.size; candidateMap.set(relativeRoot, value);
   }
@@ -31,8 +31,13 @@ export async function previewExistingBackup(root: string): Promise<ExistingImpor
 
 async function readManifest(file?: string) {
   const values = new Map<string,string>(); if (!file) return values; const text = await fs.readFile(file, "utf8");
-  for (const match of text.matchAll(/<path[^>]*>([^<]+)<\/path>\s*<(?:md5|sha1|sha256)[^>]*>([a-f0-9]{32,64})<\//gi)) values.set(match[1].replaceAll("/", path.sep), match[2].toLowerCase());
+  for (const block of text.matchAll(/<hash(?:\s[^>]*)?>([\s\S]*?)<\/hash>/gi)) {
+    const name = block[1].match(/<(?:path|file)(?:\s[^>]*)?>([^<]+)<\/(?:path|file)>/i)?.[1];
+    const checksum = block[1].match(/<(?:md5|sha1|sha256)(?:\s[^>]*)?>([a-f0-9]{32,64})<\/(?:md5|sha1|sha256)>/i)?.[1];
+    if (name && checksum) values.set(name.replaceAll("/", path.sep), checksum.toLowerCase());
+  }
   for (const line of text.split(/\r?\n/)) { const match = line.match(/^([a-f0-9]{32,64})\s+\*?(.+)$/i); if (match) values.set(match[2].replaceAll("/", path.sep), match[1].toLowerCase()); }
+  if (/\.json$/i.test(file)) try { const parsed = JSON.parse(text), rows = Array.isArray(parsed) ? parsed : parsed.files || parsed.entries || []; for (const row of rows) { const name = row.path || row.file || row.relativePath, checksum = row.sha256 || row.sha1 || row.md5 || row.checksum; if (typeof name === "string" && typeof checksum === "string" && /^[a-f0-9]{32,64}$/i.test(checksum)) values.set(name.replaceAll("/", path.sep), checksum.toLowerCase()); } } catch { /* non-JSON manifests continue through text parsers */ }
   return values;
 }
 

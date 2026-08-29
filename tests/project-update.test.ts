@@ -3,7 +3,7 @@ import { BackupEngine } from "../src/main/backup/BackupEngine";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { claimTimestampedVolume, compactDate, createProjectDateFolders, createProjectStructure, expectedProjectPaths, formatVolumeTimestamp, inspectProjectStructure, makeProjectDatePath, makeProjectDayPath, makeProjectFolderName, projectShootingDates } from "../src/main/project-path";
+import { claimTimestampedVolume, compactDate, createProjectDateFolders, createProjectStructure, expectedProjectPaths, formatVolumeTimestamp, inspectProjectStructure, makeProjectDatePath, makeProjectDayPath, makeProjectFolderName, projectShootingDates, renderProjectCardPath } from "../src/main/project-path";
 import { compareVersions, selectMacAsset } from "../src/main/update";
 import { generateProjectReport } from "../src/main/backup/ReportGenerator";
 
@@ -47,6 +47,10 @@ describe("project backup workflow", () => {
       destinationPaths: ["/Volumes/MASTER"], devices: ["FX3"], cameraPosition: "A", shootingDate: "2026-08-29", hashAlgorithm: "sha256",
     });
     expect(positioned.shootingDateFolder).toBe("20260827_山海之间/20260829/FX3/A");
+  });
+  it("applies a safe custom project naming rule",()=>{
+    expect(renderProjectCardPath("{date}_{project}/{device}/{shootingDate}/{position}/{card}",{projectFolderName:"ignored",projectName:"山海之间",projectStartDate:"2026-08-27",shootingDate:"2026-08-29",device:"FX3",position:"A",card:"FX3_001"})).toBe("20260827_山海之间/FX3/20260829/A/FX3_001");
+    expect(()=>renderProjectCardPath("../{unknown}/{card}",{projectFolderName:"ignored",projectName:"P",projectStartDate:"2026-08-27",shootingDate:"2026-08-29",device:"FX3",card:"001"})).toThrow("未知变量");
   });
 
   it("pre-creates the project and start-date folders in every backup root", async () => {

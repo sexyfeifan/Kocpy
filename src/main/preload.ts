@@ -4,9 +4,13 @@ const call =
   (...args: unknown[]) =>
     ipcRenderer.invoke(channel, ...args);
 contextBridge.exposeInMainWorld("api", {
-  resolveDroppedPaths: (files: File[]) => files.map((file) => (file as File & { path?: string }).path || "").filter(Boolean),
+  resolveDroppedPaths: (files: File[]) =>
+    files
+      .map((file) => (file as File & { path?: string }).path || "")
+      .filter(Boolean),
   selectDirectory: call("dialog:directory"),
   getTasks: call("tasks:list"),
+  getTask: call("tasks:get"),
   getCatalogStats: call("catalog:stats"),
   getCatalogFiles: call("catalog:files"),
   rebuildCatalog: call("catalog:rebuild"),
@@ -25,6 +29,8 @@ contextBridge.exposeInMainWorld("api", {
   ejectVolume: call("volumes:eject"),
   ejectCompletedVolumes: call("volumes:eject-completed"),
   runBenchmark: call("diagnostics:benchmark"),
+  getReliabilityValidations: call("diagnostics:reliability-list"),
+  validateReliabilityVolume: call("diagnostics:validate-volume"),
   getDiagnostics: call("diagnostics:get"),
   exportDiagnostics: call("diagnostics:export"),
   getArchiveHealth: call("archive:health-list"),
@@ -32,6 +38,7 @@ contextBridge.exposeInMainWorld("api", {
   getArchiveReminders: call("archive:reminders"),
   saveArchiveReminder: call("archive:save-reminder"),
   verifyArchiveScope: call("archive:verify-scope"),
+  auditUntrackedArchive: call("archive:audit-untracked"),
   moveArchiveCopy: call("archive:move-copy"),
   exportArchiveChanges: call("archive:export-changes"),
   verifyProjectArchive: call("archive:verify-project"),
@@ -54,6 +61,8 @@ contextBridge.exposeInMainWorld("api", {
   exportWorkspace: call("workspace:export"),
   importWorkspace: call("workspace:import"),
   backupWorkspaceData: call("workspace:backup-data"),
+  coldArchiveProject: call("workspace:cold-archive"),
+  restoreColdArchive: call("workspace:restore-cold"),
   startLanIndex: call("lan:start"),
   stopLanIndex: call("lan:stop"),
   getLanIndexStatus: call("lan:status"),
@@ -75,6 +84,9 @@ contextBridge.exposeInMainWorld("api", {
   exportResolveCsv: call("report:resolve-csv"),
   inspectMedia: call("media:inspect"),
   getProxyJobs: call("proxy:list"),
+  getProxyPresets: call("proxy:presets"),
+  saveProxyPreset: call("proxy:save-preset"),
+  deleteProxyPreset: call("proxy:delete-preset"),
   enqueueProxy: call("proxy:enqueue"),
   cancelProxy: call("proxy:cancel"),
   pauseProxy: call("proxy:pause"),
@@ -83,8 +95,16 @@ contextBridge.exposeInMainWorld("api", {
   deleteProxy: call("proxy:delete"),
   exportProxyDelivery: call("proxy:export-delivery"),
   exportProxyPackage: call("proxy:export-package"),
-  onProxyJobs: (callback: (jobs: unknown) => void) => { const listener = (_event: unknown, jobs: unknown) => callback(jobs); ipcRenderer.on("proxy:jobs", listener); return () => ipcRenderer.removeListener("proxy:jobs", listener); },
-  onTaskSettled: (callback: (task: unknown) => void) => { const listener = (_event: unknown, task: unknown) => callback(task); ipcRenderer.on("tasks:settled", listener); return () => ipcRenderer.removeListener("tasks:settled", listener); },
+  onProxyJobs: (callback: (jobs: unknown) => void) => {
+    const listener = (_event: unknown, jobs: unknown) => callback(jobs);
+    ipcRenderer.on("proxy:jobs", listener);
+    return () => ipcRenderer.removeListener("proxy:jobs", listener);
+  },
+  onTaskSettled: (callback: (task: unknown) => void) => {
+    const listener = (_event: unknown, task: unknown) => callback(task);
+    ipcRenderer.on("tasks:settled", listener);
+    return () => ipcRenderer.removeListener("tasks:settled", listener);
+  },
   onProgress: (callback: (payload: unknown) => void) => {
     const listener = (_event: unknown, payload: unknown) => callback(payload);
     ipcRenderer.on("tasks:progress", listener);

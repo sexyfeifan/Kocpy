@@ -1,5 +1,41 @@
-import type { ArchiveChangeRecord, ArchiveHealthRecord, ArchiveReminder, BackupTask, ExistingImportPreview, NasPreset, ProjectConfig, ProjectCoverage, ProjectStructureReport, ProjectTemplate, ProxyJob, TaskConfig, TransferPerformance, BenchmarkResult, WorkspaceMergeResult } from "../../main/types";
-export type { ArchiveChangeRecord, ArchiveHealthRecord, ArchiveReminder, BackupTask, ExistingImportPreview, NasPreset, ProjectConfig, ProjectCoverage, ProjectStructureReport, ProjectTemplate, ProxyJob, TaskConfig, TransferPerformance, BenchmarkResult, WorkspaceMergeResult };
+import type {
+  ArchiveChangeRecord,
+  ArchiveHealthRecord,
+  ArchiveReminder,
+  BackupTask,
+  ExistingImportPreview,
+  NasPreset,
+  ProjectConfig,
+  ProjectCoverage,
+  ProjectStructureReport,
+  ProjectTemplate,
+  ProxyJob,
+  ReliabilityValidationRecord,
+  SavedProxyPreset,
+  TaskConfig,
+  TransferPerformance,
+  BenchmarkResult,
+  WorkspaceMergeResult,
+} from "../../main/types";
+export type {
+  ArchiveChangeRecord,
+  ArchiveHealthRecord,
+  ArchiveReminder,
+  BackupTask,
+  ExistingImportPreview,
+  NasPreset,
+  ProjectConfig,
+  ProjectCoverage,
+  ProjectStructureReport,
+  ProjectTemplate,
+  ProxyJob,
+  ReliabilityValidationRecord,
+  SavedProxyPreset,
+  TaskConfig,
+  TransferPerformance,
+  BenchmarkResult,
+  WorkspaceMergeResult,
+};
 export interface Volume {
   name: string;
   path: string;
@@ -8,7 +44,13 @@ export interface Volume {
   used: number;
   deviceType: string;
   canEject: boolean;
-  identity?: { id: string; uuid?: string; deviceNode?: string; name: string; device: string };
+  identity?: {
+    id: string;
+    uuid?: string;
+    deviceNode?: string;
+    name: string;
+    device: string;
+  };
   isNetwork?: boolean;
   protocol?: string;
   latencyMs?: number;
@@ -21,16 +63,26 @@ export interface Settings {
   operator: string;
   theme: "dark" | "light";
   reportSyncPath: string;
-  thumbnailCacheGiB:number;
-  notificationSound:boolean;
+  thumbnailCacheGiB: number;
+  notificationSound: boolean;
 }
 export interface Scan {
   totalFiles: number;
   totalBytes: number;
   skipped: number;
   sample: string[];
-  breakdown: Record<"video" | "photo" | "audio" | "other", { files: number; bytes: number }>;
-  suggestion?: { duplicateTaskId?: string; duplicateTaskName?: string; projectId?: string; device?: string; cameraPosition?: string; nextVolume: number };
+  breakdown: Record<
+    "video" | "photo" | "audio" | "other",
+    { files: number; bytes: number }
+  >;
+  suggestion?: {
+    duplicateTaskId?: string;
+    duplicateTaskName?: string;
+    projectId?: string;
+    device?: string;
+    cameraPosition?: string;
+    nextVolume: number;
+  };
 }
 export interface UpdateInfo {
   current: string;
@@ -43,12 +95,29 @@ export interface UpdateInfo {
   archLabel: "Apple Silicon" | "Intel";
 }
 export interface API {
-  resolveDroppedPaths(files:File[]):string[];
+  resolveDroppedPaths(files: File[]): string[];
   selectDirectory(defaultPath?: string): Promise<string | null>;
   getTasks(): Promise<BackupTask[]>;
-  getCatalogStats(): Promise<{tasks:number;files:number;projects:number;schema:number}>;
-  getCatalogFiles(options:{projectId?:string;query?:string;offset?:number;limit?:number}): Promise<Array<Record<string,unknown>>>;
-  rebuildCatalog(): Promise<{tasks:number;files:number;projects:number;schema:number}>;
+  getTask(id: string): Promise<BackupTask>;
+  getCatalogStats(): Promise<{
+    tasks: number;
+    files: number;
+    projects: number;
+    schema: number;
+  }>;
+  getCatalogFiles(options: {
+    projectId?: string;
+    query?: string;
+    kind?: string;
+    offset?: number;
+    limit?: number;
+  }): Promise<Array<Record<string, unknown>>>;
+  rebuildCatalog(): Promise<{
+    tasks: number;
+    files: number;
+    projects: number;
+    schema: number;
+  }>;
   createTask(config: TaskConfig): Promise<BackupTask>;
   startTask(id: string): Promise<void>;
   cancelTask(id: string): Promise<void>;
@@ -64,71 +133,189 @@ export interface API {
     path: string,
   ): Promise<{ total: number; free: number; used: number }>;
   ejectVolume(path: string): Promise<void>;
-  ejectCompletedVolumes(): Promise<Array<{ path: string; ok: boolean; error?: string }>>;
+  ejectCompletedVolumes(): Promise<
+    Array<{ path: string; ok: boolean; error?: string }>
+  >;
   runBenchmark(path: string, sizeMiB?: number): Promise<BenchmarkResult>;
+  getReliabilityValidations(): Promise<ReliabilityValidationRecord[]>;
+  validateReliabilityVolume(path: string): Promise<ReliabilityValidationRecord>;
   getDiagnostics(): Promise<any>;
   exportDiagnostics(): Promise<string | null>;
   getArchiveHealth(): Promise<ArchiveHealthRecord[]>;
-  getArchiveChanges(projectId?:string):Promise<ArchiveChangeRecord[]>;
-  getArchiveReminders():Promise<ArchiveReminder[]>;
-  saveArchiveReminder(value:ArchiveReminder):Promise<ArchiveReminder[]>;
-  verifyArchiveScope(scope:{projectId:string;shootingDate?:string;taskId?:string;relativePath?:string}):Promise<ArchiveChangeRecord[]>;
-  moveArchiveCopy(taskId:string,destinationId:string,newPath:string):Promise<BackupTask>;
-  exportArchiveChanges(projectId:string):Promise<string|null>;
+  getArchiveChanges(projectId?: string): Promise<ArchiveChangeRecord[]>;
+  getArchiveReminders(): Promise<ArchiveReminder[]>;
+  saveArchiveReminder(value: ArchiveReminder): Promise<ArchiveReminder[]>;
+  verifyArchiveScope(scope: {
+    projectId?: string;
+    shootingDate?: string;
+    taskId?: string;
+    relativePath?: string;
+    volumePath?: string;
+  }): Promise<{ changes: ArchiveChangeRecord[]; record: ArchiveHealthRecord }>;
+  auditUntrackedArchive(
+    projectId: string,
+    root: string,
+  ): Promise<ArchiveChangeRecord[]>;
+  moveArchiveCopy(
+    taskId: string,
+    destinationId: string,
+    newPath: string,
+  ): Promise<BackupTask>;
+  exportArchiveChanges(projectId: string): Promise<string | null>;
   verifyProjectArchive(projectId: string): Promise<ArchiveHealthRecord>;
-  repairArchiveCopy(taskId: string, destinationId: string): Promise<{ repaired: number; preservedDamagedOriginals: number }>;
+  repairArchiveCopy(
+    taskId: string,
+    destinationId: string,
+  ): Promise<{ repaired: number; preservedDamagedOriginals: number }>;
   getProjectTemplates(): Promise<ProjectTemplate[]>;
-  createTemplateFromProject(projectId: string, name?: string): Promise<ProjectTemplate[]>;
+  createTemplateFromProject(
+    projectId: string,
+    name?: string,
+  ): Promise<ProjectTemplate[]>;
   deleteProjectTemplate(id: string): Promise<ProjectTemplate[]>;
-  applyProjectTemplate(templateId: string, projectId: string): Promise<ProjectConfig[]>;
-  previewExistingBackup(root:string):Promise<ExistingImportPreview>;
-  importExistingBackup(projectId:string,root:string,mode:"manifest-import"|"external-baseline"|"unverified-import",metadata?:{shootingDate?:string;device?:string;card?:string}):Promise<BackupTask>;
-  importExistingScope(projectId:string,root:string,mode:"manifest-import"|"external-baseline"|"unverified-import",scope:"card"|"day"|"project",selectedDate?:string):Promise<BackupTask[]>;
-  relinkLibraryFile(taskId:string,relativePath:string):Promise<string|null>;
-  getProjectCoverage(projectId:string):Promise<ProjectCoverage>;
-  signProjectChecklist(projectId:string,run:any):Promise<ProjectConfig>;
-  getNasPresets():Promise<NasPreset[]>;
-  saveNasPreset(value:NasPreset):Promise<NasPreset[]>;
-  deleteNasPreset(id:string):Promise<NasPreset[]>;
-  testNasPreset(id:string):Promise<any>;
-  addProjectHandoff(projectId: string, operator: string, note: string): Promise<ProjectConfig[]>;
+  applyProjectTemplate(
+    templateId: string,
+    projectId: string,
+  ): Promise<ProjectConfig[]>;
+  previewExistingBackup(root: string): Promise<ExistingImportPreview>;
+  importExistingBackup(
+    projectId: string,
+    root: string,
+    mode: "manifest-import" | "external-baseline" | "unverified-import",
+    metadata?: { shootingDate?: string; device?: string; card?: string },
+  ): Promise<BackupTask>;
+  importExistingScope(
+    projectId: string,
+    root: string,
+    mode: "manifest-import" | "external-baseline" | "unverified-import",
+    scope: "card" | "day" | "project",
+    selectedDate?: string,
+  ): Promise<BackupTask[]>;
+  relinkLibraryFile(
+    taskId: string,
+    relativePath: string,
+  ): Promise<string | null>;
+  getProjectCoverage(projectId: string): Promise<ProjectCoverage>;
+  signProjectChecklist(projectId: string, run: any): Promise<ProjectConfig>;
+  getNasPresets(): Promise<NasPreset[]>;
+  saveNasPreset(value: NasPreset): Promise<NasPreset[]>;
+  deleteNasPreset(id: string): Promise<NasPreset[]>;
+  testNasPreset(id: string): Promise<any>;
+  addProjectHandoff(
+    projectId: string,
+    operator: string,
+    note: string,
+  ): Promise<ProjectConfig[]>;
   exportWorkspace(): Promise<string | null>;
   importWorkspace(): Promise<WorkspaceMergeResult | null>;
   backupWorkspaceData(): Promise<string | null>;
-  startLanIndex():Promise<{active:boolean;port:number;addresses:string[];token:string}>;
-  stopLanIndex():Promise<{active:boolean;port:number;addresses:string[];token:string}>;
-  getLanIndexStatus():Promise<{active:boolean;port:number;addresses:string[];token:string}>;
+  coldArchiveProject(projectId: string): Promise<string | null>;
+  restoreColdArchive(): Promise<{
+    project: ProjectConfig;
+    tasks: number;
+  } | null>;
+  startLanIndex(): Promise<{
+    active: boolean;
+    port: number;
+    addresses: string[];
+    token: string;
+  }>;
+  stopLanIndex(): Promise<{
+    active: boolean;
+    port: number;
+    addresses: string[];
+    token: string;
+  }>;
+  getLanIndexStatus(): Promise<{
+    active: boolean;
+    port: number;
+    addresses: string[];
+    token: string;
+  }>;
   reveal(path: string): Promise<void>;
-  openPath(path:string):Promise<void>;
+  openPath(path: string): Promise<void>;
   checkUpdates(): Promise<UpdateInfo>;
-  openUpdate(url:string): Promise<void>;
-  openAuthor(url:string): Promise<void>;
+  openUpdate(url: string): Promise<void>;
+  openAuthor(url: string): Promise<void>;
   previewTheme(theme: Settings["theme"]): Promise<void>;
   getSettings(): Promise<Settings>;
   saveSettings(settings: Settings): Promise<void>;
   getProjects(): Promise<ProjectConfig[]>;
-  inspectProjectStructure(project: ProjectConfig): Promise<ProjectStructureReport>;
-  saveProject(project: ProjectConfig, createMissing?: boolean): Promise<ProjectConfig[]>;
-  claimProjectVolume(projectId: string, device: string, prefixOverride?: string): Promise<{label:string;timestamp:string;collision:number;prefix:string;project:ProjectConfig}>;
-  exportReport(id: string, format: "pdf" | "json" | "mhl" | "ascmhl"): Promise<string | null>;
+  inspectProjectStructure(
+    project: ProjectConfig,
+  ): Promise<ProjectStructureReport>;
+  saveProject(
+    project: ProjectConfig,
+    createMissing?: boolean,
+  ): Promise<ProjectConfig[]>;
+  claimProjectVolume(
+    projectId: string,
+    device: string,
+    prefixOverride?: string,
+  ): Promise<{
+    label: string;
+    timestamp: string;
+    collision: number;
+    prefix: string;
+    project: ProjectConfig;
+  }>;
+  exportReport(
+    id: string,
+    format: "pdf" | "json" | "mhl" | "ascmhl",
+  ): Promise<string | null>;
   exportDailyReport(date: string, projectId?: string): Promise<string | null>;
-  exportProjectReport(projectId: string, format: "pdf" | "json" | "csv" | "bundle"): Promise<string | null>;
+  exportProjectReport(
+    projectId: string,
+    format: "pdf" | "json" | "csv" | "bundle",
+  ): Promise<string | null>;
   exportResolveCsv(date: string, projectId?: string): Promise<string | null>;
-  inspectMedia(path: string): Promise<{name:string;path:string;size:number;modifiedAt:number;duration?:string;video?:string;audio?:string;timecode?:string;camera?:string;creationTime?:string;resolution?:string;frameRate?:string;colorSpace?:string;thumbnail?:string;thumbnailPath?:string;waveform?:string;waveformPath?:string}>;
+  inspectMedia(path: string): Promise<{
+    name: string;
+    path: string;
+    size: number;
+    modifiedAt: number;
+    duration?: string;
+    video?: string;
+    audio?: string;
+    timecode?: string;
+    camera?: string;
+    creationTime?: string;
+    resolution?: string;
+    frameRate?: string;
+    colorSpace?: string;
+    thumbnail?: string;
+    thumbnailPath?: string;
+    waveform?: string;
+    waveformPath?: string;
+  }>;
   getProxyJobs(): Promise<ProxyJob[]>;
+  getProxyPresets(): Promise<SavedProxyPreset[]>;
+  saveProxyPreset(
+    value: Partial<SavedProxyPreset> & { name: string },
+  ): Promise<SavedProxyPreset[]>;
+  deleteProxyPreset(id: string): Promise<SavedProxyPreset[]>;
   enqueueProxy(
     inputs: string[],
     out: string,
     format: "h264" | "prores",
     resolution: string,
-    options?: { preset?: "review" | "editorial" | "offline"; namingTemplate?: string;bitrateMbps?:number;container?:"mp4"|"mov"|"mkv" },
+    options?: {
+      preset?: "review" | "editorial" | "offline";
+      namingTemplate?: string;
+      bitrateMbps?: number;
+      container?: "mp4" | "mov" | "mkv";
+      dependsOn?: string[];
+      chain?: boolean;
+    },
   ): Promise<ProxyJob[]>;
   cancelProxy(id?: string): Promise<void>;
   pauseProxy(id: string): Promise<void>;
   resumeProxy(id: string): Promise<void>;
   retryProxy(id: string): Promise<void>;
   deleteProxy(id: string): Promise<void>;
-  exportProxyDelivery(format: "resolve" | "premiere" | "fcpxml" | "json"): Promise<string | null>;
+  exportProxyDelivery(
+    format: "resolve" | "premiere" | "fcpxml" | "json",
+  ): Promise<string | null>;
   exportProxyPackage(): Promise<string | null>;
   onProxyJobs(callback: (jobs: ProxyJob[]) => void): () => void;
   onTaskSettled(callback: (task: BackupTask) => void): () => void;

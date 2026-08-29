@@ -93,9 +93,9 @@ it("applies proxy naming templates without overwriting existing files", async ()
   } finally { await fs.rm(root, { recursive: true, force: true }); }
 });
 it("exports Resolve, Premiere, Final Cut and JSON proxy delivery manifests", () => {
-  const jobs: any[] = [{ id: "p1", input: "/media/A001.mov", name: "A001.mov", outputDir: "/proxy", outputPath: "/proxy/A001_proxy.mov", format: "prores", resolution: "1080p", status: "completed", progress: 100, createdAt: 1, timecode: "01:00:00:00", sourceFrameRate: "25", sourceAudio: "pcm" }];
+  const jobs: any[] = [{ id: "p1", input: "/media/A001.mov", name: "A001.mov", outputDir: "/proxy", outputPath: "/proxy/A001_proxy.mov", format: "prores", resolution: "1080p", status: "completed", progress: 100, createdAt: 1, timecode: "01:00:00:00", sourceFrameRate: "25", sourceAudio: "pcm",sourceDuration:"00:00:12.500" }];
   expect(generateDeliveryManifest(jobs, "resolve")).toContain("Media Path,Clip Name");
   expect(generateDeliveryManifest(jobs, "premiere")).toContain("Start Timecode");
-  expect(generateDeliveryManifest(jobs, "fcpxml")).toContain("<fcpxml version=\"1.10\">");
+  expect(generateDeliveryManifest(jobs, "fcpxml")).toContain("duration=\"12500/1000s\"");
   expect(JSON.parse(generateDeliveryManifest(jobs, "json")).proxies).toHaveLength(1);
 });
