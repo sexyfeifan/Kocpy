@@ -85,6 +85,7 @@ import {
   type UpdateInfo,
   type TransferPerformance,
   type ExistingImportPreview,
+  type ExistingImportProgress,
 } from "./api";
 import { Composer } from "./Composer";
 import { ProjectEditor } from "./ProjectEditor";
@@ -249,6 +250,17 @@ const performanceText = (performance?: TransferPerformance) =>
   performance?.samples
     ? `平均 ${bytes(performance.average)}/s · P95 ${bytes(performance.p95)}/s · 峰值 ${bytes(performance.peak)}/s${performance.stalls ? ` · ${performance.stalls} 次停顿` : ""}`
     : "样本不足";
+const taskTrustState = (task: BackupTask) => {
+  if (!task.provenance || task.provenance === "kocpy-transfer")
+    return { status: task.status, label: statusText[task.status] };
+  if (task.confidence === "verified")
+    return { status: "completed", label: "外部清单校验通过" };
+  if (task.confidence === "baseline" && task.status === "completed")
+    return { status: "completed", label: "首次基线已建立" };
+  if (task.provenance === "manifest-import" && task.status === "failed")
+    return { status: "failed", label: "外部清单不匹配" };
+  return { status: "unverified", label: "已识别 · 待建立基线" };
+};
 export function App() {
   const [page, setPage] = useState<Page>("overview"),
     [tasks, setTasks] = useState<BackupTask[]>([]),
@@ -265,6 +277,7 @@ export function App() {
       project: ProjectConfig;
       preview: ExistingImportPreview;
     } | null>(null),
+    [existingBaseline, setExistingBaseline] = useState<BackupTask | null>(null),
     [detail, setDetail] = useState<string | null>(null),
     [detailTask, setDetailTask] = useState<BackupTask | null>(null),
     [projectDetailId, setProjectDetailId] = useState<string | null>(null);
@@ -587,7 +600,9 @@ export function App() {
     });
   const recoveryTasks = tasks.filter(
     (task) =>
-      ["failed", "cancelled", "paused", "pending"].includes(task.status) ||
+      ["failed", "cancelled", "paused", "pending", "unverified"].includes(
+        task.status,
+      ) ||
       task.destinations.some(
         (destination) =>
           destination.available === false ||
@@ -601,21 +616,29 @@ export function App() {
     project: ProjectConfig,
     dateValue: string,
     device?: string,
+    decision: "unused" | "expected" | "clear" = "unused",
   ) => {
     const next = {
       ...project,
       restDays: [...(project.restDays || [])],
       unusedDevicesByDate: { ...(project.unusedDevicesByDate || {}) },
+      expectedDevicesByDate: { ...(project.expectedDevicesByDate || {}) },
     };
     if (!device)
       next.restDays = next.restDays.includes(dateValue)
         ? next.restDays.filter((date) => date !== dateValue)
         : [...next.restDays, dateValue];
     else {
-      const values = [...(next.unusedDevicesByDate[dateValue] || [])];
-      next.unusedDevicesByDate[dateValue] = values.includes(device)
-        ? values.filter((value) => value !== device)
-        : [...values, device];
+      const unused = [...(next.unusedDevicesByDate[dateValue] || [])].filter(
+          (value) => value !== device,
+        ),
+        expected = [...(next.expectedDevicesByDate[dateValue] || [])].filter(
+          (value) => value !== device,
+        );
+      if (decision === "unused") unused.push(device);
+      if (decision === "expected") expected.push(device);
+      next.unusedDevicesByDate[dateValue] = unused;
+      next.expectedDevicesByDate[dateValue] = expected;
     }
     setProjects(await api.saveProject(next, false));
   };
@@ -627,7 +650,7 @@ export function App() {
           <img src="./icon.png" alt="Kocpy 图标" />
           <div>
             <strong>
-              Kocpy<span>0.1.5</span>
+              Kocpy<span>0.1.6</span>
             </strong>
             <small>素材工作台</small>
           </div>
@@ -684,7 +707,7 @@ export function App() {
                   ? `可升级 ${updateInfo.latest}`
                   : "检查更新"}
               </span>
-              <b>v0.1.5</b>
+              <b>v0.1.6</b>
             </button>
             <div className="sidebar-author-links">
               <span>
@@ -1032,13 +1055,16 @@ export function App() {
                               <strong>{project.name}</strong>
                               <small>
                                 {summary.pending.length
-                                  ? `${summary.pending.length} 个日期/设备单元待完成`
-                                  : "全部单元满足收工要求"}
+                                  ? `${summary.pending.length} 个单元明确需处理${summary.unconfirmed.length ? ` · ${summary.unconfirmed.length} 个待确认` : ""}`
+                                  : summary.unconfirmed.length
+                                    ? `${summary.unconfirmed.length} 个单元待确认是否使用`
+                                    : "全部单元满足收工要求"}
                               </small>
                             </span>
                             <b
                               className={
-                                summary.pending.length
+                                summary.pending.length ||
+                                summary.unconfirmed.length
                                   ? "amber-text"
                                   : "green-text"
                               }
@@ -1688,11 +1714,14 @@ export function App() {
                         <ShieldCheck size={16} />
                         <span>
                           {projectDetailCloseout?.pending.length
-                            ? `仍有 ${projectDetailCloseout.pending.length} 个日期/设备单元待完成。`
-                            : "项目全部单元已满足要求。"}{" "}
+                            ? `有 ${projectDetailCloseout.pending.length} 个日期/设备单元明确需要处理。`
+                            : "当前没有明确缺失或校验异常。"}{" "}
+                          {projectDetailCloseout?.unconfirmed.length
+                            ? `另有 ${projectDetailCloseout.unconfirmed.length} 个单元当天未发现素材，等待确认是否使用。`
+                            : "所有空白单元均已确认。"}{" "}
                           收工标准：每个使用中的设备至少有{" "}
                           {projectDetail.requiredCopies || 2}{" "}
-                          份物理独立校验副本。点击状态可标记休息日或当天未使用设备。
+                          份物理独立校验副本。没有文件夹不会自动等同于当天未使用。
                         </span>
                       </div>
                       <div className="project-matrix">
@@ -1745,26 +1774,60 @@ export function App() {
                                     ),
                                   )}
                                 </span>
-                                <button
-                                  className={
-                                    cell.exempt ||
-                                    (rows.length && cell.safe === rows.length)
-                                      ? "green-text"
-                                      : rows.length
-                                        ? "amber-text"
-                                        : "muted"
-                                  }
-                                  onClick={() =>
-                                    void updateProjectSchedule(
-                                      projectDetail,
-                                      shootingDate,
-                                      deviceCell.scheduleKey,
-                                    )
-                                  }
-                                  title="切换当天未使用标记"
-                                >
-                                  {cell.label}
-                                </button>
+                                {cell.unconfirmed ? (
+                                  <span className="matrix-decisions">
+                                    <button
+                                      className="muted"
+                                      onClick={() =>
+                                        void updateProjectSchedule(
+                                          projectDetail,
+                                          shootingDate,
+                                          deviceCell.scheduleKey,
+                                          "unused",
+                                        )
+                                      }
+                                    >
+                                      确认未使用
+                                    </button>
+                                    <button
+                                      className="amber-text"
+                                      onClick={() =>
+                                        void updateProjectSchedule(
+                                          projectDetail,
+                                          shootingDate,
+                                          deviceCell.scheduleKey,
+                                          "expected",
+                                        )
+                                      }
+                                    >
+                                      应该有素材
+                                    </button>
+                                  </span>
+                                ) : (
+                                  <button
+                                    className={
+                                      cell.exempt ||
+                                      (rows.length && cell.safe === rows.length)
+                                        ? "green-text"
+                                        : "amber-text"
+                                    }
+                                    onClick={() =>
+                                      !rows.length
+                                        ? void updateProjectSchedule(
+                                            projectDetail,
+                                            shootingDate,
+                                            deviceCell.scheduleKey,
+                                            "clear",
+                                          )
+                                        : undefined
+                                    }
+                                    title={
+                                      !rows.length ? "恢复为待确认" : cell.label
+                                    }
+                                  >
+                                    {cell.label}
+                                  </button>
+                                )}
                               </div>
                             );
                           }),
@@ -1798,6 +1861,35 @@ export function App() {
                             </Button>
                           ),
                         )}
+                        <Button
+                          kind="subtle"
+                          onClick={() =>
+                            void act(async () => {
+                              const analysis =
+                                await api.reanalyzeExistingProject(
+                                  projectDetail.id,
+                                  false,
+                                );
+                              setConfirm({
+                                text: `检测到 ${analysis.importedTasks} 条接管记录；可修正 ${analysis.metadataUpdated} 条目录元数据、合并 ${analysis.duplicatesFound} 条内容完全一致的重复记录。另有 ${analysis.baselinesNeeded} 条记录仍需建立基线。只整理 Kocpy 记录，不移动或删除素材文件。`,
+                                run: async () => {
+                                  const result =
+                                    await api.reanalyzeExistingProject(
+                                      projectDetail.id,
+                                      true,
+                                    );
+                                  await refresh();
+                                  notify(
+                                    `重新分析完成：修正 ${result.metadataUpdated} 条，合并 ${result.duplicatesMerged} 条重复记录`,
+                                  );
+                                },
+                              });
+                            })
+                          }
+                        >
+                          <ScanLine size={14} />
+                          重新分析接管
+                        </Button>
                       </div>
                       {projectDetailTasks.length > 0 && (
                         <div className="project-task-breakdown">
@@ -1824,7 +1916,31 @@ export function App() {
                                   {task.totalFiles} 个文件 ·{" "}
                                   {bytes(task.totalBytes)}
                                 </small>
-                                <Badge status={task.status} />
+                                <span className="task-state-actions">
+                                  {(() => {
+                                    const trust = taskTrustState(task);
+                                    return (
+                                      <span
+                                        className={`badge ${trust.status}`}
+                                        title={task.errorMessage}
+                                      >
+                                        <i />
+                                        {trust.label}
+                                      </span>
+                                    );
+                                  })()}
+                                  {task.provenance &&
+                                    task.provenance !== "kocpy-transfer" &&
+                                    task.status !== "completed" && (
+                                      <button
+                                        onClick={() =>
+                                          setExistingBaseline(task)
+                                        }
+                                      >
+                                        建立首次基线
+                                      </button>
+                                    )}
+                                </span>
                               </div>
                             ))}
                         </div>
@@ -2148,6 +2264,17 @@ export function App() {
               await refresh();
               setProjects(await api.getProjects());
               notify("既有备份已接管到项目；可信度已明确记录");
+            }}
+          />
+        )}
+        {existingBaseline && (
+          <ExistingBaselineModal
+            task={existingBaseline}
+            onClose={() => setExistingBaseline(null)}
+            onCompleted={async () => {
+              setExistingBaseline(null);
+              await refresh();
+              notify("现存副本已完成读取并建立首次哈希基线");
             }}
           />
         )}
@@ -3031,7 +3158,11 @@ function ExistingImportModal({
 }) {
   const [mode, setMode] = useState<
       "manifest-import" | "external-baseline" | "unverified-import"
-    >(value.preview.manifest ? "manifest-import" : "external-baseline"),
+    >(
+      value.preview.manifest && value.preview.detectedStructure === "card"
+        ? "manifest-import"
+        : "external-baseline",
+    ),
     [scope, setScope] = useState<"card" | "day" | "project">(
       value.preview.detectedStructure === "project"
         ? "project"
@@ -3046,7 +3177,16 @@ function ExistingImportModal({
         today(),
     ),
     [busy, setBusy] = useState(false),
-    [error, setError] = useState("");
+    [error, setError] = useState(""),
+    [progress, setProgress] = useState<ExistingImportProgress | null>(null);
+  const jobIdRef = useRef("");
+  useEffect(
+    () =>
+      api.onExistingImportProgress((payload) => {
+        if (payload.jobId === jobIdRef.current) setProgress(payload);
+      }),
+    [],
+  );
   const count =
     scope === "card"
       ? 1
@@ -3068,7 +3208,7 @@ function ExistingImportModal({
             <span className="eyebrow">ADOPT EXISTING MEDIA</span>
             <h2>接管既有备份</h2>
           </div>
-          <Button kind="icon" title="关闭" onClick={onClose}>
+          <Button kind="icon" title="关闭" onClick={onClose} disabled={busy}>
             <X size={19} />
           </Button>
         </div>
@@ -3151,17 +3291,63 @@ function ExistingImportModal({
               <option value="unverified-import">仅导入结构，稍后校验</option>
             </select>
           </label>
+          {progress && (
+            <div className="existing-import-progress">
+              <div className="row between">
+                <strong>{progress.message}</strong>
+                <span>
+                  {progress.totalBytes
+                    ? `${Math.min(100, Math.round((progress.completedBytes / progress.totalBytes) * 100))}%`
+                    : "分析中"}
+                </span>
+              </div>
+              <div className="progress-track">
+                <i
+                  style={{
+                    width: `${progress.totalBytes ? Math.min(100, (progress.completedBytes / progress.totalBytes) * 100) : 3}%`,
+                  }}
+                />
+              </div>
+              <div className="existing-progress-metrics">
+                <span>
+                  素材卷 {progress.completedCandidates} /{" "}
+                  {progress.totalCandidates || "—"}
+                </span>
+                <span>
+                  文件 {progress.completedFiles} / {progress.totalFiles || "—"}
+                </span>
+                <span>
+                  {bytes(progress.completedBytes)} /{" "}
+                  {bytes(progress.totalBytes)}
+                </span>
+                <span>
+                  {progress.speedBps
+                    ? `${bytes(progress.speedBps)}/s · 剩余 ${duration(progress.eta)}`
+                    : "正在准备读取"}
+                </span>
+              </div>
+              {(progress.currentCandidate || progress.currentFile) && (
+                <small className="mono">
+                  {progress.currentCandidate || ""}
+                  {progress.currentFile ? ` / ${progress.currentFile}` : ""}
+                </small>
+              )}
+            </div>
+          )}
           {error && <div className="error-box">{error}</div>}
         </div>
         <div className="modal-footer">
           <span className="muted small">将创建 {count} 个独立素材卷记录</span>
-          <Button kind="subtle" onClick={onClose}>
+          <Button kind="subtle" onClick={onClose} disabled={busy}>
             取消
           </Button>
           <Button
             kind="primary"
             disabled={busy || count < 1}
             onClick={() => {
+              const nextJobId = crypto.randomUUID();
+              jobIdRef.current = nextJobId;
+              setProgress(null);
               setBusy(true);
               setError("");
               void api
@@ -3171,6 +3357,7 @@ function ExistingImportModal({
                   mode,
                   scope,
                   dateValue,
+                  nextJobId,
                 )
                 .then(onImported)
                 .catch((reason) =>
@@ -3185,6 +3372,130 @@ function ExistingImportModal({
               <Database size={15} />
             )}
             识别校验并接管
+          </Button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function ExistingBaselineModal({
+  task,
+  onClose,
+  onCompleted,
+}: {
+  task: BackupTask;
+  onClose: () => void;
+  onCompleted: () => Promise<void>;
+}) {
+  const [busy, setBusy] = useState(false),
+    [progress, setProgress] = useState<ExistingImportProgress | null>(null),
+    [error, setError] = useState("");
+  const jobIdRef = useRef("");
+  useEffect(
+    () =>
+      api.onExistingImportProgress((payload) => {
+        if (payload.jobId === jobIdRef.current) setProgress(payload);
+      }),
+    [],
+  );
+  const percent = progress?.totalBytes
+    ? Math.min(100, (progress.completedBytes / progress.totalBytes) * 100)
+    : 0;
+  return (
+    <div className="modal-backdrop top-layer">
+      <section
+        className="form-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label="建立首次哈希基线"
+      >
+        <div className="modal-header">
+          <div>
+            <span className="eyebrow">ESTABLISH BASELINE</span>
+            <h2>建立首次哈希基线</h2>
+          </div>
+          <Button kind="icon" title="关闭" onClick={onClose} disabled={busy}>
+            <X size={19} />
+          </Button>
+        </div>
+        <div className="form-body">
+          <div className="notice amber">
+            <ShieldCheck size={17} />
+            <span>
+              Kocpy
+              将完整读取现存文件并记录哈希。这可以证明以后文件是否变化，但不能追溯证明最初从素材卡接收时已经校验。
+            </span>
+          </div>
+          <div className="import-preview">
+            <strong>{task.name}</strong>
+            <span>
+              {task.totalFiles} 个文件 · {bytes(task.totalBytes)} ·{" "}
+              {task.devices.join(" / ") || "未分类设备"}
+            </span>
+            <small className="mono">{task.sourcePath}</small>
+          </div>
+          {progress && (
+            <div className="existing-import-progress">
+              <div className="row between">
+                <strong>{progress.message}</strong>
+                <span>{Math.round(percent)}%</span>
+              </div>
+              <div className="progress-track">
+                <i style={{ width: `${percent}%` }} />
+              </div>
+              <div className="existing-progress-metrics">
+                <span>
+                  文件 {progress.completedFiles} / {progress.totalFiles}
+                </span>
+                <span>
+                  {bytes(progress.completedBytes)} /{" "}
+                  {bytes(progress.totalBytes)}
+                </span>
+                <span>
+                  {progress.speedBps
+                    ? `${bytes(progress.speedBps)}/s`
+                    : "准备读取"}
+                </span>
+                <span>
+                  {progress.eta ? `剩余 ${duration(progress.eta)}` : "—"}
+                </span>
+              </div>
+              {progress.currentFile && (
+                <small className="mono">{progress.currentFile}</small>
+              )}
+            </div>
+          )}
+          {error && <div className="error-box">{error}</div>}
+        </div>
+        <div className="modal-footer">
+          <Button kind="subtle" onClick={onClose} disabled={busy}>
+            取消
+          </Button>
+          <Button
+            kind="primary"
+            disabled={busy}
+            onClick={() => {
+              const nextJobId = crypto.randomUUID();
+              jobIdRef.current = nextJobId;
+              setProgress(null);
+              setError("");
+              setBusy(true);
+              void api
+                .establishExistingBaseline(task.id, nextJobId)
+                .then(onCompleted)
+                .catch((reason) =>
+                  setError(String(reason).replace(/^Error: /, "")),
+                )
+                .finally(() => setBusy(false));
+            }}
+          >
+            {busy ? (
+              <LoaderCircle size={15} className="spin" />
+            ) : (
+              <ShieldCheck size={15} />
+            )}
+            开始完整读取
           </Button>
         </div>
       </section>
@@ -3383,12 +3694,15 @@ function HelpPage({
         "选择单张素材卡、拍摄日根目录或项目根目录。",
         "检查识别出的日期、机位与素材卷，并选择接管范围。",
         "有 MHL/SHA 清单时选择清单比对；否则建立接管时基线或仅导入结构。",
-        "确认后每张卡会建立独立记录，并计入项目素材覆盖。",
+        "确认后通过素材卷、文件、字节、速度和预计时间查看读取进度。",
+        "只有清单通过或首次基线建立完成的记录才计为可信物理副本。",
+        "旧接管记录可在项目详情选择“重新分析接管”，修正元数据并合并内容一致的重复记录。",
       ],
       tips: [
         "目录命名越规范，自动识别越准确。",
         "接管时基线只证明接管当时的内容，不等于原始现场校验。",
         "未验证导入不会显示为安全副本。",
+        "没有发现设备文件夹只表示待确认；确认未使用后才会从收工缺口中跳过。",
       ],
       page: "projects",
     },
@@ -5113,7 +5427,7 @@ function SettingsPage({
         <img src="./icon.png" alt="Kocpy 图标" />
         <div>
           <h3>
-            Kocpy <span>0.1.5</span>
+            Kocpy <span>0.1.6</span>
           </h3>
           <p>从现场接卡、项目归档到交付报告，为每一份创作保留可靠副本。</p>
           <small>本地优先 · 独立校验 · 项目全周期记录 · @sexyfeifan</small>

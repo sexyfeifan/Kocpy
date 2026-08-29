@@ -5,6 +5,7 @@ export type TaskStatus =
   | "paused"
   | "verifying"
   | "completed"
+  | "unverified"
   | "failed"
   | "cancelled";
 export type CopyMode = "normal" | "mirror";
@@ -241,6 +242,32 @@ export interface ProgressPayload {
   unchangedBytes?: number;
 }
 
+export interface ExistingImportProgress {
+  jobId: string;
+  phase: "analyzing" | "hashing" | "finalizing" | "completed" | "failed";
+  message: string;
+  totalFiles: number;
+  completedFiles: number;
+  totalBytes: number;
+  completedBytes: number;
+  totalCandidates: number;
+  completedCandidates: number;
+  currentCandidate?: string;
+  currentFile?: string;
+  speedBps: number;
+  eta: number;
+}
+
+export interface ExistingReanalysisResult {
+  importedTasks: number;
+  metadataUpdated: number;
+  baselinesNeeded: number;
+  duplicatesFound: number;
+  duplicatesMerged: number;
+  devicesDetected: string[];
+  applied: boolean;
+}
+
 export interface VolumeInfo {
   path: string;
   label: string;
@@ -296,6 +323,7 @@ export interface ProjectConfig {
   createdAt?: number;
   restDays?: string[];
   unusedDevicesByDate?: Record<string, string[]>;
+  expectedDevicesByDate?: Record<string, string[]>;
   requiredCopies?: number;
   namingRule?: string;
   completionActions?: Array<"report" | "delivery" | "proxy" | "eject">;

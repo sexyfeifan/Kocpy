@@ -1473,7 +1473,51 @@ app.whenReady().then(async () => {
       mode: "manifest-import" | "external-baseline" | "unverified-import",
       scope: "card" | "day" | "project",
       selectedDate?: string,
+      jobId = randomUUID(),
     ) => {
+      const startedAt = Date.now();
+      let completedBytes = 0,
+        completedFiles = 0,
+        completedCandidates = 0,
+        lastEmittedAt = 0;
+      const emitImportProgress = (
+        phase: "analyzing" | "hashing" | "finalizing" | "completed" | "failed",
+        message: string,
+        totals: {
+          totalFiles?: number;
+          totalBytes?: number;
+          totalCandidates?: number;
+          currentCandidate?: string;
+          currentFile?: string;
+          force?: boolean;
+        } = {},
+      ) => {
+        const now = Date.now();
+        if (!totals.force && now - lastEmittedAt < 120) return;
+        lastEmittedAt = now;
+        const elapsed = Math.max(0.001, (now - startedAt) / 1000),
+          speedBps = completedBytes / elapsed,
+          remaining = Math.max(0, (totals.totalBytes || 0) - completedBytes);
+        if (main && !main.isDestroyed())
+          main.webContents.send("existing:progress", {
+            jobId,
+            phase,
+            message,
+            totalFiles: totals.totalFiles || 0,
+            completedFiles,
+            totalBytes: totals.totalBytes || 0,
+            completedBytes,
+            totalCandidates: totals.totalCandidates || 0,
+            completedCandidates,
+            currentCandidate: totals.currentCandidate,
+            currentFile: totals.currentFile,
+            speedBps,
+            eta: speedBps > 0 ? remaining / speedBps : 0,
+          });
+      };
+      emitImportProgress("analyzing", "正在重新扫描并分析目录结构", {
+        force: true,
+      });
       const projects = (
           await store.read<ProjectConfig[]>("projects.json", [])
         ).map(normalizeProject),
@@ -1492,21 +1536,101 @@ app.whenReady().then(async () => {
             ? "所选拍摄日下未识别到素材卷"
             : "所选目录下未识别到可接管的素材卷",
         );
+      const totalFiles = candidates.reduce((sum, item) => sum + item.files, 0),
+        totalBytes = candidates.reduce((sum, item) => sum + item.bytes, 0),
+        totalCandidates = candidates.length;
       const tasks = [];
-      for (const candidate of candidates) {
-        const candidateRoot =
-          candidate.relativeRoot === "."
-            ? root
-            : path.join(root, candidate.relativeRoot);
-        tasks.push(
-          await importExistingBackup(project, candidateRoot, mode, {
-            shootingDate: candidate.shootingDate || selectedDate,
-            device: candidate.device,
-            cameraPosition: candidate.cameraPosition,
-            card: candidate.card || path.basename(candidateRoot),
-          }),
-        );
+      try {
+        for (const candidate of candidates) {
+          const candidateRoot =
+            candidate.relativeRoot === "."
+              ? root
+              : path.join(root, candidate.relativeRoot);
+          const currentCandidate =
+            candidate.card || path.basename(candidateRoot);
+          emitImportProgress(
+            mode === "unverified-import" ? "finalizing" : "hashing",
+            mode === "unverified-import"
+              ? "正在导入目录结构"
+              : "正在读取文件并建立可信校验记录",
+            {
+              totalFiles,
+              totalBytes,
+              totalCandidates,
+              currentCandidate,
+              force: true,
+            },
+          );
+          tasks.push(
+            await importExistingBackup(
+              project,
+              candidateRoot,
+              mode,
+              {
+                shootingDate: candidate.shootingDate || selectedDate,
+                device: candidate.device,
+                cameraPosition: candidate.cameraPosition,
+                card: currentCandidate,
+              },
+              {
+                onBytes: (count, currentFile) => {
+                  completedBytes += count;
+                  emitImportProgress("hashing", "正在读取文件并计算哈希", {
+                    totalFiles,
+                    totalBytes,
+                    totalCandidates,
+                    currentCandidate,
+                    currentFile,
+                  });
+                },
+                onFile: (currentFile) => {
+                  completedFiles++;
+                  emitImportProgress(
+                    mode === "unverified-import" ? "finalizing" : "hashing",
+                    mode === "unverified-import"
+                      ? "正在记录文件结构"
+                      : "文件校验读取完成",
+                    {
+                      totalFiles,
+                      totalBytes,
+                      totalCandidates,
+                      currentCandidate,
+                      currentFile,
+                    },
+                  );
+                },
+              },
+            ),
+          );
+          completedCandidates++;
+          if (mode === "unverified-import") completedBytes += candidate.bytes;
+          emitImportProgress(
+            mode === "unverified-import" ? "finalizing" : "hashing",
+            `${currentCandidate} 已处理完成`,
+            {
+              totalFiles,
+              totalBytes,
+              totalCandidates,
+              currentCandidate,
+              force: true,
+            },
+          );
+        }
+      } catch (error) {
+        emitImportProgress("failed", String(error), {
+          totalFiles,
+          totalBytes,
+          totalCandidates,
+          force: true,
+        });
+        throw error;
       }
+      emitImportProgress("finalizing", "正在整理任务并更新项目索引", {
+        totalFiles,
+        totalBytes,
+        totalCandidates,
+        force: true,
+      });
       for (const task of tasks) engine.loadTask(task);
       project.boundRoots = [
         ...(project.boundRoots || []),
@@ -1518,7 +1642,279 @@ app.whenReady().then(async () => {
         .sort()[0];
       await Promise.all([store.write("projects.json", projects), persist()]);
       await catalog.rebuild(engine.getAllTasks(), projects);
+      completedBytes = totalBytes;
+      completedFiles = totalFiles;
+      emitImportProgress("completed", "接管完成", {
+        totalFiles,
+        totalBytes,
+        totalCandidates,
+        force: true,
+      });
       return tasks;
+    },
+  );
+  handle(
+    "existing:reanalyze-project",
+    async (projectId: string, apply = false) => {
+      const projects = (
+          await store.read<ProjectConfig[]>("projects.json", [])
+        ).map(normalizeProject),
+        project = projects.find((item) => item.id === projectId);
+      if (!project) throw new Error("项目不存在");
+      const importedTasks = engine
+        .getAllTasks()
+        .filter(
+          (task) =>
+            task.projectId === projectId &&
+            task.provenance &&
+            task.provenance !== "kocpy-transfer",
+        );
+      let metadataUpdated = 0;
+      const devicesDetected = new Set<string>();
+      for (const task of importedTasks) {
+        const preview = await previewExistingBackup(
+            task.sourcePath,
+            project,
+            "card",
+            task.shootingDate,
+          ),
+          inferred = preview.candidates[0],
+          nextDevice = inferred?.device || task.devices[0],
+          nextPosition = inferred?.cameraPosition || task.cameraPosition,
+          nextDate = inferred?.shootingDate || task.shootingDate,
+          nextCard = inferred?.card || task.name;
+        if (nextDevice) devicesDetected.add(nextDevice);
+        const changed =
+          nextDevice !== task.devices[0] ||
+          nextPosition !== task.cameraPosition ||
+          nextDate !== task.shootingDate ||
+          nextCard !== task.name;
+        if (changed) {
+          metadataUpdated++;
+          if (apply) {
+            task.devices = [nextDevice || "未分类设备"];
+            task.cameraPosition = nextPosition;
+            task.shootingDate = nextDate;
+            task.name = nextCard;
+          }
+        }
+      }
+      const fingerprintGroups = new Map<string, BackupTask[]>();
+      for (const task of importedTasks) {
+        if (
+          !task.fileRecords.length ||
+          task.fileRecords.some((record) => !record.srcChecksum)
+        )
+          continue;
+        const fingerprint = createHash("sha256")
+          .update(
+            JSON.stringify({
+              shootingDate: task.shootingDate,
+              files: task.fileRecords
+                .map((record) => [
+                  record.relativePath,
+                  record.size,
+                  record.srcChecksum,
+                ])
+                .sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
+            }),
+          )
+          .digest("hex");
+        fingerprintGroups.set(fingerprint, [
+          ...(fingerprintGroups.get(fingerprint) || []),
+          task,
+        ]);
+      }
+      const duplicateGroups = [...fingerprintGroups.values()].filter(
+          (group) => group.length > 1,
+        ),
+        duplicatesFound = duplicateGroups.reduce(
+          (sum, group) => sum + group.length - 1,
+          0,
+        );
+      let duplicatesMerged = 0;
+      if (apply) {
+        for (const group of duplicateGroups) {
+          const ordered = [...group].sort(
+              (a, b) =>
+                Number(b.status === "completed") -
+                Number(a.status === "completed"),
+            ),
+            primary = ordered[0];
+          for (const duplicate of ordered.slice(1)) {
+            for (const destination of duplicate.destinations)
+              if (
+                !primary.destinations.some(
+                  (existing) =>
+                    (existing.resolvedPath || existing.path) ===
+                    (destination.resolvedPath || destination.path),
+                )
+              )
+                primary.destinations.push(destination);
+            for (const record of duplicate.fileRecords) {
+              const target = primary.fileRecords.find(
+                (candidate) =>
+                  candidate.relativePath === record.relativePath &&
+                  candidate.srcChecksum === record.srcChecksum,
+              );
+              if (target)
+                for (const destination of record.destinations)
+                  if (
+                    !target.destinations.some(
+                      (existing) => existing.path === destination.path,
+                    )
+                  )
+                    target.destinations.push(destination);
+            }
+            engine.deleteTask(duplicate.id);
+            duplicatesMerged++;
+          }
+        }
+        await persist();
+        await catalog.rebuild(engine.getAllTasks(), projects);
+      }
+      return {
+        importedTasks: importedTasks.length,
+        metadataUpdated,
+        baselinesNeeded: importedTasks.filter(
+          (task) => task.confidence === "unverified",
+        ).length,
+        duplicatesFound,
+        duplicatesMerged,
+        devicesDetected: [...devicesDetected].sort(),
+        applied: apply,
+      };
+    },
+  );
+  handle(
+    "existing:establish-baseline",
+    async (taskId: string, jobId = randomUUID()) => {
+      const task = engine.getTask(taskId);
+      if (!task || !task.provenance || task.provenance === "kocpy-transfer")
+        throw new Error("接管记录不存在");
+      const totalFiles = task.fileRecords.reduce(
+          (sum, record) => sum + Math.max(1, record.destinations.length),
+          0,
+        ),
+        totalBytes = task.fileRecords.reduce(
+          (sum, record) =>
+            sum + record.size * Math.max(1, record.destinations.length),
+          0,
+        ),
+        startedAt = Date.now();
+      let completedFiles = 0,
+        completedBytes = 0,
+        lastEmittedAt = 0;
+      const emit = (
+        phase: "hashing" | "completed" | "failed",
+        message: string,
+        currentFile?: string,
+        force = false,
+      ) => {
+        const now = Date.now();
+        if (!force && now - lastEmittedAt < 120) return;
+        lastEmittedAt = now;
+        const speedBps =
+            completedBytes / Math.max(0.001, (now - startedAt) / 1000),
+          eta = speedBps
+            ? Math.max(0, totalBytes - completedBytes) / speedBps
+            : 0;
+        if (main && !main.isDestroyed())
+          main.webContents.send("existing:progress", {
+            jobId,
+            phase,
+            message,
+            totalFiles,
+            completedFiles,
+            totalBytes,
+            completedBytes,
+            totalCandidates: 1,
+            completedCandidates: phase === "completed" ? 1 : 0,
+            currentCandidate: task.name,
+            currentFile,
+            speedBps,
+            eta,
+          });
+      };
+      emit("hashing", "正在读取现存副本并建立首次哈希基线", undefined, true);
+      try {
+        for (const record of task.fileRecords) {
+          const copies = record.destinations.length
+            ? record.destinations
+            : [
+                {
+                  path: path.join(task.sourcePath, record.relativePath),
+                  checksum: "",
+                  verified: false,
+                },
+              ];
+          let baseline = "";
+          for (const copy of copies) {
+            const checksum = await hashFile(
+              copy.path,
+              task.hashAlgorithm,
+              undefined,
+              (count) => {
+                completedBytes += count;
+                emit(
+                  "hashing",
+                  "正在读取现存副本并计算哈希",
+                  record.relativePath,
+                );
+              },
+            );
+            baseline ||= checksum;
+            copy.checksum = checksum;
+            copy.verified = checksum === baseline;
+            completedFiles++;
+            emit("hashing", "现存副本读取完成", record.relativePath, true);
+          }
+          record.srcChecksum = baseline;
+        }
+        for (const destination of task.destinations) {
+          const root = destination.resolvedPath || destination.path;
+          const copies = task.fileRecords.flatMap((record) =>
+            record.destinations.filter((copy) => inside(copy.path, root)),
+          );
+          destination.verified =
+            copies.length > 0 && copies.every((copy) => copy.verified);
+          destination.verifiedBytes = destination.verified
+            ? task.totalBytes
+            : copies
+                .filter((copy) => copy.verified)
+                .reduce((sum, copy) => {
+                  const record = task.fileRecords.find((item) =>
+                    item.destinations.includes(copy),
+                  );
+                  return sum + (record?.size || 0);
+                }, 0);
+          destination.verifyProgress = 100;
+        }
+        if (task.destinations.some((destination) => !destination.verified))
+          throw new Error("不同现存副本内容不一致，无法建立统一基线");
+        task.provenance = "external-baseline";
+        task.confidence = "baseline";
+        task.status = "completed";
+        task.verifiedBytes = task.totalBytes;
+        task.verifyProgress = 100;
+        task.lastVerifiedAt = Date.now();
+        task.errorMessage = undefined;
+        task.verifyLog = [
+          ...task.verifyLog,
+          "已重新读取全部现存文件并建立首次哈希基线；不代表原始现场接收校验",
+        ].slice(-120);
+        await Promise.all([persist(), catalog.upsertTask(task)]);
+        completedBytes = totalBytes;
+        completedFiles = totalFiles;
+        emit("completed", "首次哈希基线建立完成", undefined, true);
+        return task;
+      } catch (error) {
+        task.status = "failed";
+        task.errorMessage = String(error).replace(/^Error: /, "");
+        await Promise.all([persist(), catalog.upsertTask(task)]);
+        emit("failed", task.errorMessage, undefined, true);
+        throw error;
+      }
     },
   );
   handle("library:relink", async (taskId: string, relativePath: string) => {

@@ -44,15 +44,19 @@ export async function generateReport(
   const statusLabel =
     task.status === "completed"
       ? "备份成功"
-      : task.status === "failed"
-        ? "备份失败"
-        : "部分完成";
+      : task.status === "unverified"
+        ? "已识别，待建立基线"
+        : task.status === "failed"
+          ? "备份失败"
+          : "部分完成";
   const statusColor =
     task.status === "completed"
       ? "#22c55e"
-      : task.status === "failed"
-        ? "#ef4444"
-        : "#f59e0b";
+      : task.status === "unverified"
+        ? "#f59e0b"
+        : task.status === "failed"
+          ? "#ef4444"
+          : "#f59e0b";
 
   const duration =
     task.startedAt && task.completedAt
@@ -206,7 +210,7 @@ export async function generateReport(
 <div class="header">
   <div>
     <h1>Kocpy</h1>
-    <p>VERIFIED MEDIA TRANSFER REPORT · v0.1.5</p>
+    <p>VERIFIED MEDIA TRANSFER REPORT · v0.1.6</p>
     <p style="margin-top:8px;font-size:12px;color:#aaa">生成时间：${new Date().toLocaleString("zh-CN")}</p>
   </div>
   <div class="badge">${statusLabel}</div>
@@ -380,6 +384,11 @@ export async function generateProjectReport(
       ),
     )
     .join("");
-  const html = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><style>*{box-sizing:border-box}body{font-family:-apple-system,"PingFang SC",sans-serif;color:#24212c;padding:28px;background:#f5f3f7;font-size:11px}.cover{padding:28px;border-radius:16px;color:#fff;background:linear-gradient(135deg,#6d5ee8,#9a88ff);display:flex;justify-content:space-between}.cover h1{margin:0;font-size:25px}.cover p{margin:8px 0 0;color:#eeeaff}.period{font-size:15px}.summary{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:16px 0}.summary div,.section{background:#fff;border:1px solid #e7e2ee;border-radius:11px;padding:15px}.summary strong{display:block;font-size:19px}.summary span{display:block;color:#8b8493;font-size:8px;margin-top:5px}.section{margin-top:12px}.section h2{font-size:12px;margin:0 0 11px;padding-bottom:9px;border-bottom:1px solid #eee9f2}table{width:100%;border-collapse:collapse;table-layout:fixed}th{padding:8px;background:#eee9ff;color:#514783;text-align:left}td{padding:7px 8px;border-bottom:1px solid #eee;overflow-wrap:anywhere}tr{break-inside:avoid}.ok{color:#188b58}.warn{color:#bd4e5a}.muted{color:#999}.split{display:grid;grid-template-columns:1fr 1fr;gap:12px}.footer{text-align:center;color:#999;margin-top:18px}@page{size:A4;margin:12mm}@media print{body{padding:0;background:#fff}.section{break-inside:auto}}</style></head><body><div class="cover"><div><h1>Kocpy · 项目完整报告</h1><p>${esc(project.name)} · PROJECT MEDIA REPORT</p></div><div class="period">${esc(project.shootingDateStart || "-")} — ${esc(project.shootingDateEnd || project.shootingDateStart || "-")}<br>报告编号 ${esc(project.id.slice(0, 12).toUpperCase())}</div></div><div class="summary"><div><strong>${tasks.length}</strong><span>BACKUPS / 备份任务</span></div><div><strong>${completed} / ${tasks.length}</strong><span>SAFE TASKS / 达到副本要求</span></div><div><strong>${totalFiles}</strong><span>FILES / 文件</span></div><div><strong>${formatBytes(totalBytes)}</strong><span>MEDIA / 项目素材</span></div></div><div class="section"><h2>项目收工结论 · ${closeout.complete} / ${closeout.total} 个日期设备单元完成</h2><p class="${closeout.pending.length ? "warn" : "ok"}">${closeout.pending.length ? `仍有 ${closeout.pending.length} 个单元待处理` : "全部拍摄日和设备均满足收工要求"}</p></div><div class="section"><h2>日期 × 设备素材完成情况</h2><table><thead><tr><th>拍摄日期</th><th>设备 / 机位</th><th>素材卷</th><th>文件</th><th>素材量</th><th>收工状态</th></tr></thead><tbody>${matrixRows}</tbody></table></div><div class="split"><div class="section"><h2>每日素材趋势</h2><table><thead><tr><th>日期</th><th>素材卷</th><th>文件</th><th>素材量</th></tr></thead><tbody>${dailyRows}</tbody></table></div><div class="section"><h2>设备素材占比</h2><table><thead><tr><th>设备</th><th>素材卷</th><th>文件</th><th>素材量</th><th>占比</th></tr></thead><tbody>${deviceRows}</tbody></table></div></div><div class="section"><h2>全部备份任务</h2><table><thead><tr><th>日期</th><th>设备 / 机位</th><th>素材卷</th><th>文件</th><th>素材量</th><th>结论</th></tr></thead><tbody>${taskRows}</tbody></table></div><div class="section"><h2>目的地与独立校验</h2><table><thead><tr><th>素材卷</th><th>磁盘</th><th>最终路径</th><th>校验</th></tr></thead><tbody>${destinationRows}</tbody></table></div><div class="section"><h2>完整文件明细</h2><table><thead><tr><th>日期</th><th>设备</th><th>素材卷</th><th>文件路径</th><th>大小</th><th>副本校验</th></tr></thead><tbody>${fileRows}</tbody></table></div><div class="footer">Kocpy · @sexyfeifan · 生成时间 ${new Date().toLocaleString("zh-CN")}</div></body></html>`;
+  const closeoutMessage = closeout.pending.length
+    ? `有 ${closeout.pending.length} 个单元明确需要处理${closeout.unconfirmed.length ? `，另有 ${closeout.unconfirmed.length} 个单元待确认是否使用` : ""}`
+    : closeout.unconfirmed.length
+      ? `没有明确缺失；仍有 ${closeout.unconfirmed.length} 个单元待确认是否使用`
+      : "全部拍摄日和设备均满足收工要求";
+  const html = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><style>*{box-sizing:border-box}body{font-family:-apple-system,"PingFang SC",sans-serif;color:#24212c;padding:28px;background:#f5f3f7;font-size:11px}.cover{padding:28px;border-radius:16px;color:#fff;background:linear-gradient(135deg,#6d5ee8,#9a88ff);display:flex;justify-content:space-between}.cover h1{margin:0;font-size:25px}.cover p{margin:8px 0 0;color:#eeeaff}.period{font-size:15px}.summary{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:16px 0}.summary div,.section{background:#fff;border:1px solid #e7e2ee;border-radius:11px;padding:15px}.summary strong{display:block;font-size:19px}.summary span{display:block;color:#8b8493;font-size:8px;margin-top:5px}.section{margin-top:12px}.section h2{font-size:12px;margin:0 0 11px;padding-bottom:9px;border-bottom:1px solid #eee9f2}table{width:100%;border-collapse:collapse;table-layout:fixed}th{padding:8px;background:#eee9ff;color:#514783;text-align:left}td{padding:7px 8px;border-bottom:1px solid #eee;overflow-wrap:anywhere}tr{break-inside:avoid}.ok{color:#188b58}.warn{color:#bd4e5a}.muted{color:#999}.split{display:grid;grid-template-columns:1fr 1fr;gap:12px}.footer{text-align:center;color:#999;margin-top:18px}@page{size:A4;margin:12mm}@media print{body{padding:0;background:#fff}.section{break-inside:auto}}</style></head><body><div class="cover"><div><h1>Kocpy · 项目完整报告</h1><p>${esc(project.name)} · PROJECT MEDIA REPORT</p></div><div class="period">${esc(project.shootingDateStart || "-")} — ${esc(project.shootingDateEnd || project.shootingDateStart || "-")}<br>报告编号 ${esc(project.id.slice(0, 12).toUpperCase())}</div></div><div class="summary"><div><strong>${tasks.length}</strong><span>BACKUPS / 备份任务</span></div><div><strong>${completed} / ${tasks.length}</strong><span>SAFE TASKS / 达到副本要求</span></div><div><strong>${totalFiles}</strong><span>FILES / 文件</span></div><div><strong>${formatBytes(totalBytes)}</strong><span>MEDIA / 项目素材</span></div></div><div class="section"><h2>项目收工结论 · ${closeout.complete} / ${closeout.total} 个日期设备单元完成</h2><p class="${closeout.pending.length || closeout.unconfirmed.length ? "warn" : "ok"}">${closeoutMessage}</p></div><div class="section"><h2>日期 × 设备素材完成情况</h2><table><thead><tr><th>拍摄日期</th><th>设备 / 机位</th><th>素材卷</th><th>文件</th><th>素材量</th><th>收工状态</th></tr></thead><tbody>${matrixRows}</tbody></table></div><div class="split"><div class="section"><h2>每日素材趋势</h2><table><thead><tr><th>日期</th><th>素材卷</th><th>文件</th><th>素材量</th></tr></thead><tbody>${dailyRows}</tbody></table></div><div class="section"><h2>设备素材占比</h2><table><thead><tr><th>设备</th><th>素材卷</th><th>文件</th><th>素材量</th><th>占比</th></tr></thead><tbody>${deviceRows}</tbody></table></div></div><div class="section"><h2>全部备份任务</h2><table><thead><tr><th>日期</th><th>设备 / 机位</th><th>素材卷</th><th>文件</th><th>素材量</th><th>结论</th></tr></thead><tbody>${taskRows}</tbody></table></div><div class="section"><h2>目的地与独立校验</h2><table><thead><tr><th>素材卷</th><th>磁盘</th><th>最终路径</th><th>校验</th></tr></thead><tbody>${destinationRows}</tbody></table></div><div class="section"><h2>完整文件明细</h2><table><thead><tr><th>日期</th><th>设备</th><th>素材卷</th><th>文件路径</th><th>大小</th><th>副本校验</th></tr></thead><tbody>${fileRows}</tbody></table></div><div class="footer">Kocpy · @sexyfeifan · 生成时间 ${new Date().toLocaleString("zh-CN")}</div></body></html>`;
   return Buffer.from(html, "utf8");
 }

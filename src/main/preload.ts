@@ -50,6 +50,8 @@ contextBridge.exposeInMainWorld("api", {
   previewExistingBackup: call("existing:preview"),
   importExistingBackup: call("existing:import"),
   importExistingScope: call("existing:import-scope"),
+  reanalyzeExistingProject: call("existing:reanalyze-project"),
+  establishExistingBaseline: call("existing:establish-baseline"),
   relinkLibraryFile: call("library:relink"),
   getProjectCoverage: call("projects:coverage"),
   signProjectChecklist: call("projects:sign-checklist"),
@@ -109,5 +111,10 @@ contextBridge.exposeInMainWorld("api", {
     const listener = (_event: unknown, payload: unknown) => callback(payload);
     ipcRenderer.on("tasks:progress", listener);
     return () => ipcRenderer.removeListener("tasks:progress", listener);
+  },
+  onExistingImportProgress: (callback: (payload: unknown) => void) => {
+    const listener = (_event: unknown, payload: unknown) => callback(payload);
+    ipcRenderer.on("existing:progress", listener);
+    return () => ipcRenderer.removeListener("existing:progress", listener);
   },
 });

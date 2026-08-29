@@ -16,6 +16,7 @@ import { execFileSync } from "node:child_process";
 import { isTimeMachineVolume } from "../src/main/system";
 import {
   projectCellStatus,
+  projectCloseoutSummary,
   projectDeviceCells,
   verifiedPhysicalCopyCount,
 } from "../src/main/project-closeout";
@@ -192,7 +193,7 @@ describe("Persistence and reports", () => {
         [task],
       )
     ).toString();
-    expect(html).toContain("0 / 1 达到 2 份物理独立副本");
+    expect(html).toContain("0 / 1 个素材卷达到 2 份物理独立副本");
     expect(html).toContain("当天未使用");
     expect(html).toContain("休息日");
     expect(html).toContain("每日素材趋势");
@@ -266,5 +267,56 @@ describe("Persistence and reports", () => {
       projectCellStatus(configuredProject, [task], "2026-08-27", "FX3", "B")
         .complete,
     ).toBe(false);
+  });
+  it("shows discovered project-external devices only on dates where they exist", () => {
+    const project = {
+      id: "p",
+      name: "p",
+      devices: ["FX3"],
+      volumePrefix: "CARD",
+      requiredCopies: 1,
+    };
+    const audio = {
+      id: "audio",
+      name: "1",
+      shootingDate: "2026-08-26",
+      devices: ["音频"],
+      destinations: [],
+      status: "unverified",
+      fileRecords: [],
+    } as any;
+    expect(
+      projectDeviceCells(project, [audio], "2026-08-26").map(
+        (cell) => cell.device,
+      ),
+    ).toEqual(["FX3", "音频"]);
+    expect(
+      projectDeviceCells(project, [audio], "2026-08-25").map(
+        (cell) => cell.device,
+      ),
+    ).toEqual(["FX3"]);
+  });
+  it("separates unconfirmed empty cells from explicit missing backups", () => {
+    const project = {
+      id: "p",
+      name: "p",
+      devices: ["FX3"],
+      volumePrefix: "CARD",
+      requiredCopies: 1,
+    };
+    const initial = projectCloseoutSummary(project, [], ["2026-08-25"]);
+    expect(initial.pending).toHaveLength(0);
+    expect(initial.unconfirmed).toHaveLength(1);
+    const expected = projectCloseoutSummary(
+      {
+        ...project,
+        expectedDevicesByDate: { "2026-08-25": ["FX3"] },
+      },
+      [],
+      ["2026-08-25"],
+    );
+    expect(expected.pending).toHaveLength(1);
+    expect(expected.unconfirmed).toHaveLength(0);
+    expect(expected.pending[0].label).toBe("应该有素材 · 缺少备份");
   });
 });

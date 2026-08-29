@@ -43,7 +43,9 @@ export function projectDeviceCells(
   const devices = [
     ...new Set([
       ...project.devices,
-      ...tasks.flatMap((task) => task.devices || []),
+      ...tasks
+        .filter((task) => !shootingDate || task.shootingDate === shootingDate)
+        .flatMap((task) => task.devices || []),
     ]),
   ];
   return devices.flatMap((device) => {
@@ -109,17 +111,28 @@ export function projectCellStatus(
   const required = project.requiredCopies || 2;
   const rest = Boolean(project.restDays?.includes(shootingDate));
   const unusedKeys = project.unusedDevicesByDate?.[shootingDate] || [];
+  const expectedKeys = project.expectedDevicesByDate?.[shootingDate] || [];
+  const scheduleKey = cameraPosition ? `${device}::${cameraPosition}` : device;
   const unused = cameraPosition
-    ? unusedKeys.includes(`${device}::${cameraPosition}`) ||
-      unusedKeys.includes(device)
+    ? unusedKeys.includes(scheduleKey) || unusedKeys.includes(device)
     : unusedKeys.includes(device) ||
       unusedKeys.includes(`${device}::unassigned`);
+  const expected = cameraPosition
+    ? expectedKeys.includes(scheduleKey) || expectedKeys.includes(device)
+    : expectedKeys.includes(device) ||
+      expectedKeys.includes(`${device}::unassigned`);
   const safe = rows.filter((task) =>
     taskMeetsCopyRequirement(task, required),
   ).length;
   return {
     rows,
     safe,
+    expected,
+    unconfirmed: !rest && !unused && !expected && !rows.length,
+    attention:
+      !rest &&
+      !unused &&
+      (expected ? !rows.length : Boolean(rows.length && safe !== rows.length)),
     exempt: rest || unused,
     complete: rest || unused || Boolean(rows.length && safe === rows.length),
     label: rest
@@ -129,8 +142,10 @@ export function projectCellStatus(
         : rows.length && safe === rows.length
           ? "已满足收工要求"
           : rows.length
-            ? `${safe} / ${rows.length} 达到 ${required} 份物理独立副本`
-            : "尚未备份",
+            ? `${safe} / ${rows.length} 个素材卷达到 ${required} 份物理独立副本`
+            : expected
+              ? "应该有素材 · 缺少备份"
+              : "当天未发现素材 · 待确认",
   };
 }
 
@@ -155,6 +170,7 @@ export function projectCloseoutSummary(
   return {
     total: cells.length,
     complete: cells.filter((cell) => cell.complete).length,
-    pending: cells.filter((cell) => !cell.complete),
+    pending: cells.filter((cell) => cell.attention),
+    unconfirmed: cells.filter((cell) => cell.unconfirmed),
   };
 }

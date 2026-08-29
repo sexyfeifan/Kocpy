@@ -4,6 +4,8 @@ import type {
   ArchiveReminder,
   BackupTask,
   ExistingImportPreview,
+  ExistingImportProgress,
+  ExistingReanalysisResult,
   NasPreset,
   ProjectConfig,
   ProjectCoverage,
@@ -23,6 +25,8 @@ export type {
   ArchiveReminder,
   BackupTask,
   ExistingImportPreview,
+  ExistingImportProgress,
+  ExistingReanalysisResult,
   NasPreset,
   ProjectConfig,
   ProjectCoverage,
@@ -200,7 +204,16 @@ export interface API {
     mode: "manifest-import" | "external-baseline" | "unverified-import",
     scope: "card" | "day" | "project",
     selectedDate?: string,
+    jobId?: string,
   ): Promise<BackupTask[]>;
+  reanalyzeExistingProject(
+    projectId: string,
+    apply?: boolean,
+  ): Promise<ExistingReanalysisResult>;
+  establishExistingBaseline(
+    taskId: string,
+    jobId?: string,
+  ): Promise<BackupTask>;
   relinkLibraryFile(
     taskId: string,
     relativePath: string,
@@ -332,6 +345,9 @@ export interface API {
   onProgress(
     callback: (task: Partial<BackupTask> & { taskId: string }) => void,
   ): () => void;
+  onExistingImportProgress(
+    callback: (progress: ExistingImportProgress) => void,
+  ): () => void;
 }
 declare global {
   interface Window {
@@ -368,6 +384,7 @@ export const statusText: Record<string, string> = {
   verifying: "正在校验",
   paused: "已暂停",
   completed: "校验通过",
+  unverified: "已识别 · 待建立基线",
   failed: "需要处理",
   cancelled: "已取消",
 };

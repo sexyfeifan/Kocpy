@@ -33,6 +33,7 @@ describe("0.1.0 production lifecycle", () => {
       ["20260801", "FX3", "A", "FX3_202608011130"],
       ["20260801", "FX3", "B", "FX3_202608011210"],
       ["20260801", "FX6", "FX6_202608011300"],
+      ["20260801", "音频", "2"],
       ["2026-08-02", "FX3", "A", "FX3_202608021000"],
     ];
     try {
@@ -56,7 +57,7 @@ describe("0.1.0 production lifecycle", () => {
 
       const wholeProject = await previewExistingBackup(root, configuredProject);
       expect(wholeProject.detectedStructure).toBe("project");
-      expect(wholeProject.candidates).toHaveLength(5);
+      expect(wholeProject.candidates).toHaveLength(6);
       expect(wholeProject.candidates).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
@@ -71,15 +72,22 @@ describe("0.1.0 production lifecycle", () => {
             cameraPosition: undefined,
             card: "FX6_202608011300",
           }),
+          expect.objectContaining({
+            shootingDate: "2026-08-01",
+            device: "音频",
+            cameraPosition: undefined,
+            card: "2",
+          }),
         ]),
       );
+      expect(wholeProject.warnings).toContain("发现项目配置外的设备：音频");
 
       const day = await previewExistingBackup(
         path.join(projectRoot, "20260801"),
         configuredProject,
       );
       expect(day.detectedStructure).toBe("day");
-      expect(day.candidates).toHaveLength(4);
+      expect(day.candidates).toHaveLength(5);
 
       const imported = await importExistingBackup(
         configuredProject,
@@ -240,6 +248,39 @@ describe("0.1.0 production lifecycle", () => {
       expect(preview.candidates).toMatchObject([
         { relativeRoot: ".", files: 1 },
       ]);
+      const imported = await importExistingBackup(
+        project,
+        root,
+        "unverified-import",
+      );
+      expect(imported).toMatchObject({
+        status: "unverified",
+        confidence: "unverified",
+        devices: ["未分类设备"],
+      });
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+  it("reports byte and file progress while establishing an external baseline", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "kocpy-progress-"));
+    let processedBytes = 0,
+      completedFiles = 0;
+    try {
+      await fs.writeFile(path.join(root, "clip.mov"), "progress-media");
+      const imported = await importExistingBackup(
+        project,
+        root,
+        "external-baseline",
+        {},
+        {
+          onBytes: (count) => (processedBytes += count),
+          onFile: () => completedFiles++,
+        },
+      );
+      expect(processedBytes).toBe(imported.totalBytes);
+      expect(completedFiles).toBe(imported.totalFiles);
+      expect(imported.status).toBe("completed");
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }

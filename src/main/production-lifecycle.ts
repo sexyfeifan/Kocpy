@@ -426,6 +426,10 @@ export async function importExistingBackup(
     cameraPosition?: string;
     card?: string;
   } = {},
+  progress?: {
+    onBytes?: (bytes: number, file: string) => void;
+    onFile?: (file: string) => void;
+  },
 ): Promise<BackupTask> {
   const preview = await previewExistingBackup(
       root,
@@ -446,7 +450,9 @@ export async function importExistingBackup(
     if (file.absolutePath === preview.manifest) continue;
     const expected = manifest.get(file.relativePath),
       checksum = verifiedMode
-        ? await hashFile(file.absolutePath, algorithm)
+        ? await hashFile(file.absolutePath, algorithm, undefined, (count) =>
+            progress?.onBytes?.(count, file.relativePath),
+          )
         : "";
     const verified =
       mode === "external-baseline" ||
@@ -462,6 +468,7 @@ export async function importExistingBackup(
         { path: file.absolutePath, checksum: checksum || "", verified },
       ],
     });
+    progress?.onFile?.(file.relativePath);
   }
   const verified =
       records.length > 0 &&
@@ -485,7 +492,7 @@ export async function importExistingBackup(
           : "unverified",
     name: metadata.card || preview.suggestedCard || path.basename(root),
     sourcePath: root,
-    devices: [metadata.device || preview.suggestedDevice || "外部素材"],
+    devices: [metadata.device || preview.suggestedDevice || "未分类设备"],
     destinations: [
       {
         id: destinationId,
@@ -504,7 +511,12 @@ export async function importExistingBackup(
     ],
     hashAlgorithm: algorithm,
     namingTemplate: path.basename(root),
-    status: verified ? "completed" : "failed",
+    status:
+      mode === "unverified-import"
+        ? "unverified"
+        : verified
+          ? "completed"
+          : "failed",
     totalFiles: records.length,
     completedFiles: records.length,
     totalBytes: records.reduce((sum, file) => sum + file.size, 0),
@@ -523,7 +535,11 @@ export async function importExistingBackup(
           ? "已在接管时建立首次哈希基线；不代表原始现场接收校验"
           : "目录结构已导入，尚未建立可信校验",
     ],
-    errorMessage: verified ? undefined : "接管目录尚未全部通过可信校验",
+    errorMessage: verified
+      ? undefined
+      : mode === "unverified-import"
+        ? "目录结构已识别，尚未建立哈希基线"
+        : "外部清单存在缺失或校验值不匹配",
     fileRecords: records,
   };
 }
