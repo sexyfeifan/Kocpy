@@ -15,3 +15,10 @@
 - 素材卷明细增加明确的四列表头。
 - 日期设备、素材卷、文件容量和可信状态使用固定列宽，上下行保持对齐。
 - 项目详情提示刷新后的数据按唯一素材卷统计。
+
+## 下载校验
+
+- `Kocpy-0.1.7-arm64.dmg`：`9eba02412bcf488e5285703138de761fe79fb6cc2131754e6c40ded8c6ac35f1`
+- `Kocpy-0.1.7-x64.dmg`：`d76d6f5af230f7d0ade93f9e878dc097f24b5fd7a9e4523053db0a4710fc6fb1`
+
+以上 SHA-256 来自 GitHub Release 实际下载文件；两套远端 DMG 均已通过 `hdiutil verify`。
