@@ -26,5 +26,5 @@
 
 ## 安装包校验
 
-- `Kocpy-0.1.6-arm64.dmg`：`31da1a4188bb1734edb9cb79b16f0d41795306587bfc8e7b40687c0296e3b832`
-- `Kocpy-0.1.6-x64.dmg`：`e1c7dd9ec0ce6a3eb43b8343bbbf08d4fd37c921788cf0f6ff03c6be7c8df790`
+- `Kocpy-0.1.6-arm64.dmg`：`883b669e1f5ea0abf9c4ad2e57da01eb02a034de9074b42fd6ce1495f0ea10af`
+- `Kocpy-0.1.6-x64.dmg`：`dba6e2bf81ccf48257928340b54cebeb96b8acea3ebbabc5771c3ccf53b859bb`

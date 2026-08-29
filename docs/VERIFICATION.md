@@ -10,6 +10,7 @@
 - 项目外识别设备只加入实际发现它的拍摄日，不再扩展为整个拍摄周期的空白单元。
 - `npm audit --audit-level=high` 为 0 个已知漏洞。
 - `npm run dist` 生成 arm64 与 x64 `.app` 和 `.dmg`；两份 DMG 均通过 `hdiutil verify`，包内版本均为 0.1.6，主程序架构分别为 arm64 与 x86_64。
+- GitHub Release 的两份资产已完整回下载；下载文件均再次通过 `hdiutil verify`，SHA-256 与 GitHub 资产摘要一致。
 - 已安装的 0.1.5 与验收构建使用相同应用标识，macOS 会将第二次启动重定向至已安装应用；为避免覆盖用户应用与项目数据，本轮没有进行写入式桌面操作，界面状态由类型检查、构建和组件逻辑检查覆盖。
 - 此版本无 Developer ID 签名与 Apple 公证。
 
