@@ -19,7 +19,14 @@ export async function previewExistingBackup(root: string): Promise<ExistingImpor
   }
   const manifestFile = result.files.find((file) => /(?:\.mhl|sha256sums\.txt|manifest.*\.json)$/i.test(file.name));
   const sample = result.files.slice(0, 200).map((file) => file.relativePath).join("/");
-  return { root, files: result.files.length, bytes: result.totalBytes, manifest: manifestFile?.absolutePath, suggestedDate: normalizedDate(sample.match(datePattern)?.[0]), suggestedDevice: sample.match(cameraPattern)?.[0]?.toUpperCase(), suggestedCard: sample.match(cardPattern)?.[0], groups: [...groupMap.values()].sort((a,b) => a.relativeRoot.localeCompare(b.relativeRoot)) };
+  const candidateMap = new Map<string, ExistingImportPreview["candidates"][number]>();
+  for (const file of result.files) {
+    const parts = file.relativePath.split(path.sep), cardIndex = parts.findIndex((part) => cardPattern.test(part));
+    const end = cardIndex >= 0 ? cardIndex + 1 : Math.min(Math.max(1, parts.length - 1), 3), relativeRoot = parts.slice(0, end).join(path.sep);
+    const value = candidateMap.get(relativeRoot) || { relativeRoot, files: 0, bytes: 0, shootingDate: normalizedDate(relativeRoot.match(datePattern)?.[0]), device: relativeRoot.match(cameraPattern)?.[0]?.toUpperCase(), card: parts[cardIndex >= 0 ? cardIndex : end - 1] };
+    value.files++; value.bytes += file.size; candidateMap.set(relativeRoot, value);
+  }
+  return { root, files: result.files.length, bytes: result.totalBytes, manifest: manifestFile?.absolutePath, suggestedDate: normalizedDate(sample.match(datePattern)?.[0]), suggestedDevice: sample.match(cameraPattern)?.[0]?.toUpperCase(), suggestedCard: sample.match(cardPattern)?.[0], groups: [...groupMap.values()].sort((a,b) => a.relativeRoot.localeCompare(b.relativeRoot)), candidates: [...candidateMap.values()].sort((a,b)=>a.relativeRoot.localeCompare(b.relativeRoot)) };
 }
 
 async function readManifest(file?: string) {

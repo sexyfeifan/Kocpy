@@ -50,7 +50,7 @@ export async function generateReport(
       (d) => `
     <tr>
       <td>${esc(d.resolvedPath || d.path)}</td>
-      <td>${formatBytes(d.copiedBytes ?? (d.verified ? task.totalBytes : d.bytesWritten))}<small style="display:block;color:#96919d;margin-top:2px">本次写入 ${formatBytes(d.bytesWritten)} · ${esc(d.volumeName || "未知卷")} · ${esc(d.volumeUuid || d.volumeId || "无卷标识")}</small><small style="display:block;color:#96919d;margin-top:2px">写入 ${performanceLabel(d.performance)}<br>回读 ${performanceLabel(d.verifyPerformance)}</small></td>
+      <td class="destination-amount"><strong>${formatBytes(d.copiedBytes ?? (d.verified ? task.totalBytes : d.bytesWritten))}</strong><small>本次写入 ${formatBytes(d.bytesWritten)}</small><small>${esc(d.volumeName || "未知卷")}</small><small class="identifier">${esc(d.volumeUuid || d.volumeId || "无卷标识")}</small><small>写入 ${performanceLabel(d.performance)}</small><small>回读 ${performanceLabel(d.verifyPerformance)}</small></td>
       <td style="color:${d.verified ? "#22c55e" : d.error ? "#ef4444" : "#888"}">
         ${d.verified ? "✓ 通过" : d.error ? `✗ ${esc(d.error)}` : "未知"}
       </td>
@@ -163,6 +163,13 @@ export async function generateReport(
     font-weight: 600;
   }
   td { padding: 7px 10px; border-bottom: 1px solid #f0f0f0; word-break: break-all; }
+  .dest-table { table-layout: fixed; }
+  .dest-table th:nth-child(1) { width: 43%; }
+  .dest-table th:nth-child(2) { width: 37%; }
+  .dest-table th:nth-child(3) { width: 20%; }
+  .destination-amount strong { display:block; font-size:13px; margin-bottom:6px; }
+  .destination-amount small { display:block; color:#777; line-height:1.55; margin:0; }
+  .destination-amount .identifier { font-family:"SF Mono","Menlo",monospace; font-size:8px; overflow-wrap:anywhere; margin-bottom:4px; }
   tr:nth-child(even) td { background: #fafafa; }
   tr { break-inside: avoid; }
   thead { display: table-header-group; }

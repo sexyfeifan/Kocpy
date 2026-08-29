@@ -100,7 +100,8 @@ export class BackupEngine extends EventEmitter {
     const id = randomUUID();
     const timestamp = new Date().toLocaleString("sv-SE", { hour12: false }).replace(/[^0-9]/g, "").slice(0, 14);
     const name = segment(config.namingTemplate || config.name || path.basename(config.sourcePath));
-    const folder = config.projectId ? name : `${name}_${timestamp}_${id.slice(0, 4)}`;
+    const sourceVolumeName = segment(path.basename(config.sourcePath) || name);
+    const folder = config.projectId ? name : config.copyMode === "mirror" ? sourceVolumeName : `${sourceVolumeName}_${timestamp}`;
     const projectFolderName = config.projectId
       ? config.projectFolderName || makeProjectFolderName(config.projectStartDate || config.shootingDate, config.projectName || "项目")
       : undefined;

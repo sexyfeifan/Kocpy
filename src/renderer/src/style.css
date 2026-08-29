@@ -1131,6 +1131,12 @@ small {
 .project-card {
   padding: 23px;
 }
+.project-card > .row:last-child { align-items:start; gap:8px; }
+.project-card > .row:last-child > .row { display:grid; grid-template-columns:1fr 1fr; gap:8px; flex:1; }
+.project-card > .row:last-child > .row .btn { width:100%; justify-content:center; min-width:0; white-space:normal; line-height:1.25; }
+.import-candidates { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; max-height:180px; overflow:auto; }
+.import-candidates > span { display:flex; flex-direction:column; padding:9px 10px; border:1px solid var(--border); border-radius:7px; }
+.import-candidates small { color:var(--muted); margin-top:3px; }
 .project-icon {
   display: grid;
   place-items: center;

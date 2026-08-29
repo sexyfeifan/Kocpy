@@ -83,6 +83,8 @@ export interface API {
   applyProjectTemplate(templateId: string, projectId: string): Promise<ProjectConfig[]>;
   previewExistingBackup(root:string):Promise<ExistingImportPreview>;
   importExistingBackup(projectId:string,root:string,mode:"manifest-import"|"external-baseline"|"unverified-import",metadata?:{shootingDate?:string;device?:string;card?:string}):Promise<BackupTask>;
+  importExistingScope(projectId:string,root:string,mode:"manifest-import"|"external-baseline"|"unverified-import",scope:"card"|"day"|"project",selectedDate?:string):Promise<BackupTask[]>;
+  relinkLibraryFile(taskId:string,relativePath:string):Promise<string|null>;
   getProjectCoverage(projectId:string):Promise<ProjectCoverage>;
   signProjectChecklist(projectId:string,run:any):Promise<ProjectConfig>;
   getNasPresets():Promise<NasPreset[]>;
@@ -97,6 +99,7 @@ export interface API {
   stopLanIndex():Promise<{active:boolean;port:number;addresses:string[];token:string}>;
   getLanIndexStatus():Promise<{active:boolean;port:number;addresses:string[];token:string}>;
   reveal(path: string): Promise<void>;
+  openPath(path:string):Promise<void>;
   checkUpdates(): Promise<UpdateInfo>;
   openUpdate(url:string): Promise<void>;
   openAuthor(url:string): Promise<void>;

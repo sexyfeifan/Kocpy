@@ -252,7 +252,7 @@ export interface ArchiveChangeRecord { id: string; projectId: string; taskId?: s
 export interface ArchiveReminder { id: string; projectId: string; intervalDays: number; nextAt: number; enabled: boolean; lastNotifiedAt?: number; }
 export interface NasPreset { id: string; name: string; path: string; protocol: "smb" | "nfs" | "afp" | "network"; expectedHost?: string; minimumWriteBps?: number; createdAt: number; }
 export interface ProjectCoverage { recorded: number; verified: number; compliant: number; attention: number; byProvenance: Record<string, number>; managedSince?: string; expected?: number; coveragePercent?: number; }
-export interface ExistingImportPreview { root: string; files: number; bytes: number; manifest?: string; suggestedDate?: string; suggestedDevice?: string; suggestedCard?: string; groups: Array<{ key: string; relativeRoot: string; files: number; bytes: number; suggestedDate?: string; suggestedDevice?: string; suggestedCard?: string }>; }
+export interface ExistingImportPreview { root: string; files: number; bytes: number; manifest?: string; suggestedDate?: string; suggestedDevice?: string; suggestedCard?: string; groups: Array<{ key: string; relativeRoot: string; files: number; bytes: number; suggestedDate?: string; suggestedDevice?: string; suggestedCard?: string }>; candidates: Array<{ relativeRoot: string; files: number; bytes: number; shootingDate?: string; device?: string; card?: string }>; }
 
 export interface ProjectStructureDestination {
   destination: string;

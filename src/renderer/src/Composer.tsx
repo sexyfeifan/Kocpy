@@ -76,6 +76,7 @@ export function Composer({
     [algorithm, setAlgorithm] = useState(settings.defaultHash),
     [duplicate, setDuplicate] = useState(settings.defaultDuplicateStrategy),
     [hidden, setHidden] = useState(settings.includeHidden),
+    [mirror, setMirror] = useState(false),
     [priority, setPriority] = useState(false);
   const [clock, setClock] = useState(Date.now());
   const [busy, setBusy] = useState(false),
@@ -248,7 +249,7 @@ export function Composer({
           projectStartDate: mode === "project" ? project?.shootingDateStart : undefined,
           projectFolderName: mode === "project" ? project?.projectFolderName : undefined,
           projectId: mode === "project" ? project?.id : undefined,
-          copyMode: "normal" as const,
+          copyMode: mirror ? "mirror" as const : "normal" as const,
           duplicateStrategy: duplicate,
           includeHidden: hidden,
           priority,
@@ -594,6 +595,7 @@ export function Composer({
                   </label>
                 </div>
                 <div className="option-checks">
+                  {mode === "card" && <label><input type="checkbox" checked={mirror} onChange={(event)=>setMirror(event.target.checked)}/><span>镜像备份<small>直接把源目录结构原封不动复制到目的地，不创建素材卷名称与时间戳文件夹</small></span></label>}
                   <label>
                     <input
                       type="checkbox"
@@ -623,7 +625,7 @@ export function Composer({
                     const volumeName = previewVolumeName(index);
                     const folder = sources.length > 1 ? `${volumeName}_${leaf(source.path)}` : volumeName;
                     return <p className="mono" key={`${destination}-${source.path}`}>{destination}/{project?.projectFolderName || `${(project?.shootingDateStart || "").replace(/-/g, "")}_${project?.name}`}/{shootDate.replace(/-/g, "")}/{camera}/{multiPosition ? `${cameraPosition}/` : ""}{folder}/</p>;
-                  }))}</div> : dests.map((destination) => <p className="mono" key={destination}>{destination}/{name || "[素材源名称]"}_[时间戳]_[唯一标识]/</p>)}
+                  }))}</div> : dests.map((destination) => <p className="mono" key={destination}>{mirror ? `${destination}/（原目录结构）` : `${destination}/${sources.length===1?leaf(sources[0].path):"[素材源卷名]"}_[时间戳]/`}</p>)}
                   {mode === "project" && <small className="muted">时间码在点击“开始备份”时按本机时间生成。</small>}
                 </div>
                 <div className="readiness-panel"><div className="dest-heading"><span>开始前就绪检查</span><small>所有关键条件会在引擎预检时再次确认</small></div><div className="readiness-grid"><div className={sources.every((source) => Boolean(source.scan?.totalFiles)) ? "ready" : "warning"}><Check size={15}/><span><strong>素材来源</strong><small>{sources.length} 个来源 · {sources.reduce((sum, source) => sum + (source.scan?.totalFiles || 0), 0)} 个文件</small></span></div><div className={dests.every((destination) => spaces[destination] === undefined || spaces[destination] >= total) ? "ready" : "warning"}><Check size={15}/><span><strong>目标空间</strong><small>{dests.length} 个目的地已通过容量检查</small></span></div><div className={new Set(dests.map((destination) => volumes.find((volume) => destination === volume.path || destination.startsWith(`${volume.path}/`))?.identity?.id).filter(Boolean)).size === dests.length ? "ready" : "warning"}>{new Set(dests.map((destination) => volumes.find((volume) => destination === volume.path || destination.startsWith(`${volume.path}/`))?.identity?.id).filter(Boolean)).size === dests.length ? <Check size={15}/> : <AlertTriangle size={15}/>}<span><strong>物理磁盘</strong><small>{dests.length > 1 ? "项目副本必须位于不同物理盘" : "当前只有一个副本"}</small></span></div><div className={mode !== "project" || (project && shootDate && camera) ? "ready" : "warning"}><Check size={15}/><span><strong>项目归档</strong><small>{mode === "project" ? `${shootDate.replace(/-/g, "")} · ${camera}${multiPosition ? ` · ${cameraPosition}` : ""}` : "素材卡独立备份"}</small></span></div></div></div>

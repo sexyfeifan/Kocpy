@@ -49,6 +49,7 @@ import {
   Info,
   File,
   Clapperboard,
+  Eye,
   ExternalLink,
   Trash2,
   ChevronsUp,
@@ -1630,12 +1631,14 @@ function Library({
   const [kind, setKind] = useState("all"),
     [limit, setLimit] = useState(100),
     [selectedPaths, setSelectedPaths] = useState<string[]>([]),
+    [locations,setLocations] = useState<Record<string,string>>({}),
     [preview, setPreview] = useState<any>(null),
     [previewBusy, setPreviewBusy] = useState(false);
   const files = tasks.flatMap((t) =>
     t.fileRecords.map((f) => ({
       ...f,
       task: t.name,
+      taskId: t.id,
       id: t.id + f.relativePath,
     })),
   );
@@ -1691,7 +1694,7 @@ function Library({
           </div>
           {filtered.slice(0, limit).map((f) => {
             const verified = f.destinations.filter((d) => d.verified),
-              p = verified[0]?.path;
+              p = locations[f.id] || verified[0]?.path;
             return (
               <div className="library-row" key={f.id}>
                 <div className="row">
@@ -1727,9 +1730,11 @@ function Library({
                   >
                     <FolderOpen size={16} />
                   </Button>
+                  <Button kind="icon" title="重新定位已移动或重新挂载的素材" onClick={() => void api.relinkLibraryFile(f.taskId,f.relativePath).then((located)=>{if(located){setLocations((current)=>({...current,[f.id]:located}));reveal(located);}})}><RefreshCw size={15}/></Button>
                   {isVideo(f.name) && (
                     <>
-                      <Button kind="icon" title="查看缩略图和媒体信息" disabled={!p || previewBusy} onClick={() => p && (setPreviewBusy(true), api.inspectMedia(p).then(setPreview).finally(() => setPreviewBusy(false)))}><Play size={15} /></Button>
+                      <Button kind="icon" title="播放素材" disabled={!p} onClick={() => p && void api.openPath(p)}><Play size={15} /></Button>
+                      <Button kind="icon" title="查看缩略图和媒体信息" disabled={!p || previewBusy} onClick={() => p && (setPreviewBusy(true), api.inspectMedia(p).then(setPreview).finally(() => setPreviewBusy(false)))}><Eye size={15} /></Button>
                       <Button kind="subtle" disabled={!p} onClick={() => p && proxy({ name: f.name, path: p })}>生成代理</Button>
                     </>
                   )}
@@ -1767,23 +1772,24 @@ function Library({
   );
 }
 function ExistingImportModal({value,onClose,onImported}:{value:{project:ProjectConfig;preview:ExistingImportPreview};onClose:()=>void;onImported:()=>Promise<void>}){
-  const [mode,setMode]=useState<"manifest-import"|"external-baseline"|"unverified-import">(value.preview.manifest?"manifest-import":"external-baseline"),[dateValue,setDateValue]=useState(value.preview.suggestedDate||today()),[device,setDevice]=useState(value.preview.suggestedDevice||value.project.devices[0]||"外部素材"),[card,setCard]=useState(value.preview.suggestedCard||value.preview.groups[0]?.key||"外部素材卷"),[busy,setBusy]=useState(false),[error,setError]=useState("");
-  return <div className="modal-backdrop top-layer"><section className="form-modal" role="dialog" aria-modal="true" aria-label="接管既有备份"><div className="modal-header"><div><span className="eyebrow">ADOPT EXISTING MEDIA</span><h2>接管既有备份</h2></div><Button kind="icon" title="关闭" onClick={onClose}><X size={19}/></Button></div><div className="form-body"><div className="notice"><ShieldCheck size={17}/><span>Kocpy 会记录数据来源，不会把历史目录伪装成由 Kocpy 完成的现场接收。</span></div><div className="import-preview"><strong>{leaf(value.preview.root)}</strong><span>{value.preview.files} 个文件 · {bytes(value.preview.bytes)} · {value.preview.groups.length} 个顶层分组</span><small className="mono">{value.preview.root}</small>{value.preview.manifest&&<small className="green-text">发现清单：{leaf(value.preview.manifest)}</small>}</div><label>接管可信度<select value={mode} onChange={(event)=>setMode(event.target.value as typeof mode)}><option value="manifest-import">根据已有 MHL/SHA 清单重新比对</option><option value="external-baseline">现在读取全部文件并建立首次基线</option><option value="unverified-import">仅导入结构，稍后校验</option></select><small>{mode==="external-baseline"?"基线证明接管时的文件状态，不代表原始拍摄现场状态。":mode==="unverified-import"?"所有记录将明确标为未验证。":"只有清单记录和实际文件哈希一致时才标为已验证。"}</small></label><div className="form-grid"><label>拍摄日期<input type="date" value={dateValue} onChange={(e)=>setDateValue(e.target.value)}/></label><label>设备/摄影机<input value={device} onChange={(e)=>setDevice(e.target.value)}/></label></div><label>素材卷名称<input value={card} onChange={(e)=>setCard(e.target.value)}/></label>{error&&<div className="error-box">{error}</div>}</div><div className="modal-footer"><Button kind="subtle" onClick={onClose}>取消</Button><Button kind="primary" disabled={busy||!card.trim()} onClick={()=>{setBusy(true);setError("");void api.importExistingBackup(value.project.id,value.preview.root,mode,{shootingDate:dateValue,device,card}).then(onImported).catch((reason)=>setError(String(reason).replace(/^Error: /,""))).finally(()=>setBusy(false));}}>{busy?<LoaderCircle size={15} className="spin"/>:<Database size={15}/>}扫描校验并接管</Button></div></section></div>;
+  const [mode,setMode]=useState<"manifest-import"|"external-baseline"|"unverified-import">(value.preview.manifest?"manifest-import":"external-baseline"),[scope,setScope]=useState<"card"|"day"|"project">(value.preview.candidates.length>1?"project":"card"),[dateValue,setDateValue]=useState(value.preview.suggestedDate||value.preview.candidates.find((item)=>item.shootingDate)?.shootingDate||today()),[busy,setBusy]=useState(false),[error,setError]=useState("");
+  const count=scope==="card"?1:scope==="day"?value.preview.candidates.filter((item)=>item.shootingDate===dateValue).length:value.preview.candidates.length;
+  return <div className="modal-backdrop top-layer"><section className="form-modal" role="dialog" aria-modal="true" aria-label="接管既有备份"><div className="modal-header"><div><span className="eyebrow">ADOPT EXISTING MEDIA</span><h2>接管既有备份</h2></div><Button kind="icon" title="关闭" onClick={onClose}><X size={19}/></Button></div><div className="form-body"><div className="notice"><ShieldCheck size={17}/><span>Kocpy 会按目录结构识别拍摄日、机位和素材卷，并保留外部来源标记。</span></div><div className="import-preview"><strong>{leaf(value.preview.root)}</strong><span>{value.preview.files} 个文件 · {bytes(value.preview.bytes)} · 识别到 {value.preview.candidates.length} 个素材卷</span><small className="mono">{value.preview.root}</small></div><label>接管范围<select value={scope} onChange={(event)=>setScope(event.target.value as typeof scope)}><option value="card">单日单机位 / 单张素材卡</option><option value="day">单日所有机位</option><option value="project">整个项目</option></select></label>{scope==="day"&&<label>拍摄日期<input type="date" value={dateValue} onChange={(event)=>setDateValue(event.target.value)}/></label>}<div className="import-candidates">{value.preview.candidates.slice(0,12).map((item)=><span key={item.relativeRoot}><strong>{item.card}</strong><small>{item.shootingDate||"日期未识别"} · {item.device||"机位未识别"} · {item.files} 文件</small></span>)}</div><label>接管可信度<select value={mode} onChange={(event)=>setMode(event.target.value as typeof mode)}><option value="manifest-import">根据已有 MHL/SHA 清单重新比对</option><option value="external-baseline">现在读取全部文件并建立首次基线</option><option value="unverified-import">仅导入结构，稍后校验</option></select></label>{error&&<div className="error-box">{error}</div>}</div><div className="modal-footer"><span className="muted small">将创建 {count} 个独立素材卷记录</span><Button kind="subtle" onClick={onClose}>取消</Button><Button kind="primary" disabled={busy||count<1} onClick={()=>{setBusy(true);setError("");void api.importExistingScope(value.project.id,value.preview.root,mode,scope,dateValue).then(onImported).catch((reason)=>setError(String(reason).replace(/^Error: /,""))).finally(()=>setBusy(false));}}>{busy?<LoaderCircle size={15} className="spin"/>:<Database size={15}/>}识别校验并接管</Button></div></section></div>;
 }
 
 function HelpPage({ go, openBackup }: { go: (page: Page) => void; openBackup: () => void }) {
   const guides: Array<{ id: string; icon: typeof HardDrive; title: string; purpose: string; steps: string[]; tips: string[]; page?: Page }> = [
-    { id:"backup", icon:MemoryStick, title:"新建备份", purpose:"从素材卡或文件夹向 1–4 个目的地复制，并逐目标独立回读校验。", steps:["连接素材卡，点击“新建备份”并选择素材来源。","选择素材卡模式或拍摄项目，确认日期、设备和机位。","选择位于不同物理磁盘的目的地，检查容量和素材分类。","确认后开始；紫色表示拷贝，绿色表示独立校验。","完成弹窗显示文件、容量、通过目标与用时。"], tips:["Kocpy 不会自动开始写入。","不要把多个目录位于同一物理盘误当成独立副本。","校验完成前不要拔出素材卡或目的地。"] },
+    { id:"backup", icon:MemoryStick, title:"新建备份", purpose:"从素材卡或文件夹向 1–4 个目的地复制，并逐目标独立回读校验。", steps:["连接素材卡，点击“新建备份”并选择素材来源。","选择素材卡模式或拍摄项目，确认日期、设备和机位。","普通备份保存为“源卷名_时间戳”；勾选镜像备份则直接保留原目录结构。","选择位于不同物理磁盘的目的地并开始；紫色表示拷贝，绿色表示独立校验。"], tips:["Kocpy 不会自动开始写入。","不要把多个目录位于同一物理盘误当成独立副本。","校验完成前不要拔出素材卡或目的地。"] },
     { id:"transfers", icon:ArrowLeftRight, title:"传输队列", purpose:"查看百分比、真实速度、ETA、文件和每个目的地状态。", steps:["点击任务查看拷贝、校验和最近 30 秒速度。","需要时暂停；继续后会使用安全检查点。","失败时先阅读具体目标和文件错误，再进入恢复中心。"], tips:["“已保存”是最终有效素材量；“本次写入”是本轮物理写入量。","速度来自操作系统确认完成的字节，不是模拟数据。"], page:"transfers" },
     { id:"recovery", icon:RefreshCw, title:"恢复中心", purpose:"处理异常退出、离线磁盘、断点文件和未完成校验。", steps:["重新连接原素材卡与原目标磁盘。","确认卷名和卷身份匹配。","按提示选择从检查点继续、只重试失败目标或重新校验。","恢复后检查成功目标是否仍保持通过。"], tips:["同一路径换成另一块磁盘时会拒绝继续。","失败目标修复不会重新写入已成功目标。"], page:"recovery" },
     { id:"projects", icon:FolderKanban, title:"拍摄项目", purpose:"按日期、设备、机位和物理独立副本管理完整拍摄周期。", steps:["创建项目并设置拍摄周期、设备、机位和目的地。","设置收工需要的独立副本数量。","每天查看日期 × 设备矩阵，标记休息日或未使用设备。","项目结束后导出 PDF、JSON、CSV 或完整归档包。"], tips:["同一磁盘的多个文件夹只计算一份安全副本。","项目模板可复用设备和收工标准。"], page:"projects" },
-    { id:"library", icon:Film, title:"素材库", purpose:"浏览已记录素材、缩略图、元数据与已校验副本。", steps:["按视频、照片/RAW、LUT/CDL 分类或搜索。","点击预览查看摄影机、分辨率、帧率、时间码和音轨。","只从已校验副本定位文件或创建代理。"], tips:["历史绿色状态是任务执行时的记录；长期状态请使用归档复校验。"], page:"library" },
+    { id:"library", icon:Film, title:"素材库", purpose:"浏览已记录素材、缩略图、元数据与已校验副本。", steps:["按视频、照片/RAW、LUT/CDL 分类或搜索。","使用 Finder、播放和媒体信息三个独立操作。","磁盘改名或目录移动后，点击重新定位并选择新的副本根目录；哈希一致才会接管新路径。","只从已校验副本创建代理。"], tips:["历史绿色状态是任务执行时的记录；长期状态请使用归档复校验。"], page:"library" },
     { id:"proxy", icon:Clapperboard, title:"代理队列", purpose:"生成 H.264 或 ProRes 剪辑代理并检查媒体一致性。", steps:["在素材库选择一个或多个已校验视频。","选择审片、剪辑或离线预设，并设置命名规则。","在队列中暂停、继续、取消或重试。","完成后检查帧率、时间码和音轨提示。","导出 Resolve、Premiere 或 Final Cut 交付清单。"], tips:["代理始终写入独立目录，不修改原素材。","暂停会清理不完整输出，继续时安全重建。"], page:"processing" },
     { id:"reports", icon:FileCheck2, title:"报告中心", purpose:"导出单任务、拍摄日和项目级校验记录。", steps:["选择任务或拍摄日。","选择 PDF、JSON、MHL、ASC MHL 或 Resolve CSV。","项目归档包同时包含报告、数据、统计、MHL 和 SHA-256。"], tips:["PDF 可包含素材首帧缩略图。","报告证明任务执行时状态，不替代后续长期复校验。"], page:"reports" },
     { id:"storage", icon:HardDrive, title:"存储设备", purpose:"查看容量、文件系统、网络延迟并安全推出设备。", steps:["确认目标可写、容量充足且不是系统备份卷。","任务完成后使用安全推出。","批量推出会保留仍被备份、代理或失败记录占用的磁盘。"], tips:["不要直接拔出正在写入或校验的设备。"], page:"storage" },
     { id:"diagnostics", icon:Gauge, title:"诊断中心", purpose:"执行受控性能预检并导出脱敏诊断包。", steps:["确保没有备份或代理任务运行。","对选定可写磁盘运行 64 MiB 写入与回读测试。","遇到问题时导出诊断包。"], tips:["测试文件会自动清理。","诊断包不包含素材内容、完整私人路径或账号。"], page:"diagnostics" },
     { id:"archive", icon:Database, title:"归档维护", purpose:"长期复校验、修复副本、数据备份与工作站合并。", steps:["定期选择项目执行长期复校验。","发现失败副本后，从另一健康副本修复。","修复前原损坏文件会改名保留。","导出本地数据备份或工作站包。","合并其他工作站记录后检查重复项和冲突。"], tips:["修复必须至少存在一份哈希匹配的健康副本。","导入前建议先导出本地数据备份。"], page:"maintenance" },
-    { id:"adopt", icon:FolderPlus, title:"接管既有备份", purpose:"把中途接手或历史备份目录纳入项目，并明确可信度。", steps:["在项目卡片选择“接管既有备份”。","选择已有备份根目录，检查识别到的日期、设备与素材卷。","有 MHL/SHA 清单时选择清单比对；否则建立接管时基线或仅导入结构。","确认后查看项目素材覆盖中的“外部接管”数量。"], tips:["接管时基线只证明接管当时的内容，不等于原始现场校验。","未验证导入不会显示为安全副本。"], page:"projects" },
+    { id:"adopt", icon:FolderPlus, title:"接管既有备份", purpose:"把单张卡、单日全部机位或整个历史项目纳入 Kocpy，并明确可信度。", steps:["在项目卡片选择“接管既有备份”。","选择单张素材卡、拍摄日根目录或项目根目录。","检查识别出的日期、机位与素材卷，并选择接管范围。","有 MHL/SHA 清单时选择清单比对；否则建立接管时基线或仅导入结构。","确认后每张卡会建立独立记录，并计入项目素材覆盖。"], tips:["目录命名越规范，自动识别越准确。","接管时基线只证明接管当时的内容，不等于原始现场校验。","未验证导入不会显示为安全副本。"], page:"projects" },
     { id:"coverage", icon:Layers, title:"项目素材覆盖", purpose:"区分已记录、已验证、副本达标和需要处理的素材卷。", steps:["为项目填写预计素材卷数量；未知时保持为空。","设置 Kocpy 管理起始日期。","项目卡片分别查看 Kocpy 接收与外部接管数量。","只在有明确计划总量时使用覆盖百分比。"], tips:["Kocpy 不推测接管前未知的拍摄量。","副本达标按不同物理卷计算。"], page:"projects" },
     { id:"checklist", icon:CheckCheck, title:"开工、收工与交接", purpose:"使用标准检查表、制作人员记录和签名完成每日交接。", steps:["在项目设置中维护制作人员与角色。","开工前确认项目、日期、摄影机和独立目的地。","收工时确认副本、报告和安全推出。","在归档维护中签署检查表并记录交接说明。"], tips:["签名是本地制作审计记录，不等同于法律数字签名。"], page:"maintenance" },
     { id:"nas", icon:HardDrive, title:"NAS 与网络目标", purpose:"保存已挂载 SMB/NFS 目录并进行容量、延迟与读写检查。", steps:["先在 Finder 挂载网络共享。","在归档维护保存 NAS 预设。","执行检查并确认写入速度达到项目要求。","备份时可点击选择或直接拖入网络目录。"], tips:["网络中断目标可重试，本地健康目标继续完成。","不要在未验证的公共网络暴露局域网索引。"], page:"maintenance" },
