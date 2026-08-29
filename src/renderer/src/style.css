@@ -2195,9 +2195,15 @@ small {
 .project-matrix-head { background:var(--panel2); color:var(--muted); font-size:8px; letter-spacing:.06em; }
 .project-matrix-row { border-top:1px solid var(--line); color:var(--sub); }
 .project-matrix-row strong { color:var(--text); font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
-.project-task-breakdown { display:grid; gap:0; margin-top:15px; border:1px solid var(--border); border-radius:10px; overflow:hidden; }
-.project-task-breakdown > strong { padding:10px 12px; background:var(--panel2); color:var(--muted); font-size:9px; }
-.project-task-breakdown > div { display:grid; grid-template-columns:1.2fr 1.4fr 1fr auto; gap:12px; align-items:center; padding:9px 12px; border-top:1px solid var(--line); font-size:10px; }
+.project-task-breakdown { --task-columns:minmax(155px,1.15fr) minmax(180px,1.35fr) minmax(125px,.9fr) 230px; display:grid; gap:0; margin-top:15px; border:1px solid var(--border); border-radius:10px; overflow:hidden; }
+.project-task-breakdown-title { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:11px 12px; background:var(--panel2); }
+.project-task-breakdown-title strong { color:var(--text); font-size:10px; }
+.project-task-breakdown-title span { color:var(--muted); font-size:8px; }
+.project-task-breakdown-head,.project-task-breakdown-row { display:grid; grid-template-columns:var(--task-columns); gap:12px; align-items:center; padding:9px 12px; }
+.project-task-breakdown-head { color:var(--muted); background:var(--panel); border-top:1px solid var(--line); font-size:8px; letter-spacing:.04em; }
+.project-task-breakdown-head span:last-child { text-align:right; }
+.project-task-breakdown-row { min-height:46px; border-top:1px solid var(--line); font-size:10px; }
+.project-task-breakdown-row > span,.project-task-breakdown-row > b,.project-task-breakdown-row > small { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .project-task-breakdown small { color:var(--muted); }
 .closeout-note { display:flex; align-items:center; gap:9px; margin:12px 0; padding:10px 12px; border:1px solid #81c9aa55; border-radius:9px; background:#81c9aa0d; color:var(--sub); font-size:10px; }
 .closeout-actions { display:flex; align-items:center; flex-wrap:wrap; gap:7px; margin-top:11px; color:var(--muted); font-size:9px; }

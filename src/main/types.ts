@@ -264,6 +264,8 @@ export interface ExistingReanalysisResult {
   baselinesNeeded: number;
   duplicatesFound: number;
   duplicatesMerged: number;
+  rootsDeduplicated: number;
+  unavailableSources: number;
   devicesDetected: string[];
   applied: boolean;
 }

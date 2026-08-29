@@ -77,6 +77,11 @@ import {
   projectCoverage,
 } from "./production-lifecycle";
 import { LanProjectIndex } from "./lan-index";
+import {
+  consolidateExistingRecords,
+  deduplicateBoundRoots,
+  existingSourceKey,
+} from "./existing-records";
 
 app.setName("Kocpy");
 const appDataRoot = app.getPath("appData");
@@ -133,6 +138,21 @@ const normalizeProject = (project: ProjectConfig): ProjectConfig => {
     ),
     requiredCopies: Math.max(1, Math.min(4, project.requiredCopies || 2)),
   };
+};
+
+const consolidateProjectExistingRecords = (projectId: string) => {
+  const imported = engine
+    .getAllTasks()
+    .filter(
+      (task) =>
+        task.projectId === projectId &&
+        task.provenance &&
+        task.provenance !== "kocpy-transfer",
+    );
+  const result = consolidateExistingRecords(imported);
+  for (const duplicateId of result.duplicateIds)
+    engine.deleteTask(duplicateId);
+  return result;
 };
 const prepareProject = (value: ProjectConfig): ProjectConfig => {
   const project = {
@@ -1455,14 +1475,20 @@ app.whenReady().then(async () => {
         metadata || {},
       );
       engine.loadTask(task);
-      project.boundRoots = [
+      const consolidated = consolidateProjectExistingRecords(projectId);
+      project.boundRoots = deduplicateBoundRoots([
         ...(project.boundRoots || []),
         { id: randomUUID(), path: root, boundAt: Date.now(), provenance: mode },
-      ];
+      ]);
       project.managedSince ||= task.shootingDate;
       await Promise.all([store.write("projects.json", projects), persist()]);
       await catalog.rebuild(engine.getAllTasks(), projects);
-      return task;
+      return (
+        consolidated.records.find(
+          (record) =>
+            existingSourceKey(record.sourcePath) === existingSourceKey(root),
+        ) || task
+      );
     },
   );
   handle(
@@ -1632,10 +1658,11 @@ app.whenReady().then(async () => {
         force: true,
       });
       for (const task of tasks) engine.loadTask(task);
-      project.boundRoots = [
+      const consolidated = consolidateProjectExistingRecords(projectId);
+      project.boundRoots = deduplicateBoundRoots([
         ...(project.boundRoots || []),
         { id: randomUUID(), path: root, boundAt: Date.now(), provenance: mode },
-      ];
+      ]);
       project.managedSince ||= tasks
         .map((task) => task.shootingDate)
         .filter(Boolean)
@@ -1650,7 +1677,21 @@ app.whenReady().then(async () => {
         totalCandidates,
         force: true,
       });
-      return tasks;
+      const affectedSources = new Set(
+        tasks.map((task) => existingSourceKey(task.sourcePath)),
+      );
+      const directMatches = consolidated.records.filter((task) =>
+        affectedSources.has(existingSourceKey(task.sourcePath)),
+      );
+      return directMatches.length
+        ? directMatches
+        : consolidated.records.filter((task) =>
+            task.destinations.some((destination) =>
+              affectedSources.has(
+                existingSourceKey(destination.resolvedPath || destination.path),
+              ),
+            ),
+          );
     },
   );
   handle(
@@ -1669,118 +1710,77 @@ app.whenReady().then(async () => {
             task.provenance &&
             task.provenance !== "kocpy-transfer",
         );
+      const workingTasks: BackupTask[] = apply
+        ? importedTasks
+        : structuredClone(importedTasks);
       let metadataUpdated = 0;
-      const devicesDetected = new Set<string>();
-      for (const task of importedTasks) {
-        const preview = await previewExistingBackup(
+      const devicesDetected = new Set<string>(),
+        unavailableSources = new Set<string>(),
+        previewCache = new Map<
+          string,
+          ReturnType<typeof previewExistingBackup>
+        >();
+      for (const task of workingTasks) {
+        const sourceKey = existingSourceKey(task.sourcePath);
+        let request = previewCache.get(sourceKey);
+        if (!request) {
+          request = previewExistingBackup(
             task.sourcePath,
             project,
             "card",
             task.shootingDate,
-          ),
-          inferred = preview.candidates[0],
-          nextDevice = inferred?.device || task.devices[0],
-          nextPosition = inferred?.cameraPosition || task.cameraPosition,
-          nextDate = inferred?.shootingDate || task.shootingDate,
-          nextCard = inferred?.card || task.name;
-        if (nextDevice) devicesDetected.add(nextDevice);
-        const changed =
-          nextDevice !== task.devices[0] ||
-          nextPosition !== task.cameraPosition ||
-          nextDate !== task.shootingDate ||
-          nextCard !== task.name;
-        if (changed) {
-          metadataUpdated++;
-          if (apply) {
+          );
+          previewCache.set(sourceKey, request);
+        }
+        try {
+          const preview = await request,
+            inferred = preview.candidates[0],
+            nextDevice = inferred?.device || task.devices[0],
+            nextPosition = inferred?.cameraPosition || task.cameraPosition,
+            nextDate = inferred?.shootingDate || task.shootingDate,
+            nextCard = inferred?.card || task.name;
+          if (nextDevice) devicesDetected.add(nextDevice);
+          const changed =
+            nextDevice !== task.devices[0] ||
+            nextPosition !== task.cameraPosition ||
+            nextDate !== task.shootingDate ||
+            nextCard !== task.name;
+          if (changed) {
+            metadataUpdated++;
             task.devices = [nextDevice || "未分类设备"];
             task.cameraPosition = nextPosition;
             task.shootingDate = nextDate;
             task.name = nextCard;
           }
+        } catch {
+          unavailableSources.add(sourceKey);
+          if (task.devices[0]) devicesDetected.add(task.devices[0]);
         }
       }
-      const fingerprintGroups = new Map<string, BackupTask[]>();
-      for (const task of importedTasks) {
-        if (
-          !task.fileRecords.length ||
-          task.fileRecords.some((record) => !record.srcChecksum)
-        )
-          continue;
-        const fingerprint = createHash("sha256")
-          .update(
-            JSON.stringify({
-              shootingDate: task.shootingDate,
-              files: task.fileRecords
-                .map((record) => [
-                  record.relativePath,
-                  record.size,
-                  record.srcChecksum,
-                ])
-                .sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
-            }),
-          )
-          .digest("hex");
-        fingerprintGroups.set(fingerprint, [
-          ...(fingerprintGroups.get(fingerprint) || []),
-          task,
-        ]);
-      }
-      const duplicateGroups = [...fingerprintGroups.values()].filter(
-          (group) => group.length > 1,
-        ),
-        duplicatesFound = duplicateGroups.reduce(
-          (sum, group) => sum + group.length - 1,
-          0,
-        );
-      let duplicatesMerged = 0;
+      const consolidated = consolidateExistingRecords(workingTasks),
+        rootsBefore = project.boundRoots || [],
+        uniqueRoots = deduplicateBoundRoots(rootsBefore),
+        rootsDeduplicated = rootsBefore.length - uniqueRoots.length;
       if (apply) {
-        for (const group of duplicateGroups) {
-          const ordered = [...group].sort(
-              (a, b) =>
-                Number(b.status === "completed") -
-                Number(a.status === "completed"),
-            ),
-            primary = ordered[0];
-          for (const duplicate of ordered.slice(1)) {
-            for (const destination of duplicate.destinations)
-              if (
-                !primary.destinations.some(
-                  (existing) =>
-                    (existing.resolvedPath || existing.path) ===
-                    (destination.resolvedPath || destination.path),
-                )
-              )
-                primary.destinations.push(destination);
-            for (const record of duplicate.fileRecords) {
-              const target = primary.fileRecords.find(
-                (candidate) =>
-                  candidate.relativePath === record.relativePath &&
-                  candidate.srcChecksum === record.srcChecksum,
-              );
-              if (target)
-                for (const destination of record.destinations)
-                  if (
-                    !target.destinations.some(
-                      (existing) => existing.path === destination.path,
-                    )
-                  )
-                    target.destinations.push(destination);
-            }
-            engine.deleteTask(duplicate.id);
-            duplicatesMerged++;
-          }
-        }
-        await persist();
+        for (const duplicateId of consolidated.duplicateIds)
+          engine.deleteTask(duplicateId);
+        project.boundRoots = uniqueRoots;
+        await Promise.all([
+          store.write("projects.json", projects),
+          persist(),
+        ]);
         await catalog.rebuild(engine.getAllTasks(), projects);
       }
       return {
         importedTasks: importedTasks.length,
         metadataUpdated,
-        baselinesNeeded: importedTasks.filter(
+        baselinesNeeded: consolidated.records.filter(
           (task) => task.confidence === "unverified",
         ).length,
-        duplicatesFound,
-        duplicatesMerged,
+        duplicatesFound: consolidated.duplicateIds.length,
+        duplicatesMerged: apply ? consolidated.duplicateIds.length : 0,
+        rootsDeduplicated,
+        unavailableSources: unavailableSources.size,
         devicesDetected: [...devicesDetected].sort(),
         applied: apply,
       };

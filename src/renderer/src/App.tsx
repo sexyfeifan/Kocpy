@@ -650,7 +650,7 @@ export function App() {
           <img src="./icon.png" alt="Kocpy 图标" />
           <div>
             <strong>
-              Kocpy<span>0.1.6</span>
+              Kocpy<span>0.1.7</span>
             </strong>
             <small>素材工作台</small>
           </div>
@@ -707,7 +707,7 @@ export function App() {
                   ? `可升级 ${updateInfo.latest}`
                   : "检查更新"}
               </span>
-              <b>v0.1.6</b>
+              <b>v0.1.7</b>
             </button>
             <div className="sidebar-author-links">
               <span>
@@ -1871,7 +1871,7 @@ export function App() {
                                   false,
                                 );
                               setConfirm({
-                                text: `检测到 ${analysis.importedTasks} 条接管记录；可修正 ${analysis.metadataUpdated} 条目录元数据、合并 ${analysis.duplicatesFound} 条内容完全一致的重复记录。另有 ${analysis.baselinesNeeded} 条记录仍需建立基线。只整理 Kocpy 记录，不移动或删除素材文件。`,
+                                text: `检测到 ${analysis.importedTasks} 条接管记录；可修正 ${analysis.metadataUpdated} 条目录元数据、合并 ${analysis.duplicatesFound} 条重复素材卷记录、清理 ${analysis.rootsDeduplicated} 条重复绑定路径。另有 ${analysis.baselinesNeeded} 条记录仍需建立基线${analysis.unavailableSources ? `，${analysis.unavailableSources} 个来源当前离线，将保留原记录` : ""}。刷新只整理 Kocpy 记录并重新计算项目详情，不重新哈希、不移动或删除素材文件。`,
                                 run: async () => {
                                   const result =
                                     await api.reanalyzeExistingProject(
@@ -1880,7 +1880,7 @@ export function App() {
                                     );
                                   await refresh();
                                   notify(
-                                    `重新分析完成：修正 ${result.metadataUpdated} 条，合并 ${result.duplicatesMerged} 条重复记录`,
+                                    `刷新完成：修正 ${result.metadataUpdated} 条，合并 ${result.duplicatesMerged} 条重复素材卷`,
                                   );
                                 },
                               });
@@ -1888,12 +1888,21 @@ export function App() {
                           }
                         >
                           <ScanLine size={14} />
-                          重新分析接管
+                          刷新接管信息
                         </Button>
                       </div>
                       {projectDetailTasks.length > 0 && (
                         <div className="project-task-breakdown">
-                          <strong>素材卷明细</strong>
+                          <div className="project-task-breakdown-title">
+                            <strong>素材卷明细</strong>
+                            <span>刷新后按唯一素材卷统计，不重复累加同一路径</span>
+                          </div>
+                          <div className="project-task-breakdown-head">
+                            <span>拍摄日期 · 设备 / 机位</span>
+                            <span>素材卷</span>
+                            <span>文件 · 素材量</span>
+                            <span>接管可信状态</span>
+                          </div>
                           {[...projectDetailTasks]
                             .sort(
                               (a, b) =>
@@ -1902,7 +1911,10 @@ export function App() {
                                 ) || (a.startedAt || 0) - (b.startedAt || 0),
                             )
                             .map((task) => (
-                              <div key={task.id}>
+                              <div
+                                className="project-task-breakdown-row"
+                                key={task.id}
+                              >
                                 <span>
                                   {task.shootingDate?.replace(/-/g, "") ||
                                     "未标日期"}{" "}
@@ -3696,7 +3708,7 @@ function HelpPage({
         "有 MHL/SHA 清单时选择清单比对；否则建立接管时基线或仅导入结构。",
         "确认后通过素材卷、文件、字节、速度和预计时间查看读取进度。",
         "只有清单通过或首次基线建立完成的记录才计为可信物理副本。",
-        "旧接管记录可在项目详情选择“重新分析接管”，修正元数据并合并内容一致的重复记录。",
+        "旧接管记录可在项目详情选择“刷新接管信息”，无需重新哈希或重新接管即可修正元数据、合并同一路径及内容一致的重复记录。",
       ],
       tips: [
         "目录命名越规范，自动识别越准确。",
@@ -5427,7 +5439,7 @@ function SettingsPage({
         <img src="./icon.png" alt="Kocpy 图标" />
         <div>
           <h3>
-            Kocpy <span>0.1.6</span>
+            Kocpy <span>0.1.7</span>
           </h3>
           <p>从现场接卡、项目归档到交付报告，为每一份创作保留可靠副本。</p>
           <small>本地优先 · 独立校验 · 项目全周期记录 · @sexyfeifan</small>
