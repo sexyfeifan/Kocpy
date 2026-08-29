@@ -308,7 +308,7 @@ async function htmlToPdf(html: Buffer | string) {
 }
 async function processProxyQueue() {
   if (proxyBusy) return;
-  let dependencyChanged=false;
+  let dependencyChanged = false;
   for (const queued of proxyJobs.filter((item) => item.status === "pending")) {
     const failed = (queued.dependsOn || []).find((id) =>
       ["failed", "cancelled"].includes(
@@ -319,7 +319,7 @@ async function processProxyQueue() {
       queued.status = "failed";
       queued.error = `依赖任务 ${failed} 未完成`;
       queued.completedAt = Date.now();
-      dependencyChanged=true;
+      dependencyChanged = true;
     }
   }
   const job = proxyJobs.find(
@@ -330,7 +330,13 @@ async function processProxyQueue() {
           proxyJobs.find((item) => item.id === id)?.status === "completed",
       ),
   );
-  if (!job) {if(dependencyChanged){await persistProxyJobs();emitProxyJobs();}return;}
+  if (!job) {
+    if (dependencyChanged) {
+      await persistProxyJobs();
+      emitProxyJobs();
+    }
+    return;
+  }
   proxyBusy = true;
   proxyController = new AbortController();
   Object.assign(job, {
@@ -523,7 +529,31 @@ app.whenReady().then(async () => {
     reminder.nextAt = Date.now() + reminder.intervalDays * 86_400_000;
   }
   await store.write("archive-reminders.json", archiveReminders);
-  setInterval(()=>void (async()=>{const due=archiveReminders.filter((item)=>item.enabled&&item.nextAt<=Date.now());if(!due.length)return;const projects=await store.read<ProjectConfig[]>("projects.json",[]);for(const reminder of due){const project=projects.find((item)=>item.id===reminder.projectId);if(Notification.isSupported())new Notification({title:"归档复校验到期",body:`${project?.name||"项目"} 已到周期复校验时间`,silent:!initialSettings.notificationSound}).show();reminder.lastNotifiedAt=Date.now();reminder.nextAt=Date.now()+reminder.intervalDays*86_400_000;}await store.write("archive-reminders.json",archiveReminders);})(),3_600_000);
+  setInterval(
+    () =>
+      void (async () => {
+        const due = archiveReminders.filter(
+          (item) => item.enabled && item.nextAt <= Date.now(),
+        );
+        if (!due.length) return;
+        const projects = await store.read<ProjectConfig[]>("projects.json", []);
+        for (const reminder of due) {
+          const project = projects.find(
+            (item) => item.id === reminder.projectId,
+          );
+          if (Notification.isSupported())
+            new Notification({
+              title: "归档复校验到期",
+              body: `${project?.name || "项目"} 已到周期复校验时间`,
+              silent: !initialSettings.notificationSound,
+            }).show();
+          reminder.lastNotifiedAt = Date.now();
+          reminder.nextAt = Date.now() + reminder.intervalDays * 86_400_000;
+        }
+        await store.write("archive-reminders.json", archiveReminders);
+      })(),
+    3_600_000,
+  );
   for (const template of builtInProductionTemplates())
     if (!projectTemplates.some((item) => item.id === template.id))
       projectTemplates.push(template);
@@ -1036,18 +1066,48 @@ app.whenReady().then(async () => {
       for (const task of tasks) {
         if (scope.relativePath || scope.volumePath) {
           const records = scope.relativePath
-            ? task.fileRecords.filter((file) => file.relativePath === scope.relativePath)
+            ? task.fileRecords.filter(
+                (file) => file.relativePath === scope.relativePath,
+              )
             : task.fileRecords;
           if (!records.length) continue;
           let taskHealthy = true;
-          for (const record of records) for (const destination of record.destinations) {
-            if (scope.volumePath && !inside(destination.path, scope.volumePath)) continue;
-            const exists = await fs.access(destination.path).then(() => true, () => false), actual = exists ? await hashFile(destination.path, task.hashAlgorithm) : "", kind = !exists ? "missing" : actual !== record.srcChecksum ? "modified" : "verified";
-            destination.verified = kind === "verified";
-            if (kind === "verified") bytesVerified += record.size;
-            else { missingCopies++; taskHealthy = false; }
-            if (kind !== "verified" || scope.relativePath) changes.push({ id: randomUUID(), projectId: task.projectId || "", taskId: task.id, at: Date.now(), kind, path: destination.path, note: `${record.relativePath}：${kind}` });
-          }
+          for (const record of records)
+            for (const destination of record.destinations) {
+              if (
+                scope.volumePath &&
+                !inside(destination.path, scope.volumePath)
+              )
+                continue;
+              const exists = await fs.access(destination.path).then(
+                  () => true,
+                  () => false,
+                ),
+                actual = exists
+                  ? await hashFile(destination.path, task.hashAlgorithm)
+                  : "",
+                kind = !exists
+                  ? "missing"
+                  : actual !== record.srcChecksum
+                    ? "modified"
+                    : "verified";
+              destination.verified = kind === "verified";
+              if (kind === "verified") bytesVerified += record.size;
+              else {
+                missingCopies++;
+                taskHealthy = false;
+              }
+              if (kind !== "verified" || scope.relativePath)
+                changes.push({
+                  id: randomUUID(),
+                  projectId: task.projectId || "",
+                  taskId: task.id,
+                  at: Date.now(),
+                  kind,
+                  path: destination.path,
+                  note: `${record.relativePath}：${kind}`,
+                });
+            }
           if (taskHealthy) healthyTasks++;
           for (const top of task.destinations) {
             const root = top.resolvedPath || top.path,
@@ -1057,7 +1117,14 @@ app.whenReady().then(async () => {
             top.verified =
               copies.length > 0 && copies.every((copy) => copy.verified);
           }
-          changes.push({id:randomUUID(),projectId:task.projectId||"",taskId:task.id,at:Date.now(),kind:taskHealthy?"verified":"damaged",note:`${task.name} ${taskHealthy?"复校验通过":"复校验失败"}`});
+          changes.push({
+            id: randomUUID(),
+            projectId: task.projectId || "",
+            taskId: task.id,
+            at: Date.now(),
+            kind: taskHealthy ? "verified" : "damaged",
+            note: `${task.name} ${taskHealthy ? "复校验通过" : "复校验失败"}`,
+          });
         } else {
           await engine.reverifyTask(task.id);
           if (task.status === "completed") healthyTasks++;
@@ -1352,7 +1419,22 @@ app.whenReady().then(async () => {
     },
   );
   handle("templates:list", () => projectTemplates);
-  handle("existing:preview", (root: string) => previewExistingBackup(root));
+  handle(
+    "existing:preview",
+    async (
+      root: string,
+      projectId?: string,
+      scope: "card" | "day" | "project" | "auto" = "auto",
+      selectedDate?: string,
+    ) => {
+      const project = projectId
+        ? (await store.read<ProjectConfig[]>("projects.json", []))
+            .map(normalizeProject)
+            .find((item) => item.id === projectId)
+        : undefined;
+      return previewExistingBackup(root, project, scope, selectedDate);
+    },
+  );
   handle(
     "existing:import",
     async (
@@ -1397,25 +1479,19 @@ app.whenReady().then(async () => {
         ).map(normalizeProject),
         project = projects.find((item) => item.id === projectId);
       if (!project) throw new Error("项目不存在");
-      const preview = await previewExistingBackup(root);
-      let candidates =
-        scope === "card"
-          ? [
-              {
-                relativeRoot: ".",
-                files: preview.files,
-                bytes: preview.bytes,
-                shootingDate: preview.suggestedDate,
-                device: preview.suggestedDevice,
-                card: preview.suggestedCard,
-              },
-            ]
-          : preview.candidates;
-      if (scope === "day") {
-        const date = selectedDate || preview.suggestedDate;
-        candidates = candidates.filter((item) => item.shootingDate === date);
-        if (!candidates.length) throw new Error("所选拍摄日下未识别到素材卷");
-      }
+      const preview = await previewExistingBackup(
+        root,
+        project,
+        scope,
+        selectedDate,
+      );
+      const candidates = preview.candidates;
+      if (!candidates.length)
+        throw new Error(
+          scope === "day"
+            ? "所选拍摄日下未识别到素材卷"
+            : "所选目录下未识别到可接管的素材卷",
+        );
       const tasks = [];
       for (const candidate of candidates) {
         const candidateRoot =
@@ -1426,6 +1502,7 @@ app.whenReady().then(async () => {
           await importExistingBackup(project, candidateRoot, mode, {
             shootingDate: candidate.shootingDate || selectedDate,
             device: candidate.device,
+            cameraPosition: candidate.cameraPosition,
             card: candidate.card || path.basename(candidateRoot),
           }),
         );

@@ -429,6 +429,8 @@ export interface ExistingImportPreview {
   root: string;
   files: number;
   bytes: number;
+  detectedStructure: "card" | "day" | "project" | "unknown";
+  warnings: string[];
   manifest?: string;
   suggestedDate?: string;
   suggestedDevice?: string;
@@ -448,6 +450,7 @@ export interface ExistingImportPreview {
     bytes: number;
     shootingDate?: string;
     device?: string;
+    cameraPosition?: string;
     card?: string;
   }>;
 }

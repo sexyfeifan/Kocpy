@@ -177,12 +177,22 @@ export interface API {
     templateId: string,
     projectId: string,
   ): Promise<ProjectConfig[]>;
-  previewExistingBackup(root: string): Promise<ExistingImportPreview>;
+  previewExistingBackup(
+    root: string,
+    projectId?: string,
+    scope?: "card" | "day" | "project" | "auto",
+    selectedDate?: string,
+  ): Promise<ExistingImportPreview>;
   importExistingBackup(
     projectId: string,
     root: string,
     mode: "manifest-import" | "external-baseline" | "unverified-import",
-    metadata?: { shootingDate?: string; device?: string; card?: string },
+    metadata?: {
+      shootingDate?: string;
+      device?: string;
+      cameraPosition?: string;
+      card?: string;
+    },
   ): Promise<BackupTask>;
   importExistingScope(
     projectId: string,

@@ -11,29 +11,150 @@ export function physicalDestinationKey(destination: Destination): string {
 }
 
 export function verifiedPhysicalCopyCount(task: BackupTask): number {
-  return new Set(task.destinations.filter((destination) => destination.verified).map(physicalDestinationKey)).size;
+  return new Set(
+    task.destinations
+      .filter((destination) => destination.verified)
+      .map(physicalDestinationKey),
+  ).size;
 }
 
-export function taskMeetsCopyRequirement(task: BackupTask, requiredCopies: number): boolean {
-  return task.status === "completed" && verifiedPhysicalCopyCount(task) >= requiredCopies;
+export function taskMeetsCopyRequirement(
+  task: BackupTask,
+  requiredCopies: number,
+): boolean {
+  return (
+    task.status === "completed" &&
+    verifiedPhysicalCopyCount(task) >= requiredCopies
+  );
 }
 
-export function projectCellStatus(project: ProjectConfig, tasks: BackupTask[], shootingDate: string, device: string) {
-  const rows = tasks.filter((task) => task.shootingDate === shootingDate && task.devices.includes(device));
+export interface ProjectDeviceCell {
+  device: string;
+  cameraPosition?: string;
+  label: string;
+  scheduleKey: string;
+}
+
+export function projectDeviceCells(
+  project: ProjectConfig,
+  tasks: BackupTask[] = [],
+  shootingDate?: string,
+): ProjectDeviceCell[] {
+  const devices = [
+    ...new Set([
+      ...project.devices,
+      ...tasks.flatMap((task) => task.devices || []),
+    ]),
+  ];
+  return devices.flatMap((device) => {
+    const positions = [
+      ...new Set([
+        ...(project.devicePositions?.[device] || []),
+        ...tasks
+          .filter((task) => task.devices.includes(device))
+          .map((task) => task.cameraPosition)
+          .filter((position): position is string => Boolean(position)),
+      ]),
+    ];
+    if (!positions.length)
+      return [{ device, label: device, scheduleKey: device }];
+    const cells: ProjectDeviceCell[] = positions.map((cameraPosition) => ({
+      device,
+      cameraPosition,
+      label: `${device} · ${cameraPosition}`,
+      scheduleKey: `${device}::${cameraPosition}`,
+    }));
+    if (
+      tasks.some(
+        (task) => task.devices.includes(device) && !task.cameraPosition,
+      ) &&
+      (!shootingDate ||
+        tasks.some(
+          (task) =>
+            task.shootingDate === shootingDate &&
+            task.devices.includes(device) &&
+            !task.cameraPosition,
+        ))
+    )
+      cells.push({
+        device,
+        label: `${device} · 未标机位`,
+        scheduleKey: `${device}::unassigned`,
+      });
+    return cells;
+  });
+}
+
+export function projectCellStatus(
+  project: ProjectConfig,
+  tasks: BackupTask[],
+  shootingDate: string,
+  device: string,
+  cameraPosition?: string,
+) {
+  const deviceTasks = tasks.filter(
+    (task) =>
+      task.shootingDate === shootingDate && task.devices.includes(device),
+  );
+  const hasPositionedRows =
+    Boolean(project.devicePositions?.[device]?.length) ||
+    tasks.some(
+      (task) => task.devices.includes(device) && Boolean(task.cameraPosition),
+    );
+  const rows = cameraPosition
+    ? deviceTasks.filter((task) => task.cameraPosition === cameraPosition)
+    : hasPositionedRows
+      ? deviceTasks.filter((task) => !task.cameraPosition)
+      : deviceTasks;
   const required = project.requiredCopies || 2;
   const rest = Boolean(project.restDays?.includes(shootingDate));
-  const unused = Boolean(project.unusedDevicesByDate?.[shootingDate]?.includes(device));
-  const safe = rows.filter((task) => taskMeetsCopyRequirement(task, required)).length;
+  const unusedKeys = project.unusedDevicesByDate?.[shootingDate] || [];
+  const unused = cameraPosition
+    ? unusedKeys.includes(`${device}::${cameraPosition}`) ||
+      unusedKeys.includes(device)
+    : unusedKeys.includes(device) ||
+      unusedKeys.includes(`${device}::unassigned`);
+  const safe = rows.filter((task) =>
+    taskMeetsCopyRequirement(task, required),
+  ).length;
   return {
     rows,
     safe,
     exempt: rest || unused,
     complete: rest || unused || Boolean(rows.length && safe === rows.length),
-    label: rest ? "休息日" : unused ? "当天未使用" : rows.length && safe === rows.length ? "已满足收工要求" : rows.length ? `${safe} / ${rows.length} 达到 ${required} 份物理独立副本` : "尚未备份",
+    label: rest
+      ? "休息日"
+      : unused
+        ? "当天未使用"
+        : rows.length && safe === rows.length
+          ? "已满足收工要求"
+          : rows.length
+            ? `${safe} / ${rows.length} 达到 ${required} 份物理独立副本`
+            : "尚未备份",
   };
 }
 
-export function projectCloseoutSummary(project: ProjectConfig, tasks: BackupTask[], dates: string[]) {
-  const cells = dates.flatMap((shootingDate) => project.devices.map((device) => ({ shootingDate, device, ...projectCellStatus(project, tasks, shootingDate, device) })));
-  return { total: cells.length, complete: cells.filter((cell) => cell.complete).length, pending: cells.filter((cell) => !cell.complete) };
+export function projectCloseoutSummary(
+  project: ProjectConfig,
+  tasks: BackupTask[],
+  dates: string[],
+) {
+  const cells = dates.flatMap((shootingDate) =>
+    projectDeviceCells(project, tasks, shootingDate).map((cell) => ({
+      shootingDate,
+      ...cell,
+      ...projectCellStatus(
+        project,
+        tasks,
+        shootingDate,
+        cell.device,
+        cell.cameraPosition,
+      ),
+    })),
+  );
+  return {
+    total: cells.length,
+    complete: cells.filter((cell) => cell.complete).length,
+    pending: cells.filter((cell) => !cell.complete),
+  };
 }

@@ -91,6 +91,7 @@ import { ProjectEditor } from "./ProjectEditor";
 import {
   projectCellStatus,
   projectCloseoutSummary,
+  projectDeviceCells,
   verifiedPhysicalCopyCount,
 } from "../../main/project-closeout";
 
@@ -626,7 +627,7 @@ export function App() {
           <img src="./icon.png" alt="Kocpy 图标" />
           <div>
             <strong>
-              Kocpy<span>0.1.4</span>
+              Kocpy<span>0.1.5</span>
             </strong>
             <small>素材工作台</small>
           </div>
@@ -683,7 +684,7 @@ export function App() {
                   ? `可升级 ${updateInfo.latest}`
                   : "检查更新"}
               </span>
-              <b>v0.1.4</b>
+              <b>v0.1.5</b>
             </button>
             <div className="sidebar-author-links">
               <span>
@@ -1507,8 +1508,10 @@ export function App() {
                                     if (!root) return;
                                     setExistingImport({
                                       project: p,
-                                      preview:
-                                        await api.previewExistingBackup(root),
+                                      preview: await api.previewExistingBackup(
+                                        root,
+                                        p.id,
+                                      ),
                                     });
                                   })
                                 }
@@ -1705,23 +1708,28 @@ export function App() {
                           projectDetail,
                           projectDetailTasks,
                         ).flatMap((shootingDate) =>
-                          projectDetail.devices.map((device) => {
+                          projectDeviceCells(
+                            projectDetail,
+                            projectDetailTasks,
+                            shootingDate,
+                          ).map((deviceCell) => {
                             const cell = projectCellStatus(
                                 projectDetail,
                                 projectDetailTasks,
                                 shootingDate,
-                                device,
+                                deviceCell.device,
+                                deviceCell.cameraPosition,
                               ),
                               rows = cell.rows;
                             return (
                               <div
                                 className="project-matrix-row"
-                                key={`${shootingDate}-${device}`}
+                                key={`${shootingDate}-${deviceCell.scheduleKey}`}
                               >
                                 <strong>
                                   {shootingDate.replace(/-/g, "")}
                                 </strong>
-                                <span>{device}</span>
+                                <span>{deviceCell.label}</span>
                                 <span>{rows.length}</span>
                                 <span>
                                   {rows.reduce(
@@ -1750,7 +1758,7 @@ export function App() {
                                     void updateProjectSchedule(
                                       projectDetail,
                                       shootingDate,
-                                      device,
+                                      deviceCell.scheduleKey,
                                     )
                                   }
                                   title="切换当天未使用标记"
@@ -3025,7 +3033,11 @@ function ExistingImportModal({
       "manifest-import" | "external-baseline" | "unverified-import"
     >(value.preview.manifest ? "manifest-import" : "external-baseline"),
     [scope, setScope] = useState<"card" | "day" | "project">(
-      value.preview.candidates.length > 1 ? "project" : "card",
+      value.preview.detectedStructure === "project"
+        ? "project"
+        : value.preview.detectedStructure === "day"
+          ? "day"
+          : "card",
     ),
     [dateValue, setDateValue] = useState(
       value.preview.suggestedDate ||
@@ -3071,17 +3083,30 @@ function ExistingImportModal({
             <strong>{leaf(value.preview.root)}</strong>
             <span>
               {value.preview.files} 个文件 · {bytes(value.preview.bytes)} ·
-              识别到 {value.preview.candidates.length} 个素材卷
+              识别到 {value.preview.candidates.length} 个素材卷 ·
+              {value.preview.detectedStructure === "project"
+                ? "项目目录"
+                : value.preview.detectedStructure === "day"
+                  ? "单日目录"
+                  : value.preview.detectedStructure === "card"
+                    ? "素材卡目录"
+                    : "结构待确认"}
             </span>
             <small className="mono">{value.preview.root}</small>
           </div>
+          {value.preview.warnings.map((warning) => (
+            <div className="notice amber" key={warning}>
+              <AlertTriangle size={15} />
+              {warning}
+            </div>
+          ))}
           <label>
             接管范围
             <select
               value={scope}
               onChange={(event) => setScope(event.target.value as typeof scope)}
             >
-              <option value="card">单日单机位 / 单张素材卡</option>
+              <option value="card">所选文件夹作为单张素材卡</option>
               <option value="day">单日所有机位</option>
               <option value="project">整个项目</option>
             </select>
@@ -3102,7 +3127,11 @@ function ExistingImportModal({
                 <strong>{item.card}</strong>
                 <small>
                   {item.shootingDate || "日期未识别"} ·{" "}
-                  {item.device || "机位未识别"} · {item.files} 文件
+                  {item.device || "设备未识别"}
+                  {item.cameraPosition
+                    ? ` · ${item.cameraPosition} 机位`
+                    : ""}{" "}
+                  · {item.files} 文件
                 </small>
               </span>
             ))}
@@ -3908,7 +3937,9 @@ function LifecycleAdvanced({
     setLan(lanValue);
   }, []);
   useEffect(() => {
-    void reload();const timer=window.setInterval(()=>void reload(),60_000);return()=>window.clearInterval(timer);
+    void reload();
+    const timer = window.setInterval(() => void reload(), 60_000);
+    return () => window.clearInterval(timer);
   }, [reload]);
   const projectId = () =>
     (document.getElementById("lifecycle-project") as HTMLSelectElement)
@@ -5082,7 +5113,7 @@ function SettingsPage({
         <img src="./icon.png" alt="Kocpy 图标" />
         <div>
           <h3>
-            Kocpy <span>0.1.4</span>
+            Kocpy <span>0.1.5</span>
           </h3>
           <p>从现场接卡、项目归档到交付报告，为每一份创作保留可靠副本。</p>
           <small>本地优先 · 独立校验 · 项目全周期记录 · @sexyfeifan</small>
