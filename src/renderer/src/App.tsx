@@ -59,6 +59,8 @@ import {
   PackageSearch,
   Database,
   Share2,
+  CircleHelp,
+  BookOpen,
 } from "lucide-react";
 import {
   api,
@@ -92,6 +94,7 @@ type Page =
   | "storage"
   | "diagnostics"
   | "maintenance"
+  | "help"
   | "settings";
 const navigation: [Page, string, typeof LayoutDashboard][] = [
   ["overview", "工作台", LayoutDashboard],
@@ -104,6 +107,7 @@ const navigation: [Page, string, typeof LayoutDashboard][] = [
   ["storage", "存储设备", HardDrive],
   ["diagnostics", "诊断中心", Gauge],
   ["maintenance", "归档维护", Database],
+  ["help", "使用说明", CircleHelp],
 ];
 const projectDates = (project: ProjectConfig, tasks: BackupTask[]) => {
   const result: string[] = [], start = project.shootingDateStart, end = project.shootingDateEnd || start;
@@ -478,7 +482,7 @@ export function App() {
           <img src="./icon.png" alt="Kocpy 图标" />
           <div>
             <strong>
-              Kocpy<span>0.0.14</span>
+              Kocpy<span>0.0.15</span>
             </strong>
             <small>素材工作台</small>
           </div>
@@ -525,7 +529,7 @@ export function App() {
             <button className={`sidebar-update ${updateInfo?.available ? "available" : ""}`} title="检查 Kocpy 更新" onClick={() => void checkForUpdates()}>
               <RefreshCw size={13}/>
               <span>{updateInfo?.available ? `可升级 ${updateInfo.latest}` : "检查更新"}</span>
-              <b>v0.0.14</b>
+              <b>v0.0.15</b>
             </button>
             <div className="sidebar-author-links">
               <span><i className="live-dot"/><b>@sexyfeifan</b></span>
@@ -581,6 +585,7 @@ export function App() {
                     storage: "CONNECTED STORAGE",
                     diagnostics: "RELIABILITY DIAGNOSTICS",
                     maintenance: "ARCHIVE LIFECYCLE",
+                    help: "KOCPY USER GUIDE",
                     settings: "MAKE IT YOURS",
                   }[page]
                 }
@@ -598,6 +603,7 @@ export function App() {
                     storage: "存储设备",
                     diagnostics: "诊断中心",
                     maintenance: "归档维护",
+                    help: "使用说明",
                     settings: "偏好设置",
                   }[page]
                 }
@@ -615,6 +621,7 @@ export function App() {
                     storage: "识别已挂载的本地磁盘、素材卡和网络存储。",
                     diagnostics: "性能预检、恢复结论与脱敏诊断记录。",
                     maintenance: "长期复校验、项目模板、数据备份与工作站合并。",
+                    help: "从第一次备份到项目归档，逐步了解每个模块。",
                     settings: "为你的工作方式设定可靠的默认值。",
                   }[page]
                 }
@@ -1187,6 +1194,7 @@ export function App() {
               {page === "processing" && <ProxyQueue jobs={proxyJobs} act={act} refresh={async () => setProxyJobs(await api.getProxyJobs())} />}
               {page === "diagnostics" && <DiagnosticsPage tasks={tasks} volumes={volumes} notify={notify} />}
               {page === "maintenance" && <MaintenancePage tasks={tasks} projects={projects} refreshProjects={async () => setProjects(await api.getProjects())} notify={notify} />}
+              {page === "help" && <HelpPage go={go} openBackup={() => setComposer({})} />}
               {page === "settings" && (
                 <SettingsPage
                   settings={settings}
@@ -1751,6 +1759,22 @@ function Library({
     </section>
   );
 }
+function HelpPage({ go, openBackup }: { go: (page: Page) => void; openBackup: () => void }) {
+  const guides: Array<{ id: string; icon: typeof HardDrive; title: string; purpose: string; steps: string[]; tips: string[]; page?: Page }> = [
+    { id:"backup", icon:MemoryStick, title:"新建备份", purpose:"从素材卡或文件夹向 1–4 个目的地复制，并逐目标独立回读校验。", steps:["连接素材卡，点击“新建备份”并选择素材来源。","选择素材卡模式或拍摄项目，确认日期、设备和机位。","选择位于不同物理磁盘的目的地，检查容量和素材分类。","确认后开始；紫色表示拷贝，绿色表示独立校验。","完成弹窗显示文件、容量、通过目标与用时。"], tips:["Kocpy 不会自动开始写入。","不要把多个目录位于同一物理盘误当成独立副本。","校验完成前不要拔出素材卡或目的地。"] },
+    { id:"transfers", icon:ArrowLeftRight, title:"传输队列", purpose:"查看百分比、真实速度、ETA、文件和每个目的地状态。", steps:["点击任务查看拷贝、校验和最近 30 秒速度。","需要时暂停；继续后会使用安全检查点。","失败时先阅读具体目标和文件错误，再进入恢复中心。"], tips:["“已保存”是最终有效素材量；“本次写入”是本轮物理写入量。","速度来自操作系统确认完成的字节，不是模拟数据。"], page:"transfers" },
+    { id:"recovery", icon:RefreshCw, title:"恢复中心", purpose:"处理异常退出、离线磁盘、断点文件和未完成校验。", steps:["重新连接原素材卡与原目标磁盘。","确认卷名和卷身份匹配。","按提示选择从检查点继续、只重试失败目标或重新校验。","恢复后检查成功目标是否仍保持通过。"], tips:["同一路径换成另一块磁盘时会拒绝继续。","失败目标修复不会重新写入已成功目标。"], page:"recovery" },
+    { id:"projects", icon:FolderKanban, title:"拍摄项目", purpose:"按日期、设备、机位和物理独立副本管理完整拍摄周期。", steps:["创建项目并设置拍摄周期、设备、机位和目的地。","设置收工需要的独立副本数量。","每天查看日期 × 设备矩阵，标记休息日或未使用设备。","项目结束后导出 PDF、JSON、CSV 或完整归档包。"], tips:["同一磁盘的多个文件夹只计算一份安全副本。","项目模板可复用设备和收工标准。"], page:"projects" },
+    { id:"library", icon:Film, title:"素材库", purpose:"浏览已记录素材、缩略图、元数据与已校验副本。", steps:["按视频、照片/RAW、LUT/CDL 分类或搜索。","点击预览查看摄影机、分辨率、帧率、时间码和音轨。","只从已校验副本定位文件或创建代理。"], tips:["历史绿色状态是任务执行时的记录；长期状态请使用归档复校验。"], page:"library" },
+    { id:"proxy", icon:Clapperboard, title:"代理队列", purpose:"生成 H.264 或 ProRes 剪辑代理并检查媒体一致性。", steps:["在素材库选择一个或多个已校验视频。","选择审片、剪辑或离线预设，并设置命名规则。","在队列中暂停、继续、取消或重试。","完成后检查帧率、时间码和音轨提示。","导出 Resolve、Premiere 或 Final Cut 交付清单。"], tips:["代理始终写入独立目录，不修改原素材。","暂停会清理不完整输出，继续时安全重建。"], page:"processing" },
+    { id:"reports", icon:FileCheck2, title:"报告中心", purpose:"导出单任务、拍摄日和项目级校验记录。", steps:["选择任务或拍摄日。","选择 PDF、JSON、MHL、ASC MHL 或 Resolve CSV。","项目归档包同时包含报告、数据、统计、MHL 和 SHA-256。"], tips:["PDF 可包含素材首帧缩略图。","报告证明任务执行时状态，不替代后续长期复校验。"], page:"reports" },
+    { id:"storage", icon:HardDrive, title:"存储设备", purpose:"查看容量、文件系统、网络延迟并安全推出设备。", steps:["确认目标可写、容量充足且不是系统备份卷。","任务完成后使用安全推出。","批量推出会保留仍被备份、代理或失败记录占用的磁盘。"], tips:["不要直接拔出正在写入或校验的设备。"], page:"storage" },
+    { id:"diagnostics", icon:Gauge, title:"诊断中心", purpose:"执行受控性能预检并导出脱敏诊断包。", steps:["确保没有备份或代理任务运行。","对选定可写磁盘运行 64 MiB 写入与回读测试。","遇到问题时导出诊断包。"], tips:["测试文件会自动清理。","诊断包不包含素材内容、完整私人路径或账号。"], page:"diagnostics" },
+    { id:"archive", icon:Database, title:"归档维护", purpose:"长期复校验、修复副本、数据备份与工作站合并。", steps:["定期选择项目执行长期复校验。","发现失败副本后，从另一健康副本修复。","修复前原损坏文件会改名保留。","导出本地数据备份或工作站包。","合并其他工作站记录后检查重复项和冲突。"], tips:["修复必须至少存在一份哈希匹配的健康副本。","导入前建议先导出本地数据备份。"], page:"maintenance" },
+  ];
+  return <div className="help-center"><section className="panel help-start"><div><span className="mini-label"><BookOpen size={13}/> QUICK START</span><h2>第一次使用 Kocpy</h2><p>推荐流程：创建项目 → 连接素材卡 → 选择不同物理盘 → 拷贝 → 独立校验 → 收工检查 → 导出报告 → 安全推出。</p></div><Button kind="primary" onClick={openBackup}><Plus size={15}/>开始第一份备份</Button></section><section className="help-safety"><ShieldCheck size={20}/><div><strong>三条安全原则</strong><p>源素材只读处理 · 每个副本独立回读校验 · 至少保存到两块不同物理磁盘</p></div></section><div className="help-grid">{guides.map(({id,icon:Icon,title,purpose,steps,tips,page}) => <details className="help-module" key={id} open={id === "backup"}><summary><span><Icon size={19}/></span><div><strong>{title}</strong><small>{purpose}</small></div><ChevronRight size={15}/></summary><div className="help-body"><h4>操作步骤</h4><ol>{steps.map((step,index)=><li key={step}><b>{index+1}</b><span>{step}</span></li>)}</ol><h4>注意事项</h4><ul>{tips.map((tip)=><li key={tip}>{tip}</li>)}</ul>{page && <Button kind="subtle" onClick={()=>go(page)}>打开{title}<ArrowRight size={13}/></Button>}</div></details>)}</div></div>;
+}
+
 function MaintenancePage({ tasks, projects, refreshProjects, notify }: { tasks: BackupTask[]; projects: ProjectConfig[]; refreshProjects: () => Promise<void>; notify: (message: string, error?: boolean) => void }) {
   const [health, setHealth] = useState<import("./api").ArchiveHealthRecord[]>([]), [templates, setTemplates] = useState<import("./api").ProjectTemplate[]>([]), [busy, setBusy] = useState<string | null>(null), [handoff, setHandoff] = useState("");
   const reload = useCallback(async () => { const [records, values] = await Promise.all([api.getArchiveHealth(), api.getProjectTemplates()]); setHealth(records); setTemplates(values); }, []);
@@ -1960,7 +1984,7 @@ function SettingsPage({
         <img src="./icon.png" alt="Kocpy 图标" />
         <div>
           <h3>
-            Kocpy <span>0.0.14</span>
+            Kocpy <span>0.0.15</span>
           </h3>
           <p>
             从现场接卡、项目归档到交付报告，为每一份创作保留可靠副本。

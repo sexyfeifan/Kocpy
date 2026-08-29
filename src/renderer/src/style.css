@@ -2470,6 +2470,29 @@ small {
     opacity: 1;
   }
 }
+.help-center { display: grid; gap: 16px; padding-bottom: 36px; }
+.help-start { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 26px 28px; }
+.help-start h2 { margin: 8px 0 7px; font-size: 23px; }
+.help-start p { margin: 0; color: var(--muted); line-height: 1.65; }
+.help-safety { display: flex; align-items: center; gap: 14px; padding: 15px 19px; border: 1px solid #50d89035; border-radius: 14px; color: var(--green); background: #50d8900c; }
+.help-safety div { display: grid; gap: 3px; }
+.help-safety p { margin: 0; color: var(--muted); font-size: 12px; }
+.help-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; align-items: start; }
+.help-module { overflow: hidden; border: 1px solid var(--border); border-radius: 15px; background: var(--panel); }
+.help-module summary { display: grid; grid-template-columns: 38px minmax(0, 1fr) 18px; align-items: center; gap: 12px; padding: 17px 18px; cursor: pointer; list-style: none; }
+.help-module summary::-webkit-details-marker { display: none; }
+.help-module summary > span { width: 38px; height: 38px; display: grid; place-items: center; border-radius: 11px; color: var(--accent); background: var(--accent-soft); }
+.help-module summary div { min-width: 0; display: grid; gap: 4px; }
+.help-module summary strong { font-size: 13px; }
+.help-module summary small { color: var(--muted); line-height: 1.45; }
+.help-module summary > svg { color: var(--muted); transition: transform .18s ease; }
+.help-module[open] summary > svg { transform: rotate(90deg); }
+.help-body { padding: 0 18px 18px 68px; border-top: 1px solid var(--border); }
+.help-body h4 { margin: 16px 0 9px; font-size: 10px; letter-spacing: .08em; color: var(--muted); }
+.help-body ol, .help-body ul { display: grid; gap: 8px; margin: 0 0 14px; padding: 0; list-style: none; }
+.help-body li { display: flex; gap: 9px; color: var(--text); font-size: 11px; line-height: 1.55; }
+.help-body ol b { flex: 0 0 19px; height: 19px; display: grid; place-items: center; border-radius: 50%; color: var(--accent); background: var(--accent-soft); font-size: 9px; }
+.help-body ul li::before { content: "•"; color: var(--green); }
 .completion-modal {
   width: min(620px, calc(100vw - 48px));
   padding: 34px;
@@ -2508,6 +2531,7 @@ small {
 .completion-summary strong { font-size: 16px; }
 .completion-summary span { margin-top: 5px; color: var(--muted); font-size: 9px; }
 @media (max-width: 1200px) {
+  .help-grid { grid-template-columns: 1fr; }
   .sidebar {
     width: 194px;
     padding: 0 13px;

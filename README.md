@@ -78,6 +78,9 @@ Kocpy 将素材卡接收、多目标备份、逐目标回读校验、项目归�
 - 存储设备页可批量安全推出所有已完成设备；仍被备份或代理任务使用、存在未被后续成功任务覆盖的失败记录时，磁盘会被保留并说明原因。
 - 诊断中心可对选定磁盘执行受控的 64 MiB 写入与回读性能预检，自动清理临时文件，并导出不含素材内容、完整私人路径或账号信息的脱敏诊断包。
 - 任务记录保留最近的暂停、继续、预检异常和完成事件，帮助判断素材源失联、目的地离线、断点可恢复及副本未校验等状态。
+- 软件内“使用说明”按模块提供操作步骤、注意事项与直达入口，覆盖从第一次备份到长期归档的完整工作流。
+
+![软件内使用说明](docs/screenshots/help.png)
 
 ![素材库](docs/screenshots/library.png)
 
@@ -97,8 +100,8 @@ Kocpy 支持真实深色与浅色外观，任务、项目、偏好、缩略图�
 
 从 [GitHub Releases](https://github.com/sexyfeifan/Kocpy/releases) 下载对应架构：
 
-- `Kocpy-0.0.14-arm64.dmg`：Apple Silicon Mac
-- `Kocpy-0.0.14-x64.dmg`：Intel Mac
+- `Kocpy-0.0.15-arm64.dmg`：Apple Silicon Mac
+- `Kocpy-0.0.15-x64.dmg`：Intel Mac
 
 打开 DMG，将 Kocpy 拖入“应用程序”。当前公开包尚未使用 Apple Developer ID 签名和公证。若 macOS 明确提示应用“已损坏”，请先确认文件来自本仓库官方 Release，再执行：
 
@@ -114,7 +117,7 @@ Kocpy is a local-first macOS workspace for verified media offload and production
 
 Project mode organizes media by project, shooting date, camera, optional A–E camera position, and timestamped card volume. The project dashboard applies a configurable closeout rule based on physically distinct volume identities, with explicit rest-day and unused-camera exceptions. Complete records can be exported as PDF, JSON, CSV, or a self-contained archive bundle with MHL manifests and SHA-256 checksums.
 
-Kocpy also includes media thumbnails and metadata, H.264/ProRes proxy queues, Resolve CSV export, light/dark appearance, update checks, and architecture-specific DMGs for Apple Silicon and Intel Macs. Media and records stay on the Mac unless the user explicitly selects a report mirror folder.
+Kocpy also includes media thumbnails and metadata, H.264/ProRes proxy queues, Resolve CSV export, light/dark appearance, update checks, and architecture-specific DMGs for Apple Silicon and Intel Macs. An in-app guide documents every module with steps, safety notes, and direct links. Media and records stay on the Mac unless the user explicitly selects a report mirror folder.
 
 ## 日本語
 
@@ -122,7 +125,7 @@ Kocpy は、macOS 向けのローカル優先メディアバックアップ／�
 
 プロジェクトモードでは、プロジェクト、撮影日、カメラ、任意の A–E カメラ位置、タイムスタンプ付き素材巻の階層で整理します。必要コピー数は物理ボリューム UUID ごとに数え、同じディスク上の複数フォルダを重複カウントしません。詳細データは PDF／JSON／CSV、MHL と `SHA256SUMS.txt` を含む一括アーカイブとして書き出せます。
 
-素材サムネイルとメタデータ、H.264／ProRes プロキシキュー、Resolve CSV、ライト／ダーク表示、更新確認、Apple Silicon／Intel 用 DMG も備えています。素材と記録は、ユーザーが明示的にレポート同期先を選ばない限り Mac 内に保持されます。
+素材サムネイルとメタデータ、H.264／ProRes プロキシキュー、Resolve CSV、ライト／ダーク表示、更新確認、Apple Silicon／Intel 用 DMG も備えています。アプリ内ガイドでは、各機能の手順、注意事項、画面への直接リンクを確認できます。素材と記録は、ユーザーが明示的にレポート同期先を選ばない限り Mac 内に保持されます。
 
 ## License
 
