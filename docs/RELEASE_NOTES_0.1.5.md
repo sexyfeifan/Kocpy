@@ -20,5 +20,5 @@
 
 ## 安装包
 
-- `Kocpy-0.1.5-arm64.dmg`（Apple Silicon）SHA-256：`f85ac82e7c83f1e05c510cb987e35be6f37370a772c6fad183074c46bf48caff`
-- `Kocpy-0.1.5-x64.dmg`（Intel）SHA-256：`459d934a838339503ff020d9d05a0039af162af582f132260b154fadcf0b4e66`
+- `Kocpy-0.1.5-arm64.dmg`（Apple Silicon）SHA-256：`738693eb0cfadeea4577d793a66b6e9fb36c2a6412fb17b2ba804a4528396a83`
+- `Kocpy-0.1.5-x64.dmg`（Intel）SHA-256：`f1ab08586a022a06b421801021a250d1d559ebfeb52912e831be0514ede0afbb`
