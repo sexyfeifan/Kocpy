@@ -18,8 +18,8 @@
 
 ## 下载校验
 
-- `Kocpy-0.1.7-arm64.dmg`：`9eba02412bcf488e5285703138de761fe79fb6cc2131754e6c40ded8c6ac35f1`
-- `Kocpy-0.1.7-x64.dmg`：`d76d6f5af230f7d0ade93f9e878dc097f24b5fd7a9e4523053db0a4710fc6fb1`
+- `Kocpy-0.1.7-arm64.dmg`：`cf8a704d4c96a3b9c3d9e0807814f2ef15de4d0fed068378ebfaba93c9b9e076`
+- `Kocpy-0.1.7-x64.dmg`：`3ab6686f749dc5a8a387af3f2195031692498fecdb7864d101a8ffcbc02e0c72`
 
 以上 SHA-256 来自 GitHub Release 实际下载文件；两套远端 DMG 均已通过 `hdiutil verify`。
 
