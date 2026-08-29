@@ -22,3 +22,5 @@
 - `Kocpy-0.1.7-x64.dmg`：`d76d6f5af230f7d0ade93f9e878dc097f24b5fd7a9e4523053db0a4710fc6fb1`
 
 以上 SHA-256 来自 GitHub Release 实际下载文件；两套远端 DMG 均已通过 `hdiutil verify`。
+
+完整操作步骤、状态含义与刷新边界请参阅 [Kocpy 0.1.7 使用手册](https://github.com/sexyfeifan/Kocpy/blob/main/docs/USER_GUIDE.md)。

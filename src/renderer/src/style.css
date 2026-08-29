@@ -2512,6 +2512,9 @@ small {
 .help-safety { display: flex; align-items: center; gap: 14px; padding: 15px 19px; border: 1px solid #50d89035; border-radius: 14px; color: var(--green); background: #50d8900c; }
 .help-safety div { display: grid; gap: 3px; }
 .help-safety p { margin: 0; color: var(--muted); font-size: 12px; }
+.help-release-note { display:flex; align-items:center; gap:14px; padding:15px 19px; border:1px solid #a98bff45; border-radius:14px; color:var(--accent); background:var(--accent-soft); }
+.help-release-note div { display:grid; gap:3px; }
+.help-release-note p { margin:0; color:var(--muted); font-size:12px; line-height:1.55; }
 .help-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; align-items: start; }
 .help-module { overflow: hidden; border: 1px solid var(--border); border-radius: 15px; background: var(--panel); }
 .help-module summary { display: grid; grid-template-columns: 38px minmax(0, 1fr) 18px; align-items: center; gap: 12px; padding: 17px 18px; cursor: pointer; list-style: none; }

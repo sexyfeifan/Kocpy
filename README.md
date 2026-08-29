@@ -8,6 +8,8 @@
 
 ![Kocpy 工作台](docs/screenshots/dashboard.png)
 
+当前版本：**0.1.7** · [完整使用手册](docs/USER_GUIDE.md) · [0.1.7 更新说明](docs/RELEASE_NOTES_0.1.7.md) · [下载最新版](https://github.com/sexyfeifan/Kocpy/releases/latest)
+
 ## 中文
 
 ### 一套完整的素材工作流
@@ -54,6 +56,8 @@ Kocpy 将素材卡接收、多目标备份、逐目标回读校验、项目归�
 接管读取过程显示素材卷、文件、字节、速度、剩余时间和当前文件。目录识别、外部清单校验、首次基线与清单不匹配使用不同状态；项目外设备只在实际发现的拍摄日显示，没有文件夹的设备先标为“待确认”，不会直接推断成漏备份或当天未使用。
 
 同一个素材卷路径重复接管时只保留一条逻辑记录。已有项目可在项目详情使用“刷新接管信息”，无需重新接管或重新计算哈希即可整理日期、设备、素材卷和绑定路径，合并历史重复记录并立即重算项目矩阵；不同路径的记录只有在完整文件哈希一致时才会合并为同一素材卷的多个副本。
+
+刷新只处理已经接管到 Kocpy 的外部记录：不会移动、删除或重新复制素材，不会修改 Kocpy 原生备份任务，也不会自动发现后来新加入且从未接管的文件夹。来源暂时离线时原记录会保留；重新连接后可再次刷新。关于接管可信度、目录识别、收工状态和旧项目修正，请参阅[完整使用手册](docs/USER_GUIDE.md#5-017刷新接管信息)。
 
 项目完成后可导出：
 
@@ -128,6 +132,8 @@ Project mode organizes media by project, shooting date, camera, optional A–E c
 
 Kocpy also includes media thumbnails and metadata, H.264/ProRes proxy queues, Resolve CSV export, light/dark appearance, update checks, and architecture-specific DMGs for Apple Silicon and Intel Macs. An in-app guide documents every module with steps, safety notes, and direct links. Media and records stay on the Mac unless the user explicitly selects a report mirror folder.
 
+Version 0.1.7 makes existing-backup adoption idempotent. A project-level refresh can repair inferred dates/devices, merge duplicate records for the same source path, and recalculate closeout details without rehashing, copying, moving, or deleting media. Offline sources are preserved; folders never adopted before must still be imported through the adoption workflow.
+
 ## 日本語
 
 Kocpy は、macOS 向けのローカル優先メディアバックアップ／プロジェクト管理アプリです。1つの素材ソースを最大4つの保存先へコピーし、各コピーを独立して読み戻してチェックサム検証します。大容量ファイルの再開、物理ボリューム識別、容量事前確認に加え、成功済みコピーを保持したまま失敗した保存先だけを再試行できます。
@@ -135,6 +141,8 @@ Kocpy は、macOS 向けのローカル優先メディアバックアップ／�
 プロジェクトモードでは、プロジェクト、撮影日、カメラ、任意の A–E カメラ位置、タイムスタンプ付き素材巻の階層で整理します。必要コピー数は物理ボリューム UUID ごとに数え、同じディスク上の複数フォルダを重複カウントしません。詳細データは PDF／JSON／CSV、MHL と `SHA256SUMS.txt` を含む一括アーカイブとして書き出せます。
 
 素材サムネイルとメタデータ、H.264／ProRes プロキシキュー、Resolve CSV、ライト／ダーク表示、更新確認、Apple Silicon／Intel 用 DMG も備えています。アプリ内ガイドでは、各機能の手順、注意事項、画面への直接リンクを確認できます。素材と記録は、ユーザーが明示的にレポート同期先を選ばない限り Mac 内に保持されます。
+
+バージョン 0.1.7 では、同じパスを複数回取り込んでも1つの論理素材巻として整理されます。プロジェクト詳細の更新機能は、再ハッシュや素材のコピー／移動／削除を行わず、既存レコードの撮影日・機器情報と重複を修正して終了判定を再計算します。オフラインのソースは保持されます。
 
 ## License
 
