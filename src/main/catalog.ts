@@ -216,6 +216,35 @@ export class CatalogDatabase {
       await this.persistNow();
     });
   }
+  async deleteProjectRecords(id: string) {
+    return this.enqueue(async () => {
+      const db = await this.open(),
+        snapshot = db.export();
+      let committed = false;
+      db.run("BEGIN");
+      try {
+        db.run(
+          "DELETE FROM files WHERE task_id IN (SELECT id FROM tasks WHERE project_id=?)",
+          [id],
+        );
+        db.run("DELETE FROM tasks WHERE project_id=?", [id]);
+        db.run("DELETE FROM changes WHERE project_id=?", [id]);
+        db.run("DELETE FROM projects WHERE id=?", [id]);
+        db.run("COMMIT");
+        committed = true;
+        await this.persistNow();
+      } catch (error) {
+        if (!committed) db.run("ROLLBACK");
+        else {
+          db.close();
+          const SQL = await initSqlJs();
+          this.db = new SQL.Database(snapshot);
+          this.db.run("PRAGMA foreign_keys=ON");
+        }
+        throw error;
+      }
+    });
+  }
   async pageFiles(options: {
     projectId?: string;
     query?: string;

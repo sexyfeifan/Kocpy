@@ -66,6 +66,8 @@ import {
   CircleHelp,
   BookOpen,
   ScanLine,
+  Camera,
+  AudioWaveform,
 } from "lucide-react";
 import {
   api,
@@ -95,6 +97,7 @@ import {
   projectDeviceCells,
   verifiedPhysicalCopyCount,
 } from "../../main/project-closeout";
+import { taskMediaKind } from "../../main/media-kind";
 
 type Page =
   | "overview"
@@ -329,6 +332,8 @@ export function App() {
     [confirm, setConfirm] = useState<{
       text: string;
       run: () => Promise<unknown>;
+      actionLabel?: string;
+      danger?: boolean;
     } | null>(null),
     [proxy, setProxy] = useState<{
       path: string;
@@ -467,7 +472,15 @@ export function App() {
     );
   const filtered = tasks.filter(
     (t) =>
-      (t.name + " " + t.sourcePath)
+      [
+        t.name,
+        t.sourcePath,
+        ...t.destinations.flatMap((destination) => [
+          destination.path,
+          destination.resolvedPath || "",
+        ]),
+      ]
+        .join(" ")
         .toLowerCase()
         .includes(query.toLowerCase()) &&
       (filter === "all" ||
@@ -486,36 +499,104 @@ export function App() {
     });
   const taskRows = (rows: BackupTask[], compact = false) => (
     <div className="task-list">
-      {rows.map((t) => (
-        <button className="task-row" key={t.id} onClick={() => setDetail(t.id)}>
-          <span
-            className={`file-icon ${t.status === "completed" ? "green" : ""}`}
+      {rows.map((t) => {
+        const kind = taskMediaKind(t),
+          TaskIcon =
+            kind === "video"
+              ? Clapperboard
+              : kind === "photo"
+                ? Camera
+                : kind === "audio"
+                  ? AudioWaveform
+                  : kind === "mixed"
+                    ? Layers
+                    : MemoryStick;
+        return (
+          <div
+            className="task-row"
+            key={t.id}
+            role="button"
+            tabIndex={0}
+            onClick={() => setDetail(t.id)}
+            onKeyDown={(event) => {
+              if (event.key !== "Enter" && event.key !== " ") return;
+              event.preventDefault();
+              setDetail(t.id);
+            }}
           >
-            {t.status === "completed" ? (
-              <CheckCheck size={20} />
-            ) : (
-              <MemoryStick size={20} />
+            <span
+              className={`file-icon media-${kind} task-${t.status}`}
+              title={
+                {
+                  video: "视频素材",
+                  photo: "照片 / RAW 素材",
+                  audio: "音频素材",
+                  mixed: "混合素材",
+                  other: "素材卷",
+                }[kind]
+              }
+            >
+              <TaskIcon size={20} />
+            </span>
+            <div className="task-name">
+              <strong>{t.name}</strong>
+              <span className="task-meta">
+                {leaf(t.sourcePath)} <span className="dot-sep">·</span>{" "}
+                {t.destinations.length} 个目的地{" "}
+                <span className="dot-sep">·</span>{" "}
+                {date(t.startedAt || t.createdAt)}
+              </span>
+              {!compact && (
+                <div className="task-paths">
+                  {[
+                    { label: "源", path: t.sourcePath, source: true },
+                    ...t.destinations.map((destination, index) => ({
+                      label: `目的地 ${index + 1}`,
+                      path: destination.resolvedPath || destination.path,
+                      source: false,
+                    })),
+                  ].map((item) => (
+                    <span
+                      className="task-path"
+                      key={`${item.label}-${item.path}`}
+                      role="button"
+                      tabIndex={0}
+                      title={`${item.label}：${item.path}\n点击在 Finder 中显示`}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        void act(() => api.reveal(item.path));
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key !== "Enter" && event.key !== " ") return;
+                        event.preventDefault();
+                        event.stopPropagation();
+                        void act(() => api.reveal(item.path));
+                      }}
+                    >
+                      {item.source ? (
+                        <MemoryStick size={12} />
+                      ) : (
+                        <HardDrive size={12} />
+                      )}
+                      <b>{item.label}</b>
+                      <code>{item.path}</code>
+                      <FolderOpen size={12} />
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+            {!compact && (
+              <span className="task-size">
+                {bytes(t.totalBytes)}
+                <small>{t.totalFiles} 个文件</small>
+              </span>
             )}
-          </span>
-          <div className="task-name">
-            <strong>{t.name}</strong>
-            <span>
-              {leaf(t.sourcePath)} <span className="dot-sep">·</span>{" "}
-              {t.destinations.length} 个目的地{" "}
-              <span className="dot-sep">·</span>{" "}
-              {date(t.startedAt || t.createdAt)}
-            </span>
+            <Badge status={t.status} />
+            <ChevronRight size={16} />
           </div>
-          {!compact && (
-            <span className="task-size">
-              {bytes(t.totalBytes)}
-              <small>{t.totalFiles} 个文件</small>
-            </span>
-          )}
-          <Badge status={t.status} />
-          <ChevronRight size={16} />
-        </button>
-      ))}
+        );
+      })}
     </div>
   );
   const volumeCard = (v: Volume) => (
@@ -688,7 +769,7 @@ export function App() {
           <img src="./icon.png" alt="Kocpy 图标" />
           <div>
             <strong>
-              Kocpy<span>0.1.14</span>
+              Kocpy<span>0.1.15</span>
             </strong>
             <small>素材工作台</small>
           </div>
@@ -745,7 +826,7 @@ export function App() {
                   ? `可升级 ${updateInfo.latest}`
                   : "检查更新"}
               </span>
-              <b>v0.1.14</b>
+              <b>v0.1.15</b>
             </button>
             <div className="sidebar-author-links">
               <span>
@@ -1619,6 +1700,31 @@ export function App() {
                             >
                               <Archive size={16} />
                             </Button>
+                            {p.status === "archived" && (
+                              <Button
+                                kind="icon danger"
+                                title="删除项目记录"
+                                onClick={() =>
+                                  setConfirm({
+                                    text: `删除「${p.name}」的 Kocpy 项目配置、关联任务记录、代理队列记录和归档维护历史？此操作无法撤销，但不会删除任何素材文件、备份目录、报告或 MHL。删除后可重新创建项目并完整测试。`,
+                                    actionLabel: "删除项目记录",
+                                    danger: true,
+                                    run: async () => {
+                                      const result = await api.deleteProject(p.id);
+                                      setProjects(result.projects);
+                                      setTasks(await api.getTasks());
+                                      if (projectDetailId === p.id)
+                                        setProjectDetailId(null);
+                                      notify(
+                                        `项目记录已删除：移除 ${result.deletedTasks} 个关联任务；磁盘素材未改动`,
+                                      );
+                                    },
+                                  })
+                                }
+                              >
+                                <Trash2 size={16} />
+                              </Button>
+                            )}
                           </div>
                         </section>
                       ))}
@@ -2822,14 +2928,14 @@ export function App() {
             <div className="row">
               <Button onClick={() => setConfirm(null)}>取消</Button>
               <Button
-                kind="primary"
+                kind={confirm.danger ? "danger" : "primary"}
                 onClick={() => {
                   const action = confirm.run;
                   setConfirm(null);
                   void act(action);
                 }}
               >
-                确认
+                {confirm.actionLabel || "确认"}
               </Button>
             </div>
           </section>
@@ -4160,15 +4266,19 @@ function HelpPage({
       id: "transfers",
       icon: ArrowLeftRight,
       title: "传输队列",
-      purpose: "查看百分比、真实速度、ETA、文件和每个目的地状态。",
+      purpose:
+        "查看素材类型、源路径、每个目的地路径、百分比、真实速度和校验状态。",
       steps: [
-        "点击任务查看拷贝、校验和最近 30 秒速度。",
+        "先通过任务图标辨认视频、照片/RAW、音频、混合素材或其他素材卷；图标颜色表示当前任务状态。",
+        "任务条目直接显示完整源路径和每个目的地的最终路径；点击任一路径可在 Finder 中显示。",
+        "点击任务其余区域查看拷贝、校验和最近 30 秒速度。",
         "需要时暂停；继续后会使用安全检查点。",
         "失败时先阅读具体目标和文件错误，再进入恢复中心。",
       ],
       tips: [
         "“已保存”是最终有效素材量；“本次写入”是本轮物理写入量。",
         "速度来自操作系统确认完成的字节，不是模拟数据。",
+        "长路径会完整换行显示；目的地采用任务实际写入后的最终路径。",
       ],
       page: "transfers",
     },
@@ -4199,11 +4309,13 @@ function HelpPage({
         "设置收工需要的独立副本数量。",
         "每天查看日期 × 设备矩阵；只有确认当天没有拍摄时，才标记休息日或未使用设备。",
         "项目结束后导出 PDF、JSON、CSV 或完整归档包。",
+        "需要重新做一次全流程测试时，先归档项目，再点击项目卡片右下角的删除按钮并阅读高风险确认。",
       ],
       tips: [
         "同一磁盘的多个文件夹只计算一份安全副本。",
         "“当天未发现素材 · 待确认”不等于漏备份，也不等于当天未使用。",
         "项目模板可复用设备和收工标准。",
+        "删除已归档项目只清理 Kocpy 内部的项目配置、任务索引、代理记录和归档维护历史；不会删除素材、备份目录、报告、MHL 或已导出的冷归档文件。",
       ],
       page: "projects",
     },
@@ -4459,7 +4571,7 @@ function HelpPage({
       <section className="panel help-start">
         <div>
           <span className="mini-label">
-            <BookOpen size={13} /> KOCPY 0.1.14 · QUICK START
+            <BookOpen size={13} /> KOCPY 0.1.15 · QUICK START
           </span>
           <h2>软件使用说明</h2>
           <p>
@@ -4484,9 +4596,9 @@ function HelpPage({
       <section className="help-release-note">
         <RefreshCw size={20} />
         <div>
-          <strong>0.1.14：备份安全与记录恢复加固</strong>
+          <strong>0.1.15：任务识别、路径追踪与项目重置</strong>
           <p>
-            完成前重新核对素材源，持续检查磁盘身份并确保文件和数据库真正落盘；数据库、冷归档、MHL 导出、归档修复与脱敏诊断也采用更严格的完整性规则。
+            传输任务按素材类型显示图标，并完整列出可在 Finder 定位的源路径与每个目的地路径；已归档项目可在重要确认后仅删除 Kocpy 内部记录，便于重新执行全流程测试，磁盘素材保持不变。
           </p>
         </div>
       </section>
@@ -6107,7 +6219,7 @@ function SettingsPage({
         <img src="./icon.png" alt="Kocpy 图标" />
         <div>
           <h3>
-            Kocpy <span>0.1.14</span>
+            Kocpy <span>0.1.15</span>
           </h3>
           <p>从现场接卡、项目归档到交付报告，为每一份创作保留可靠副本。</p>
           <small>本地优先 · 独立校验 · 项目全周期记录 · @sexyfeifan</small>

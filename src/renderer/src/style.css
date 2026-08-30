@@ -994,12 +994,17 @@ small {
   background: transparent;
   padding: 21px 22px;
   text-align: left;
+  cursor: pointer;
 }
 .task-row:last-child {
   border-bottom: 0;
 }
 .task-row:hover {
   background: var(--panel2);
+}
+.task-row:focus-visible {
+  outline: 2px solid var(--purple);
+  outline-offset: -2px;
 }
 .file-icon {
   background: var(--panel2);
@@ -1012,9 +1017,29 @@ small {
   place-items: center;
   flex-shrink: 0;
 }
-.file-icon.green {
+.file-icon.green,
+.file-icon.task-completed {
   color: var(--green);
   background: #81c9aa08;
+}
+.file-icon.task-running,
+.file-icon.task-verifying,
+.file-icon.task-pending {
+  color: var(--purple);
+  background: color-mix(in srgb, var(--purple) 8%, transparent);
+}
+.file-icon.task-paused,
+.file-icon.task-unverified {
+  color: var(--amber);
+  background: color-mix(in srgb, var(--amber) 8%, transparent);
+}
+.file-icon.task-failed {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+}
+.file-icon.task-cancelled {
+  color: var(--muted);
+  background: var(--panel2);
 }
 .task-name {
   flex: 1;
@@ -1028,7 +1053,7 @@ small {
   font-size: 12px;
   font-weight: 550;
 }
-.task-name > span {
+.task-meta {
   display: block;
   color: var(--muted);
   font-size: 10px;
@@ -1036,6 +1061,37 @@ small {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.task-paths {
+  display: grid;
+  gap: 5px;
+  margin-top: 10px;
+}
+.task-path {
+  display: grid;
+  grid-template-columns: 14px 58px minmax(0, 1fr) 14px;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 9px;
+  cursor: pointer;
+}
+.task-path:hover,
+.task-path:focus-visible {
+  color: var(--text);
+}
+.task-path b {
+  color: var(--sub);
+  font-weight: 550;
+}
+.task-path code {
+  overflow-wrap: anywhere;
+  white-space: normal;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.task-path > svg:last-child {
+  color: var(--purple);
 }
 .dot-sep {
   margin: 0 4px;

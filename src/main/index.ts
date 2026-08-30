@@ -91,6 +91,7 @@ import {
   deduplicateBoundRoots,
   existingSourceKey,
 } from "./existing-records";
+import { ensureTaskMediaBreakdown } from "./media-kind";
 
 app.setName("Kocpy");
 const appDataRoot = app.getPath("appData");
@@ -724,6 +725,7 @@ app.whenReady().then(async () => {
       return !indexed || taskFreshness(task) !== taskFreshness(indexed);
     });
   for (const task of saved) {
+    if (ensureTaskMediaBreakdown(task)) startupRecordsChanged = true;
     if (["pending", "running", "paused", "verifying"].includes(task.status)) {
       task.status = "failed";
       task.errorMessage = "上次运行中断。可重新执行并重新校验已有文件。";
@@ -3126,6 +3128,83 @@ app.whenReady().then(async () => {
       return all;
     },
   );
+  handle("projects:delete", async (projectId: string) => {
+    const projects = (
+        await store.read<ProjectConfig[]>("projects.json", [])
+      ).map(normalizeProject),
+      project = projects.find((item) => item.id === projectId);
+    if (!project) throw new Error("项目不存在或已经删除");
+    if (project.status !== "archived")
+      throw new Error("只有已归档项目可以删除，请先归档项目");
+    const relatedTasks = engine
+      .getAllTasks()
+      .filter((task) => task.projectId === projectId);
+    if (
+      relatedTasks.some((task) =>
+        ["pending", "running", "paused", "verifying"].includes(task.status),
+      )
+    )
+      throw new Error("项目仍有未结束的任务，不能删除项目记录");
+    const taskIds = new Set(relatedTasks.map((task) => task.id)),
+      nextProjects = projects.filter((item) => item.id !== projectId),
+      nextTasks = engine
+        .getAllTasks()
+        .filter((task) => task.projectId !== projectId)
+        .slice()
+        .reverse(),
+      nextProxyJobs = proxyJobs.filter(
+        (job) => !job.sourceTaskId || !taskIds.has(job.sourceTaskId),
+      ),
+      deletedProxyJobs = proxyJobs.length - nextProxyJobs.length,
+      nextHealthRecords = healthRecords.filter(
+        (item) => item.projectId !== projectId,
+      ),
+      nextArchiveChanges = archiveChanges.filter(
+        (item) => item.projectId !== projectId,
+      ),
+      nextArchiveReminders = archiveReminders.filter(
+        (item) => item.projectId !== projectId,
+      );
+    if (
+      proxyJobs.some(
+        (job) =>
+          Boolean(job.sourceTaskId && taskIds.has(job.sourceTaskId)) &&
+          ["pending", "running", "paused"].includes(job.status),
+      )
+    )
+      throw new Error("项目仍有关联的代理任务未结束，不能删除项目记录");
+    try {
+      await Promise.all([
+        store.write("projects.json", nextProjects),
+        store.write("tasks.json", nextTasks),
+        store.write("proxy-jobs.json", nextProxyJobs),
+        store.write("archive-health.json", nextHealthRecords),
+        store.write("archive-changes.json", nextArchiveChanges),
+        store.write("archive-reminders.json", nextArchiveReminders),
+      ]);
+      await catalog.deleteProjectRecords(projectId);
+    } catch (error) {
+      await Promise.all([
+        store.write("projects.json", projects),
+        store.write("tasks.json", engine.getAllTasks().slice().reverse()),
+        store.write("proxy-jobs.json", proxyJobs),
+        store.write("archive-health.json", healthRecords),
+        store.write("archive-changes.json", archiveChanges),
+        store.write("archive-reminders.json", archiveReminders),
+      ]).catch(() => undefined);
+      throw error;
+    }
+    for (const task of relatedTasks) engine.deleteTask(task.id);
+    proxyJobs = nextProxyJobs;
+    healthRecords = nextHealthRecords;
+    archiveChanges = nextArchiveChanges;
+    archiveReminders = nextArchiveReminders;
+    return {
+      projects: nextProjects,
+      deletedTasks: relatedTasks.length,
+      deletedProxyJobs,
+    };
+  });
   handle(
     "projects:claim-volume",
     async (projectId: string, device: string, prefixOverride?: string) => {

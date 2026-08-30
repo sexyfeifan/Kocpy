@@ -14,6 +14,7 @@ import { canonical, inside, scan, segment, safeChild } from "./safety";
 import { volumeIdentity } from "../system";
 import { inspectMedia, isThumbnailMedia } from "../media";
 import { makeProjectFolderName, renderProjectCardPath } from "../project-path";
+import { mediaBreakdownFromFiles } from "../media-kind";
 import { XxHash32 } from "./XxHash32";
 
 export async function hashFile(
@@ -1055,27 +1056,7 @@ export class BackupEngine extends EventEmitter {
       task.totalBytes = inventory.totalBytes;
       task.skippedFiles = inventory.skipped;
       task.verifyTotalFiles = task.totalFiles * task.destinations.length;
-      const kind = (name: string): "video" | "photo" | "audio" | "other" =>
-        /\.(mov|mp4|mxf|mkv|avi|m4v|r3d|braw)$/i.test(name)
-          ? "video"
-          : /\.(jpg|jpeg|png|heic|tif|tiff|dng|arw|cr2|cr3|nef|raf)$/i.test(
-                name,
-              )
-            ? "photo"
-            : /\.(wav|mp3|aac|flac|aif|aiff)$/i.test(name)
-              ? "audio"
-              : "other";
-      task.mediaBreakdown = Object.fromEntries(
-        (["video", "photo", "audio", "other"] as const).map((type) => [
-          type,
-          { files: 0, bytes: 0 },
-        ]),
-      ) as BackupTask["mediaBreakdown"];
-      for (const file of inventory.files) {
-        const group = task.mediaBreakdown![kind(file.name)];
-        group.files++;
-        group.bytes += file.size;
-      }
+      task.mediaBreakdown = mediaBreakdownFromFiles(inventory.files);
       const volumeNeeds = new Map<
         string,
         { free: number; need: number; largest: number; labels: string[] }

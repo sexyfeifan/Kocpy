@@ -15,7 +15,7 @@ const fixture = () => {
   };
 };
 
-describe("0.1.14 indexed catalog", () => {
+describe("0.1.15 indexed catalog", () => {
   it("stores task headers separately and reconstructs all file records", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "kocpy-catalog-"));
     try {
@@ -41,6 +41,24 @@ describe("0.1.14 indexed catalog", () => {
       await expect(recovered.open()).rejects.toThrow();
       await recovered.recover();
       expect((await recovered.loadTasks())[0].fileRecords).toHaveLength(2);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("deletes an archived project's indexed tasks and files as one record operation", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "kocpy-catalog-delete-"));
+    try {
+      const db = new CatalogDatabase(root), { task, project } = fixture(),
+        retainedProject = { ...project, id: "retained", name: "Retained" },
+        retainedTask = { ...task, id: "retained-task", projectId: "retained" };
+      await db.rebuild([task, retainedTask], [project, retainedProject]);
+      await db.deleteProjectRecords("p");
+      expect(await db.stats()).toMatchObject({ tasks: 1, files: 2, projects: 1 });
+      expect((await db.loadTasks()).map((item) => item.id)).toEqual([
+        "retained-task",
+      ]);
+      expect(await db.pageFiles({ projectId: "p", limit: 10 })).toHaveLength(0);
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }

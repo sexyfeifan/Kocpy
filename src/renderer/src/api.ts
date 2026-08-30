@@ -296,6 +296,11 @@ export interface API {
   getSettings(): Promise<Settings>;
   saveSettings(settings: Settings): Promise<void>;
   getProjects(): Promise<ProjectConfig[]>;
+  deleteProject(id: string): Promise<{
+    projects: ProjectConfig[];
+    deletedTasks: number;
+    deletedProxyJobs: number;
+  }>;
   inspectProjectStructure(
     project: ProjectConfig,
   ): Promise<ProjectStructureReport>;

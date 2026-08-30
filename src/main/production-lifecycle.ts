@@ -13,6 +13,7 @@ import type {
   ProjectCoverage,
   ProjectTemplate,
 } from "./types";
+import { mediaBreakdownFromFiles } from "./media-kind";
 
 const isManifestName = (name: string) =>
   /(?:\.mhl|sha(?:1|256)sums\.txt|manifest.*\.json)$/i.test(name);
@@ -1198,6 +1199,7 @@ export async function importExistingBackup(
     totalFiles: records.length,
     completedFiles: records.length,
     totalBytes: records.reduce((sum, file) => sum + file.size, 0),
+    mediaBreakdown: mediaBreakdownFromFiles(records),
     transferredBytes: records.reduce((sum, file) => sum + file.size, 0),
     physicalWrittenBytes: 0,
     verifiedBytes: verified

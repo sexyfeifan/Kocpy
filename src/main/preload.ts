@@ -83,6 +83,7 @@ contextBridge.exposeInMainWorld("api", {
   getSettings: call("settings:get"),
   saveSettings: call("settings:save"),
   getProjects: call("projects:list"),
+  deleteProject: call("projects:delete"),
   inspectProjectStructure: call("projects:inspect-structure"),
   saveProject: call("projects:save"),
   claimProjectVolume: call("projects:claim-volume"),

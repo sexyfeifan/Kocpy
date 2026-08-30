@@ -181,6 +181,7 @@ describe("0.1.0 production lifecycle", () => {
       expect(task.provenance).toBe("external-baseline");
       expect(task.confidence).toBe("baseline");
       expect(task.status).toBe("completed");
+      expect(task.mediaBreakdown?.video).toEqual({ files: 1, bytes: 5 });
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }
