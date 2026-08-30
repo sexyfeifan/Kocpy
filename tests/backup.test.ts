@@ -79,7 +79,8 @@ describe("Real filesystem backup integrity", () => {
     expect(summary.stalls).toBe(2);
   });
   it("copies two destinations, empty files and directories, verifies every hash without changing source", async () => {
-    const before = await fs.stat(path.join(source, "DCIM", "片段.bin"));
+    const before = await fs.stat(path.join(source, "DCIM", "片段.bin")),
+      emptyBefore = await fs.stat(path.join(source, "empty"));
     const { task } = await run();
     expect(task.status).toBe("completed");
     expect(task.totalFiles).toBe(2);
@@ -90,13 +91,37 @@ describe("Real filesystem backup integrity", () => {
         expect(await hashFile(dest.path, "sha256")).toBe(rec.srcChecksum);
         expect(dest.verified).toBe(true);
       }
-    expect((await fs.stat(path.join(d1, "empty"))).isDirectory()).toBe(true);
+    const copiedEmpty = await fs.stat(path.join(d1, "empty"));
+    expect(copiedEmpty.isDirectory()).toBe(true);
+    expect(copiedEmpty.mode & 0o777).toBe(emptyBefore.mode & 0o777);
+    expect(Math.abs(copiedEmpty.mtimeMs - emptyBefore.mtimeMs)).toBeLessThan(2);
     expect((await fs.stat(path.join(source, "DCIM", "片段.bin"))).mtimeMs).toBe(
       before.mtimeMs,
     );
     expect(task.transferredBytes).toBe(task.totalBytes);
     expect(task.destinations.every((d) => d.copiedBytes === task.totalBytes)).toBe(true);
     expect(task.verifyCompletedFiles).toBe(4);
+    const copied = await fs.stat(path.join(d1, "DCIM", "片段.bin"));
+    expect(Math.abs(copied.mtimeMs - before.mtimeMs)).toBeLessThan(2);
+  });
+  it("refuses to finish when a new source file appears after the initial scan", async () => {
+    await fs.writeFile(
+      path.join(source, "large.bin"),
+      randomBytes(12 * 1024 * 1024),
+    );
+    const engine = new BackupEngine(),
+      task = engine.createTask(config());
+    let added = false;
+    engine.on("progress", (payload) => {
+      if (!added && (payload.physicalWrittenBytes || 0) > 0) {
+        added = true;
+        void fs.writeFile(path.join(source, "late-clip.mov"), "late media");
+      }
+    });
+    const done = wait(engine, task.id);
+    engine.startTask(task.id);
+    expect((await done).status).toBe("failed");
+    expect(task.errorMessage).toContain("素材源目录发生变化");
   });
   it("verifies existing files on first destination without stalling the second destination", async () => {
     await fs.cp(source, d1, { recursive: true });

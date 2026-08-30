@@ -3,7 +3,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import type { BackupTask, ProjectConfig } from "./types";
 
-const SCHEMA = 2;
+const SCHEMA = 3;
 export class CatalogDatabase {
   private db?: Database;
   private writes: Promise<void> = Promise.resolve();
@@ -16,11 +16,19 @@ export class CatalogDatabase {
     const SQL = await initSqlJs();
     const bytes = await fs.readFile(this.file).catch(() => undefined);
     this.db = bytes ? new SQL.Database(bytes) : new SQL.Database();
+    if (bytes) {
+      const integrity = this.db.exec("PRAGMA integrity_check")[0]?.values[0]?.[0];
+      if (integrity !== "ok") {
+        this.db.close();
+        this.db = undefined;
+        throw new Error(`素材目录数据库完整性检查失败：${String(integrity || "未知错误")}`);
+      }
+    }
     this.db.run(`PRAGMA foreign_keys=ON;
       CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS tasks(id TEXT PRIMARY KEY,project_id TEXT,name TEXT,shooting_date TEXT,status TEXT,provenance TEXT,created_at INTEGER,total_files INTEGER,total_bytes INTEGER,json TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS tasks_project_date ON tasks(project_id,shooting_date,created_at DESC);
-      CREATE TABLE IF NOT EXISTS files(task_id TEXT NOT NULL,relative_path TEXT NOT NULL,size INTEGER,checksum TEXT,verified INTEGER,kind TEXT,json TEXT,PRIMARY KEY(task_id,relative_path));
+      CREATE TABLE IF NOT EXISTS files(task_id TEXT NOT NULL,relative_path TEXT NOT NULL,size INTEGER,checksum TEXT,verified INTEGER,kind TEXT,json TEXT,ordinal INTEGER,PRIMARY KEY(task_id,relative_path));
       CREATE INDEX IF NOT EXISTS files_path ON files(relative_path);
       CREATE TABLE IF NOT EXISTS projects(id TEXT PRIMARY KEY,name TEXT,status TEXT,json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS changes(id TEXT PRIMARY KEY,project_id TEXT,task_id TEXT,at INTEGER,kind TEXT,note TEXT,json TEXT NOT NULL);
@@ -31,6 +39,8 @@ export class CatalogDatabase {
         ?.values.map((row) => String(row[1])) || [];
     if (!columns.includes("json"))
       this.db.run("ALTER TABLE files ADD COLUMN json TEXT");
+    if (!columns.includes("ordinal"))
+      this.db.run("ALTER TABLE files ADD COLUMN ordinal INTEGER");
     this.db.run("INSERT OR REPLACE INTO meta(key,value) VALUES('schema',?)", [
       String(SCHEMA),
     ]);
@@ -63,10 +73,10 @@ export class CatalogDatabase {
             task.createdAt || 0,
             task.totalFiles,
             task.totalBytes,
-            JSON.stringify(task),
+            JSON.stringify({ ...task, fileRecords: [] }),
           ]);
-          for (const file of task.fileRecords)
-            db.run("INSERT OR REPLACE INTO files VALUES(?,?,?,?,?,?,?)", [
+          for (const [ordinal, file] of task.fileRecords.entries())
+            db.run("INSERT OR REPLACE INTO files VALUES(?,?,?,?,?,?,?,?)", [
               task.id,
               file.relativePath,
               file.size,
@@ -74,6 +84,7 @@ export class CatalogDatabase {
               file.destinations.some((item) => item.verified) ? 1 : 0,
               path.extname(file.name).toLowerCase(),
               JSON.stringify(file),
+              ordinal,
             ]);
         }
         db.run("COMMIT");
@@ -86,16 +97,42 @@ export class CatalogDatabase {
   }
   async loadTasks(): Promise<BackupTask[]> {
     const db = await this.open(),
-      statement = db.prepare("SELECT json FROM tasks ORDER BY created_at ASC"),
+      statement = db.prepare("SELECT id,json FROM tasks ORDER BY created_at ASC"),
       rows: BackupTask[] = [];
+    const tasks = new Map<string, BackupTask>(),
+      embeddedFiles = new Map<string, BackupTask["fileRecords"]>();
     while (statement.step()) {
-      try {
-        rows.push(JSON.parse(String(statement.get()[0])));
-      } catch {
-        /* a damaged row is skipped and can be recovered from the JSON mirror */
-      }
+      const values = statement.get(),
+        task = JSON.parse(String(values[1])) as BackupTask;
+      embeddedFiles.set(String(values[0]), task.fileRecords || []);
+      task.fileRecords = [];
+      tasks.set(String(values[0]), task);
+      rows.push(task);
     }
     statement.free();
+    const files = db.prepare(
+      "SELECT task_id,relative_path,size,checksum,verified,json FROM files ORDER BY task_id,ordinal,relative_path",
+    );
+    while (files.step()) {
+      const values = files.get(),
+        task = tasks.get(String(values[0]));
+      if (!task) continue;
+      const embedded = embeddedFiles
+        .get(String(values[0]))
+        ?.find((file) => file.relativePath === String(values[1]));
+      task.fileRecords.push(
+        values[5]
+          ? JSON.parse(String(values[5]))
+          : embedded || {
+              name: path.basename(String(values[1])),
+              relativePath: String(values[1]),
+              size: Number(values[2] || 0),
+              srcChecksum: String(values[3] || ""),
+              destinations: [],
+            },
+      );
+    }
+    files.free();
     return rows;
   }
   async loadProjects(): Promise<ProjectConfig[]> {
@@ -103,11 +140,7 @@ export class CatalogDatabase {
       statement = db.prepare("SELECT json FROM projects ORDER BY name"),
       rows: ProjectConfig[] = [];
     while (statement.step()) {
-      try {
-        rows.push(JSON.parse(String(statement.get()[0])));
-      } catch {
-        /* skip damaged row */
-      }
+      rows.push(JSON.parse(String(statement.get()[0])));
     }
     statement.free();
     return rows;
@@ -128,10 +161,10 @@ export class CatalogDatabase {
           task.createdAt || 0,
           task.totalFiles,
           task.totalBytes,
-          JSON.stringify(task),
+          JSON.stringify({ ...task, fileRecords: [] }),
         ]);
-        for (const file of task.fileRecords)
-          db.run("INSERT OR REPLACE INTO files VALUES(?,?,?,?,?,?,?)", [
+        for (const [ordinal, file] of task.fileRecords.entries())
+          db.run("INSERT OR REPLACE INTO files VALUES(?,?,?,?,?,?,?,?)", [
             task.id,
             file.relativePath,
             file.size,
@@ -139,6 +172,7 @@ export class CatalogDatabase {
             file.destinations.some((item) => item.verified) ? 1 : 0,
             path.extname(file.name).toLowerCase(),
             JSON.stringify(file),
+            ordinal,
           ]);
         db.run("COMMIT");
         await this.persistNow();
@@ -252,24 +286,64 @@ export class CatalogDatabase {
     await fs.copyFile(`${this.file}.bak2`, `${this.file}.bak3`).catch(() => {});
     await fs.copyFile(`${this.file}.bak`, `${this.file}.bak2`).catch(() => {});
     await fs.copyFile(this.file, `${this.file}.bak`).catch(() => {});
-    await fs.writeFile(temp, Buffer.from(this.db.export()));
+    const handle = await fs.open(temp, "w");
+    try {
+      await handle.writeFile(Buffer.from(this.db.export()));
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
     await fs.rename(temp, this.file);
+    const directory = await fs.open(this.root, "r");
+    try {
+      await directory.sync();
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (!["EINVAL", "ENOTSUP", "EBADF"].includes(code || "")) throw error;
+    } finally {
+      await directory.close();
+    }
   }
   flush() {
     return this.enqueue(() => this.persistNow());
   }
   async recover() {
-    let restored = false;
+    const SQL = await initSqlJs();
     for (const suffix of [".bak", ".bak2", ".bak3"]) {
       try {
-        await fs.copyFile(`${this.file}${suffix}`, this.file);
-        restored = true;
-        break;
+        const candidate = await fs.readFile(`${this.file}${suffix}`),
+          database = new SQL.Database(candidate),
+          integrity = database.exec("PRAGMA integrity_check")[0]?.values[0]?.[0];
+        database.close();
+        if (integrity !== "ok") continue;
+        const temp = `${this.file}.recover-${process.pid}-${Date.now()}`;
+        const handle = await fs.open(temp, "wx");
+        try {
+          await handle.writeFile(candidate);
+          await handle.sync();
+        } finally {
+          await handle.close();
+        }
+        try {
+          await fs.rename(temp, this.file);
+        } finally {
+          await fs.unlink(temp).catch(() => {});
+        }
+        const directory = await fs.open(this.root, "r");
+        try {
+          await directory.sync();
+        } catch (error) {
+          const code = (error as NodeJS.ErrnoException).code;
+          if (!["EINVAL", "ENOTSUP", "EBADF"].includes(code || ""))
+            throw error;
+        } finally {
+          await directory.close();
+        }
+        this.db?.close();
+        this.db = undefined;
+        return this.open();
       } catch {}
     }
-    if (!restored) throw new Error("没有可用的数据库备份");
-    this.db?.close();
-    this.db = undefined;
-    return this.open();
+    throw new Error("没有通过完整性检查的数据库备份");
   }
 }

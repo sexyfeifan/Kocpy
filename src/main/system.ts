@@ -1,6 +1,7 @@
 import { promises as fs, constants } from "node:fs";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import path from "node:path";
 const exec = promisify(execFile);
 export function isTimeMachineVolume(
   name: string,
@@ -137,13 +138,27 @@ export async function listVolumes() {
 function pathName(value: string) {
   return value.split("/").filter(Boolean).pop() || value;
 }
+export function resolveEjectTarget<
+  T extends { path: string; canEject: boolean },
+>(volumes: T[], volume: string): T | undefined {
+  const requested = path.resolve(volume),
+    target = volumes
+      .filter(
+        (candidate) =>
+          candidate.canEject &&
+          (requested === path.resolve(candidate.path) ||
+            requested.startsWith(`${path.resolve(candidate.path)}${path.sep}`)),
+      )
+      .sort((left, right) => right.path.length - left.path.length)[0];
+  return target;
+}
 export async function ejectVolume(volume: string) {
-  const volumes = await listVolumes();
-  const target = volumes.find((v) => v.path === volume && v.canEject);
+  const volumes = await listVolumes(),
+    target = resolveEjectTarget(volumes, volume);
   if (!target) throw new Error("该设备不支持安全推出");
   await exec(
     "/usr/sbin/diskutil",
-    [target.isNetwork ? "unmount" : "eject", volume],
+    [target.isNetwork ? "unmount" : "eject", target.path],
     { timeout: 15000 },
   );
   return true;

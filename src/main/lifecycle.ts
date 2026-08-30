@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import path from "node:path";
 import type {
   ArchiveChangeRecord,
   BackupTask,
@@ -15,8 +16,9 @@ const taskStatuses = new Set([
   "completed",
   "failed",
   "cancelled",
+  "unverified",
 ]);
-const hashes = new Set(["md5", "sha1", "sha256"]);
+const hashes = new Set(["md5", "sha1", "sha256", "xxhash32"]);
 const plainObject = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === "object" && !Array.isArray(value);
 const safeText = (value: unknown, label: string, required = true) => {
@@ -32,9 +34,11 @@ export function validateWorkspacePackage(value: unknown) {
   if (
     !plainObject(value) ||
     value.application !== "Kocpy" ||
-    value.schema !== 1
+    ![1, 2].includes(Number(value.schema))
   )
     throw new Error("不是受支持的 Kocpy 工作站配置包");
+  if (value.schema === 2 && typeof value.integrity !== "string")
+    throw new Error("工作站配置包缺少完整性签名");
   if (typeof value.integrity === "string") {
     const actual = createHash("sha256")
       .update(
@@ -75,6 +79,14 @@ export function validateWorkspacePackage(value: unknown) {
     safeText(item.id, "项目 ID");
     safeText(item.name, "项目名称");
     safeText(item.volumePrefix, "卷名前缀");
+    if (
+      Array.isArray(item.destinationPaths) &&
+      item.destinationPaths.some(
+        (destination) =>
+          typeof destination !== "string" || !path.isAbsolute(destination),
+      )
+    )
+      throw new Error("工作站配置中的项目目的地路径无效");
   }
   for (const item of tasks) {
     if (
@@ -88,6 +100,8 @@ export function validateWorkspacePackage(value: unknown) {
     safeText(item.id, "任务 ID");
     safeText(item.name, "任务名称");
     safeText(item.sourcePath, "素材路径");
+    if (!path.isAbsolute(String(item.sourcePath)))
+      throw new Error("工作站配置中的素材路径必须是绝对路径");
     if (
       !hashes.has(String(item.hashAlgorithm)) ||
       !taskStatuses.has(String(item.status))
@@ -100,22 +114,45 @@ export function validateWorkspacePackage(value: unknown) {
         throw new Error("工作站配置中的目的地记录无效");
       safeText(destination.id, "目的地 ID");
       safeText(destination.path, "目的地路径");
+      if (!path.isAbsolute(String(destination.path)))
+        throw new Error("工作站配置中的目的地路径必须是绝对路径");
+      if (
+        typeof destination.resolvedPath === "string" &&
+        !path.isAbsolute(destination.resolvedPath)
+      )
+        throw new Error("工作站配置中的已解析目的地路径无效");
     }
     for (const file of item.fileRecords) {
       if (!plainObject(file) || !Array.isArray(file.destinations))
         throw new Error("工作站配置中的文件记录无效");
       safeText(file.relativePath, "相对路径");
+      const relativePath = String(file.relativePath).replaceAll("\\", "/");
+      if (
+        path.posix.isAbsolute(relativePath) ||
+        relativePath === ".." ||
+        relativePath.startsWith("../") ||
+        relativePath.includes("/../")
+      )
+        throw new Error("工作站配置中的文件相对路径越界");
       if (
         typeof file.size !== "number" ||
         file.size < 0 ||
         !Number.isFinite(file.size)
       )
         throw new Error("工作站配置中的文件大小无效");
+      safeText(file.srcChecksum, "源校验值");
+      for (const copy of file.destinations) {
+        if (!plainObject(copy))
+          throw new Error("工作站配置中的文件副本记录无效");
+        safeText(copy.path, "文件副本路径");
+        if (!path.isAbsolute(String(copy.path)))
+          throw new Error("工作站配置中的文件副本路径必须是绝对路径");
+      }
     }
   }
   return value as unknown as {
     application: "Kocpy";
-    schema: 1;
+    schema: 1 | 2;
     projects: ProjectConfig[];
     tasks: BackupTask[];
     templates?: ProjectTemplate[];

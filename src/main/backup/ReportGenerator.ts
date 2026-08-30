@@ -3,9 +3,11 @@ import type { BackupTask, ProjectConfig } from "../types";
 import { formatBytes } from "../report-builder";
 import { projectShootingDates } from "../project-path";
 import {
+  manifestRequirementMet,
   projectCellStatus,
   projectCloseoutSummary,
   projectDeviceCells,
+  taskMeetsCopyRequirement,
   verifiedPhysicalCopyCount,
 } from "../project-closeout";
 
@@ -43,14 +45,16 @@ export async function generateReport(
 ): Promise<Buffer> {
   const statusLabel =
     task.status === "completed"
-      ? "备份成功"
+      ? manifestRequirementMet(task)
+        ? "备份成功"
+        : "文件校验通过，清单差异待处理"
       : task.status === "unverified"
         ? "已识别，待建立基线"
         : task.status === "failed"
           ? "备份失败"
           : "部分完成";
   const statusColor =
-    task.status === "completed"
+    task.status === "completed" && manifestRequirementMet(task)
       ? "#22c55e"
       : task.status === "unverified"
         ? "#f59e0b"
@@ -86,7 +90,8 @@ export async function generateReport(
   const fileRows = (
     await Promise.all(
       task.fileRecords.map(async (f) => {
-        const allOk = f.destinations.every((d) => d.verified);
+        const allOk =
+          f.destinations.length > 0 && f.destinations.every((d) => d.verified);
         let thumbCell = "";
         if (options.includeThumbnails && f.thumbnailPath) {
           try {
@@ -210,7 +215,7 @@ export async function generateReport(
 <div class="header">
   <div>
     <h1>Kocpy</h1>
-    <p>VERIFIED MEDIA TRANSFER REPORT · v0.1.13</p>
+    <p>VERIFIED MEDIA TRANSFER REPORT · v0.1.14</p>
     <p style="margin-top:8px;font-size:12px;color:#aaa">生成时间：${new Date().toLocaleString("zh-CN")}</p>
   </div>
   <div class="badge">${statusLabel}</div>
@@ -280,7 +285,7 @@ export async function generateDailyReport(
   const rows = safeTasks
     .map(
       (t) =>
-        `<tr><td>${esc(t.name)}</td><td>${esc((t.devices || []).join(" / ") || "-")}</td><td>${t.totalFiles}</td><td>${formatBytes(t.totalBytes)}</td><td style="color:${t.status === "completed" ? "#21b76b" : "#d9545d"}">${t.status === "completed" ? "✓ 全部通过" : `⚠ ${esc(t.errorMessage || "需处理")}`}</td></tr>`,
+        `<tr><td>${esc(t.name)}</td><td>${esc((t.devices || []).join(" / ") || "-")}</td><td>${t.totalFiles}</td><td>${formatBytes(t.totalBytes)}</td><td style="color:${t.status === "completed" && manifestRequirementMet(t) && t.destinations.every((destination) => destination.verified) ? "#21b76b" : "#d9545d"}">${t.status === "completed" && manifestRequirementMet(t) && t.destinations.every((destination) => destination.verified) ? "✓ 全部通过" : `⚠ ${esc(!manifestRequirementMet(t) ? "外部清单差异待处理" : t.errorMessage || "需处理")}`}</td></tr>`,
     )
     .join("");
   const destinationRows = safeTasks
@@ -319,8 +324,7 @@ export async function generateProjectReport(
   const closeout = projectCloseoutSummary(project, tasks, dates);
   const completed = tasks.filter(
     (task) =>
-      task.status === "completed" &&
-      verifiedPhysicalCopyCount(task) >= (project.requiredCopies || 2),
+      taskMeetsCopyRequirement(task, project.requiredCopies || 2),
   ).length;
   const matrixRows = dates
     .flatMap((shootingDate) =>
@@ -362,9 +366,10 @@ export async function generateProjectReport(
     )
     .map((task) => {
       const copies = verifiedPhysicalCopyCount(task),
-        safe =
-          task.status === "completed" &&
-          copies >= (project.requiredCopies || 2);
+        safe = taskMeetsCopyRequirement(
+          task,
+          project.requiredCopies || 2,
+        );
       return `<tr><td>${esc(task.shootingDate || "-")}</td><td>${esc((task.devices || []).join(" / ") || "-")}${task.cameraPosition ? ` · ${esc(task.cameraPosition)}` : ""}</td><td>${esc(task.name)}</td><td>${task.totalFiles}</td><td>${formatBytes(task.totalBytes)}</td><td class="${safe ? "ok" : "warn"}">${safe ? `✓ ${copies} 份物理独立副本` : `⚠ ${esc(task.errorMessage || `${copies} 份物理独立副本，未达到要求`)}`}</td></tr>`;
     })
     .join("");

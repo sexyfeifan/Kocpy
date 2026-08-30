@@ -26,6 +26,7 @@ describe("0.0.12 diagnostics", () => {
   it("does not expose full private paths in diagnostic snapshots", () => {
     const snapshot = buildDiagnosticSnapshot({ version: "0.0.12", tasks: [task()], volumes: [], benchmarks: [] });
     expect(JSON.stringify(snapshot)).not.toContain("/Users/example/private");
-    expect(snapshot.tasks[0].source).toBe("card");
+    expect(snapshot.tasks[0].source).toMatch(/^source-[a-f0-9]{12}$/);
+    expect(JSON.stringify(snapshot)).not.toContain('"card"');
   });
 });

@@ -13,7 +13,7 @@ import {
   generateAscMhl,
 } from "../src/main/backup/ManifestGenerator";
 import { execFileSync } from "node:child_process";
-import { isTimeMachineVolume } from "../src/main/system";
+import { isTimeMachineVolume, resolveEjectTarget } from "../src/main/system";
 import {
   projectCellStatus,
   projectCloseoutSummary,
@@ -36,6 +36,20 @@ describe("Persistence and reports", () => {
       expect((await fs.readdir(dir)).filter((f) => f.endsWith(".tmp"))).toEqual(
         [],
       );
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+  it("does not replace a healthy backup with a corrupt primary snapshot", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "kocpy-store-corrupt-"));
+    try {
+      const store = new Storage(dir);
+      await store.write("tasks.json", { value: "safe" });
+      await store.write("tasks.json", { value: "current" });
+      await fs.writeFile(path.join(dir, "tasks.json"), "{broken");
+      await store.write("tasks.json", { value: "replacement" });
+      await fs.writeFile(path.join(dir, "tasks.json"), "{broken-again");
+      expect(await store.read("tasks.json", {})).toEqual({ value: "safe" });
     } finally {
       await fs.rm(dir, { recursive: true, force: true });
     }
@@ -103,6 +117,17 @@ describe("Persistence and reports", () => {
       isTimeMachineVolume("NAS", "", "//host/share on /Volumes/.timemachine"),
     ).toBe(true);
   });
+  it("resolves a card subfolder to its removable volume before ejecting", () => {
+    const target = resolveEjectTarget(
+      [
+        { path: "/", canEject: false },
+        { path: "/Volumes/CARD", canEject: true },
+        { path: "/Volumes/CARD-OTHER", canEject: true },
+      ],
+      "/Volumes/CARD/DCIM/100MEDIA",
+    );
+    expect(target?.path).toBe("/Volumes/CARD");
+  });
   it("generates ASC MHL v2 that validates against the official ASC XSD", async () => {
     const t = new BackupEngine().createTask({
       name: "asc",
@@ -160,6 +185,27 @@ describe("Persistence and reports", () => {
     expect(mhl).toContain('<mhl version="1.1">');
     expect(mhl).toContain("A/a&amp;b.mov");
     expect(mhl).toContain("<sha256>abc</sha256>");
+  });
+  it("exports the verified destination path when duplicate handling renamed a file", () => {
+    const t = new BackupEngine().createTask({
+      name: "renamed",
+      namingTemplate: "renamed",
+      sourcePath: "/Volumes/CARD",
+      destinationPaths: ["/Volumes/BACKUP/CARD"],
+      devices: [],
+      hashAlgorithm: "sha256",
+      shootingDate: "",
+    });
+    t.destinations[0].resolvedPath = "/Volumes/BACKUP/CARD";
+    t.fileRecords = [{
+      name: "clip.mov",
+      relativePath: "DCIM/clip.mov",
+      size: 42,
+      srcChecksum: "abc",
+      destinations: [{ path: "/Volumes/BACKUP/CARD/DCIM/clip_1.mov", checksum: "abc", verified: true }],
+    }];
+    expect(generateMhl(t, 0)).toContain("DCIM/clip_1.mov");
+    expect(generateMhl(t, 0)).not.toContain(">DCIM/clip.mov<");
   });
   it("applies project closeout copy requirements and schedule exceptions", async () => {
     const engine = new BackupEngine(),

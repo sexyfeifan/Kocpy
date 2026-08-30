@@ -688,7 +688,7 @@ export function App() {
           <img src="./icon.png" alt="Kocpy 图标" />
           <div>
             <strong>
-              Kocpy<span>0.1.13</span>
+              Kocpy<span>0.1.14</span>
             </strong>
             <small>素材工作台</small>
           </div>
@@ -745,7 +745,7 @@ export function App() {
                   ? `可升级 ${updateInfo.latest}`
                   : "检查更新"}
               </span>
-              <b>v0.1.13</b>
+              <b>v0.1.14</b>
             </button>
             <div className="sidebar-author-links">
               <span>
@@ -4137,6 +4137,7 @@ function HelpPage({
         "Kocpy 不会自动开始写入。",
         "不要把多个目录位于同一物理盘误当成独立副本。",
         "校验完成前不要拔出素材卡或目的地。",
+        "完成判定前会重新扫描素材源；复制期间新增、删除或修改文件会停止任务，避免生成不完整的成功记录。",
       ],
     },
     {
@@ -4252,6 +4253,7 @@ function HelpPage({
       tips: [
         "PDF 可包含素材首帧缩略图。",
         "报告证明任务执行时状态，不替代后续长期复校验。",
+        "MHL 使用已校验副本的真实最终路径；若重名策略改了文件名，清单也会记录改名后的路径。",
       ],
       page: "reports",
     },
@@ -4447,6 +4449,7 @@ function HelpPage({
       tips: [
         "不要手动修改应用数据目录。",
         "历史项目可冷归档，原素材不会被删除。",
+        "冷归档只有在写入、落盘并重新解压校验成功后，才会从热索引移除任务。",
       ],
       page: "maintenance",
     },
@@ -4456,7 +4459,7 @@ function HelpPage({
       <section className="panel help-start">
         <div>
           <span className="mini-label">
-            <BookOpen size={13} /> KOCPY 0.1.13 · QUICK START
+            <BookOpen size={13} /> KOCPY 0.1.14 · QUICK START
           </span>
           <h2>软件使用说明</h2>
           <p>
@@ -4481,9 +4484,9 @@ function HelpPage({
       <section className="help-release-note">
         <RefreshCw size={20} />
         <div>
-          <strong>0.1.13：混合清单差异按步骤处理</strong>
+          <strong>0.1.14：备份安全与记录恢复加固</strong>
           <p>
-            缺失与额外文件同时出现时，Kocpy 会识别疑似同名冲突和 0 字节文件，先安全补回缺失内容，再原地显示剩余差异；有效额外文件可在同一弹窗建立哈希基线后确认。
+            完成前重新核对素材源，持续检查磁盘身份并确保文件和数据库真正落盘；数据库、冷归档、MHL 导出、归档修复与脱敏诊断也采用更严格的完整性规则。
           </p>
         </div>
       </section>
@@ -6104,7 +6107,7 @@ function SettingsPage({
         <img src="./icon.png" alt="Kocpy 图标" />
         <div>
           <h3>
-            Kocpy <span>0.1.13</span>
+            Kocpy <span>0.1.14</span>
           </h3>
           <p>从现场接卡、项目归档到交付报告，为每一份创作保留可靠副本。</p>
           <small>本地优先 · 独立校验 · 项目全周期记录 · @sexyfeifan</small>

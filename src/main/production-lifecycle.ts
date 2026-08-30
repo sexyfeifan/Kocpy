@@ -32,6 +32,17 @@ const decodeXml = (value: string) =>
     .replace(/&quot;/g, '"')
     .replace(/&apos;/g, "'")
     .replace(/&amp;/g, "&");
+const syncDirectory = async (directory: string) => {
+  const handle = await fs.open(directory, "r");
+  try {
+    await handle.sync();
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (!["EINVAL", "ENOTSUP", "EBADF"].includes(code || "")) throw error;
+  } finally {
+    await handle.close();
+  }
+};
 
 interface ManifestEntry {
   checksum: string;
@@ -457,10 +468,20 @@ async function readManifest(file?: string): Promise<ParsedManifest> {
   ) => {
     if (typeof name !== "string" || typeof checksum !== "string") return;
     const algorithm = checksumAlgorithm(tag, checksum);
-    if (!algorithm || (result.algorithm && result.algorithm !== algorithm))
-      return;
-    const relativePath = normalizeManifestPath(decodeXml(name));
+    if (!algorithm) return;
+    if (result.algorithm && result.algorithm !== algorithm)
+      throw new Error("外部清单混用了多种哈希算法，无法可靠解释");
+    const decodedName = decodeXml(name).replace(/^file:\/\//i, ""),
+      normalizedInput = decodedName.replaceAll("\\", "/");
+    if (
+      normalizedInput.split("/").includes("..") ||
+      normalizedInput.includes("\0")
+    )
+      throw new Error("外部清单包含越界或无效路径");
+    const relativePath = normalizeManifestPath(decodedName);
     if (!relativePath) return;
+    if (result.entries.has(relativePath))
+      throw new Error(`外部清单包含重复路径：${relativePath}`);
     result.algorithm = algorithm;
     const parsedSize = Number(size);
     result.entries.set(relativePath, {
@@ -485,22 +506,24 @@ async function readManifest(file?: string): Promise<ParsedManifest> {
     const match = line.match(/^([a-f0-9]{32,64}|\d{1,10})\s+\*?(.+)$/i);
     if (match) add(match[2], match[1]);
   }
-  if (/\.json$/i.test(file))
+  if (/\.json$/i.test(file)) {
+    let parsed: any;
     try {
-      const parsed = JSON.parse(text),
-        rows = Array.isArray(parsed)
-          ? parsed
-          : parsed.files || parsed.entries || [];
-      for (const row of rows) {
-        const name = row.path || row.file || row.relativePath;
-        const tagged = ["sha256", "sha1", "md5", "xxhash32", "xxhash"].find(
-          (key) => typeof row[key] === "string",
-        );
-        add(name, tagged ? row[tagged] : row.checksum, tagged, row.size);
-      }
+      parsed = JSON.parse(text);
     } catch {
-      /* non-JSON manifests continue through text parsers */
+      return result;
     }
+    const rows = Array.isArray(parsed)
+      ? parsed
+      : parsed.files || parsed.entries || [];
+    for (const row of rows) {
+      const name = row.path || row.file || row.relativePath;
+      const tagged = ["sha256", "sha1", "md5", "xxhash32", "xxhash"].find(
+        (key) => typeof row[key] === "string",
+      );
+      add(name, tagged ? row[tagged] : row.checksum, tagged, row.size);
+    }
+  }
   return result;
 }
 
@@ -653,6 +676,7 @@ export async function reviseMhlMissingEntries(
   }
   if ((await hashFile(auditPath, "sha256")) !== originalManifestSha256)
     throw new Error("原始 MHL 审计副本校验失败，未修改生效清单");
+  await syncDirectory(path.dirname(auditPath));
 
   const temporary = `${manifestPath}.kocpy-revision-${randomUUID()}.partial`;
   try {
@@ -675,6 +699,7 @@ export async function reviseMhlMissingEntries(
       throw new Error("MHL 在修订期间被其他程序修改，已停止替换");
     await fs.chmod(temporary, originalPathInfo.mode);
     await fs.rename(temporary, manifestPath);
+    await syncDirectory(path.dirname(manifestPath));
     return {
       excluded,
       originalManifestSha256,
@@ -697,6 +722,7 @@ interface PlannedManifestRepair {
   target: string;
   size: number;
   checksum: string;
+  mode: number;
   atimeMs: number;
   mtimeMs: number;
 }
@@ -869,6 +895,7 @@ export async function repairMissingManifestFiles(
         target,
         size: stat.size,
         checksum: expected.checksum,
+        mode: stat.mode,
         atimeMs: stat.atimeMs,
         mtimeMs: stat.mtimeMs,
       });
@@ -992,7 +1019,15 @@ export async function repairMissingManifestFiles(
         await fs.copyFile(file.stagedPath, file.target, constants.COPYFILE_EXCL);
       }
       committed.push(file.target);
+      await fs.chmod(file.target, file.mode);
       await fs.utimes(file.target, new Date(file.atimeMs), new Date(file.mtimeMs));
+      const handle = await fs.open(file.target, "r");
+      try {
+        await handle.sync();
+      } finally {
+        await handle.close();
+      }
+      await syncDirectory(path.dirname(file.target));
       copiedBytes += file.size;
     }
   } catch (error) {

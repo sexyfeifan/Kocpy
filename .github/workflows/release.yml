@@ -24,7 +24,7 @@ jobs:
       - run: npm run typecheck && npm test
       - name: Build unsigned DMG
         if: env.HAS_APPLE_SIGNING != 'true'
-        run: npm run build && npx electron-builder --mac --${{ matrix.arch }} --publish never
+        run: npm run build && npx electron-builder --mac --${{ matrix.arch }} --publish never -c.mac.notarize=false
       - name: Build signed and notarized DMG
         if: env.HAS_APPLE_SIGNING == 'true'
         env:

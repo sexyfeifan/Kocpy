@@ -1,6 +1,6 @@
 {
   "name": "kocpy",
-  "version": "0.1.13",
+  "version": "0.1.14",
   "description": "Kocpy 专业素材工作台 · 多目的地备份、独立校验与项目归档",
   "main": "out/main/index.js",
   "productName": "Kocpy",
@@ -12,12 +12,12 @@
     "build": "electron-vite build",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "pack": "npm run build && electron-builder --mac --arm64 --dir",
-    "dist": "npm run build && electron-builder --mac --arm64 --x64",
-    "pack:arm64": "npm run build && electron-builder --mac --arm64 --dir",
-    "pack:x64": "npm run build && electron-builder --mac --x64 --dir",
-    "dist:arm64": "npm run build && electron-builder --mac --arm64",
-    "dist:x64": "npm run build && electron-builder --mac --x64",
+    "pack": "npm run build && electron-builder --mac --arm64 --dir -c.mac.notarize=false",
+    "dist": "npm run build && electron-builder --mac --arm64 --x64 -c.mac.notarize=false",
+    "pack:arm64": "npm run build && electron-builder --mac --arm64 --dir -c.mac.notarize=false",
+    "pack:x64": "npm run build && electron-builder --mac --x64 --dir -c.mac.notarize=false",
+    "dist:arm64": "npm run build && electron-builder --mac --arm64 -c.mac.notarize=false",
+    "dist:x64": "npm run build && electron-builder --mac --x64 -c.mac.notarize=false",
     "test:hardware": "vitest run tests/hardware.integration.test.ts",
     "test:large": "KOCPY_LARGE_TEST=100000 vitest run tests/catalog-stress.integration.test.ts",
     "test:million": "KOCPY_LARGE_TEST=1000000 vitest run tests/catalog-stress.integration.test.ts"
@@ -58,7 +58,7 @@
       "icon": "resources/icon.icns",
       "category": "public.app-category.video",
       "hardenedRuntime": true,
-      "notarize": false,
+      "notarize": true,
       "target": [
         "dmg"
       ],

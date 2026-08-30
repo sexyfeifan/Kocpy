@@ -56,6 +56,14 @@ export interface SourceFile {
   absolutePath: string;
   size: number;
   mtimeMs: number;
+  atimeMs: number;
+  mode: number;
+}
+export interface SourceDirectory {
+  relativePath: string;
+  mtimeMs: number;
+  atimeMs: number;
+  mode: number;
 }
 export async function scan(
   source: string,
@@ -64,6 +72,7 @@ export async function scan(
 ) {
   const files: SourceFile[] = [];
   const directories: string[] = [];
+  const directoryMetadata: SourceDirectory[] = [];
   let skipped = 0;
   async function walk(dir: string) {
     signal?.throwIfAborted();
@@ -86,6 +95,13 @@ export async function scan(
         throw new Error(`不跟随素材中的符号链接，请移除或选择实际目录：${rel}`);
       if (entry.isDirectory()) {
         directories.push(rel);
+        const st = await fs.stat(abs);
+        directoryMetadata.push({
+          relativePath: rel,
+          mtimeMs: st.mtimeMs,
+          atimeMs: st.atimeMs,
+          mode: st.mode,
+        });
         await walk(abs);
       } else if (entry.isFile()) {
         const st = await fs.stat(abs);
@@ -95,6 +111,8 @@ export async function scan(
           absolutePath: abs,
           size: st.size,
           mtimeMs: st.mtimeMs,
+          atimeMs: st.atimeMs,
+          mode: st.mode,
         });
       } else throw new Error(`不支持的特殊文件：${rel}`);
     }
@@ -103,6 +121,7 @@ export async function scan(
   return {
     files,
     directories,
+    directoryMetadata,
     skipped,
     totalBytes: files.reduce((n, f) => n + f.size, 0),
   };

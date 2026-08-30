@@ -16,7 +16,7 @@ import { createHash, randomUUID } from "node:crypto";
 import os from "node:os";
 import { gzip, gunzip } from "node:zlib";
 import { promisify } from "node:util";
-import { promises as fs } from "node:fs";
+import { constants as fsConstants, promises as fs } from "node:fs";
 import { BackupEngine, hashFile } from "./backup/BackupEngine";
 import {
   scan,
@@ -60,6 +60,7 @@ import {
 } from "./project-path";
 import {
   manifestRequirementMet,
+  taskMeetsCopyRequirement,
   verifiedPhysicalCopyCount,
 } from "./project-closeout";
 import {
@@ -251,12 +252,89 @@ let healthRecords: ArchiveHealthRecord[] = [],
   archiveReminders: ArchiveReminder[] = [],
   nasPresets: NasPreset[] = [],
   savedProxyPresets: SavedProxyPreset[] = [];
+const maintenanceLocks = new Set<string>();
+const withMaintenanceLock = async <T>(key: string, operation: () => Promise<T>) => {
+  if (engine.hasActive() || proxyBusy)
+    throw new Error("请等待备份或代理任务结束后再维护素材记录");
+  if (maintenanceLocks.has(key)) throw new Error("同一素材卷已有维护操作进行中");
+  maintenanceLocks.add(key);
+  try {
+    return await operation();
+  } finally {
+    maintenanceLocks.delete(key);
+  }
+};
 const lanIndex = new LanProjectIndex(() => ({
   projects: [],
   tasks: engine.getAllTasks(),
 }));
 const persist = () =>
   store.write("tasks.json", engine.getAllTasks().slice().reverse());
+const taskFreshness = (task: BackupTask) =>
+  Math.max(
+    task.lastCheckpointAt || 0,
+    task.lastVerifiedAt || 0,
+    task.completedAt || 0,
+    task.createdAt || 0,
+  );
+const mergeTaskSnapshots = (
+  mirror: BackupTask[],
+  indexed: BackupTask[],
+): BackupTask[] => {
+  const merged = new Map(indexed.map((task) => [task.id, task]));
+  for (const task of mirror) {
+    const existing = merged.get(task.id);
+    if (!existing || taskFreshness(task) >= taskFreshness(existing))
+      merged.set(task.id, task);
+  }
+  return [...merged.values()].sort(
+    (left, right) => (left.createdAt || 0) - (right.createdAt || 0),
+  );
+};
+const mergeProjectSnapshots = (
+  mirror: ProjectConfig[],
+  indexed: ProjectConfig[],
+) => {
+  const merged = new Map(indexed.map((project) => [project.id, project]));
+  for (const project of mirror) merged.set(project.id, project);
+  return [...merged.values()].map(normalizeProject);
+};
+const sourceInventoryMatches = async (task: BackupTask) => {
+  const identity = await volumeIdentity(task.sourcePath);
+  if (
+    task.sourceVolumeUuid &&
+    task.sourceVolumeUuid !== identity.uuid
+  )
+    return false;
+  if (
+    !task.sourceVolumeUuid &&
+    task.sourceVolumeId &&
+    identity.id !== task.sourceVolumeId
+  )
+    return false;
+  const current = await scan(task.sourcePath, task.includeHidden),
+    expected = new Map(
+      task.fileRecords.map((file) => [file.relativePath, file.size]),
+    );
+  return (
+    current.files.length === expected.size &&
+    current.files.every(
+      (file) => expected.get(file.relativePath) === file.size,
+    )
+  );
+};
+const manifestDestinationIndex = (task: BackupTask) =>
+  task.destinations.findIndex((destination) => {
+    const root = destination.resolvedPath || destination.path;
+    return (
+      destination.verified &&
+      task.fileRecords.every((file) =>
+        file.destinations.some(
+          (copy) => copy.verified && inside(copy.path, root),
+        ),
+      )
+    );
+  });
 app.on("second-instance", () => {
   if (main && !main.isDestroyed()) {
     main.show();
@@ -279,6 +357,23 @@ const workspaceIntegrity = (value: Record<string, unknown>) =>
     .digest("hex");
 const gzipAsync = promisify(gzip),
   gunzipAsync = promisify(gunzip);
+const syncFileAndParent = async (file: string) => {
+  const handle = await fs.open(file, "r");
+  try {
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+  const directory = await fs.open(path.dirname(file), "r");
+  try {
+    await directory.sync();
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (!["EINVAL", "ENOTSUP", "EBADF"].includes(code || "")) throw error;
+  } finally {
+    await directory.close();
+  }
+};
 const emitProxyJobs = () => {
   if (main && !main.isDestroyed())
     main.webContents.send("proxy:jobs", proxyJobs);
@@ -610,13 +705,29 @@ app.whenReady().then(async () => {
       job.status = "failed";
       job.error = "上次转码被中断，可点击重试";
     }
-  const mirroredTasks = await store.read<BackupTask[]>("tasks.json", []),
+  const mirroredTasks = await store.read<BackupTask[]>("tasks.json", []);
+  let indexedTasks: BackupTask[] = [],
+    catalogReadFailed = false;
+  try {
+    indexedTasks = await catalog.loadTasks();
+  } catch {
+    catalogReadFailed = true;
+    await catalog.recover().catch(() => {});
     indexedTasks = await catalog.loadTasks().catch(() => []);
-  const saved = indexedTasks.length ? indexedTasks : mirroredTasks;
+  }
+  const saved = mergeTaskSnapshots(mirroredTasks, indexedTasks);
+  let startupRecordsChanged =
+    catalogReadFailed ||
+    saved.length !== indexedTasks.length ||
+    saved.some((task) => {
+      const indexed = indexedTasks.find((item) => item.id === task.id);
+      return !indexed || taskFreshness(task) !== taskFreshness(indexed);
+    });
   for (const task of saved) {
     if (["pending", "running", "paused", "verifying"].includes(task.status)) {
       task.status = "failed";
       task.errorMessage = "上次运行中断。可重新执行并重新校验已有文件。";
+      startupRecordsChanged = true;
     }
     engine.loadTask(task);
   }
@@ -627,18 +738,24 @@ app.whenReady().then(async () => {
     indexedProjects = (await catalog.loadProjects().catch(() => [])).map(
       normalizeProject,
     ),
-    initialProjects = indexedProjects.length
-      ? indexedProjects
-      : mirroredProjects;
+    initialProjects = mergeProjectSnapshots(
+      mirroredProjects,
+      indexedProjects,
+    );
+  startupRecordsChanged ||=
+    initialProjects.length !== indexedProjects.length ||
+    initialProjects.some((project) => {
+      const indexed = indexedProjects.find((item) => item.id === project.id);
+      return !indexed || JSON.stringify(project) !== JSON.stringify(indexed);
+    });
   await store.write("projects.json", initialProjects);
-  if (!indexedTasks.length || !indexedProjects.length)
+  if (startupRecordsChanged || !indexedTasks.length || !indexedProjects.length)
     await catalog
       .rebuild(engine.getAllTasks(), initialProjects)
       .catch(async () => {
         await catalog.recover().catch(() => {});
         await catalog.rebuild(engine.getAllTasks(), initialProjects);
       });
-  else for (const task of engine.getAllTasks()) await catalog.upsertTask(task);
   handle("dialog:directory", async (defaultPath?: string) => {
     const r = await dialog.showOpenDialog({
       properties: ["openDirectory", "createDirectory"],
@@ -667,6 +784,8 @@ app.whenReady().then(async () => {
     }) => catalog.pageFiles(options || {}),
   );
   handle("catalog:rebuild", async () => {
+    if (engine.hasActive() || proxyBusy)
+      throw new Error("请等待当前任务结束后再重建素材索引");
     const projects = (
       await store.read<ProjectConfig[]>("projects.json", [])
     ).map(normalizeProject);
@@ -902,7 +1021,8 @@ app.whenReady().then(async () => {
       const complete = related.filter(
         (task) =>
           task.status === "completed" &&
-          task.destinations.every((destination) => destination.verified),
+          task.destinations.every((destination) => destination.verified) &&
+          manifestRequirementMet(task),
       );
       const uncovered = related
         .filter((task) => ["failed", "cancelled"].includes(task.status))
@@ -925,6 +1045,22 @@ app.whenReady().then(async () => {
             : "没有完整且通过校验的备份记录",
         });
         continue;
+      }
+      const sourceTasks = complete.filter((task) =>
+        inside(task.sourcePath, volume.path),
+      );
+      if (sourceTasks.length) {
+        const latest = sourceTasks.sort(
+          (left, right) => (right.completedAt || 0) - (left.completedAt || 0),
+        )[0];
+        if (!(await sourceInventoryMatches(latest).catch(() => false))) {
+          results.push({
+            path: volume.path,
+            ok: false,
+            error: "当前素材卡身份或文件清单与已完成任务不一致",
+          });
+          continue;
+        }
       }
       try {
         await ejectVolume(volume.path);
@@ -977,23 +1113,34 @@ app.whenReady().then(async () => {
       const block = Buffer.alloc(largeBytes, 0xa5),
         large = path.join(root, "large-video.bin"),
         writeStarted = Date.now();
-      await fs.writeFile(large, block, { flag: "wx" });
+      const largeHandle = await fs.open(large, "wx");
+      try {
+        await largeHandle.writeFile(block);
+        await largeHandle.sync();
+      } finally {
+        await largeHandle.close();
+      }
       for (let offset = 0; offset < smallFiles; offset += 100)
         await Promise.all(
           Array.from(
             { length: Math.min(100, smallFiles - offset) },
-            (_, index) =>
-              fs.writeFile(
-                path.join(
+            async (_, index) => {
+              const smallPath = path.join(
                   root,
                   "small",
                   `clip-${String(offset + index).padStart(5, "0")}.dat`,
                 ),
-                `kocpy-${offset + index}`,
-                { flag: "wx" },
-              ),
+                handle = await fs.open(smallPath, "wx");
+              try {
+                await handle.writeFile(`kocpy-${offset + index}`);
+                await handle.sync();
+              } finally {
+                await handle.close();
+              }
+            },
           ),
         );
+      await syncFileAndParent(large);
       const writeMs = Math.max(1, Date.now() - writeStarted),
         readStarted = Date.now(),
         actual = await hashFile(large, "sha256"),
@@ -1411,7 +1558,8 @@ app.whenReady().then(async () => {
   });
   handle(
     "archive:repair-copy",
-    async (taskId: string, destinationId: string) => {
+    async (taskId: string, destinationId: string) =>
+      withMaintenanceLock(`task:${taskId}`, async () => {
       if (engine.hasActive() || proxyBusy)
         throw new Error("请等待当前任务结束");
       const task = engine.getTask(taskId);
@@ -1420,7 +1568,18 @@ app.whenReady().then(async () => {
         (destination) => destination.id === destinationId,
       );
       if (!target) throw new Error("目标副本不存在");
-      let repaired = 0;
+      const targetIdentity = await volumeIdentity(
+        target.resolvedPath || target.path,
+      );
+      if (
+        (target.volumeUuid && targetIdentity.uuid !== target.volumeUuid) ||
+        (!target.volumeUuid &&
+          target.volumeId &&
+          targetIdentity.id !== target.volumeId)
+      )
+        throw new Error("目标磁盘身份与任务记录不一致，已停止修复");
+      let repaired = 0,
+        preservedDamagedOriginals = 0;
       for (const record of task.fileRecords) {
         const targetRecord = record.destinations.find((entry) =>
           inside(entry.path, target.resolvedPath || target.path),
@@ -1431,9 +1590,15 @@ app.whenReady().then(async () => {
         );
         if (!healthy)
           throw new Error(`${record.relativePath} 没有可用于修复的健康副本`);
-        const partial = `${targetRecord.path}.kocpy-repair.partial`;
+        if ((await hashFile(healthy.path, task.hashAlgorithm)) !== record.srcChecksum)
+          throw new Error(`${record.relativePath} 的健康副本已发生变化，停止修复`);
+        const partial = `${targetRecord.path}.kocpy-repair-${randomUUID()}.partial`;
         await fs.mkdir(path.dirname(targetRecord.path), { recursive: true });
-        await fs.copyFile(healthy.path, partial);
+        await fs.copyFile(healthy.path, partial, fsConstants.COPYFILE_EXCL);
+        const metadata = await fs.stat(healthy.path);
+        await fs.chmod(partial, metadata.mode);
+        await fs.utimes(partial, metadata.atime, metadata.mtime);
+        await syncFileAndParent(partial);
         if (
           (await hashFile(partial, task.hashAlgorithm)) !== record.srcChecksum
         ) {
@@ -1444,27 +1609,30 @@ app.whenReady().then(async () => {
           () => true,
           () => false,
         );
-        if (exists)
+        if (exists) {
           await fs.rename(
             targetRecord.path,
             `${targetRecord.path}.kocpy-damaged-${Date.now()}`,
           );
+          preservedDamagedOriginals++;
+        }
         await fs.rename(partial, targetRecord.path);
+        await syncFileAndParent(targetRecord.path);
         targetRecord.verified = true;
         targetRecord.checksum = record.srcChecksum;
         repaired++;
       }
-      target.verified = task.fileRecords.every((record) =>
-        record.destinations
-          .filter((entry) =>
-            inside(entry.path, target.resolvedPath || target.path),
-          )
-          .every((entry) => entry.verified),
-      );
+      target.verified = task.fileRecords.every((record) => {
+        const copies = record.destinations.filter((entry) =>
+          inside(entry.path, target.resolvedPath || target.path),
+        );
+        return copies.length > 0 && copies.every((entry) => entry.verified);
+      });
       target.error = undefined;
-      await persist();
-      return { repaired, preservedDamagedOriginals: repaired };
-    },
+      if (repaired) await engine.reverifyTask(task.id);
+      await Promise.all([persist(), catalog.upsertTask(task)]);
+      return { repaired, preservedDamagedOriginals };
+      }),
   );
   handle("templates:list", () => projectTemplates);
   handle(
@@ -1872,7 +2040,8 @@ app.whenReady().then(async () => {
   );
   handle(
     "existing:establish-baseline",
-    async (taskId: string, jobId = randomUUID()) => {
+    async (taskId: string, jobId = randomUUID()) =>
+      withMaintenanceLock(`task:${taskId}`, async () => {
       const task = engine.getTask(taskId);
       if (!task || !task.provenance || task.provenance === "kocpy-transfer")
         throw new Error("接管记录不存在");
@@ -1999,11 +2168,12 @@ app.whenReady().then(async () => {
         emit("failed", task.errorMessage, undefined, true);
         throw error;
       }
-    },
+      }),
   );
   handle(
     "existing:repair-manifest-missing",
-    async (taskId: string, jobId = randomUUID()) => {
+    async (taskId: string, jobId = randomUUID()) =>
+      withMaintenanceLock(`task:${taskId}`, async () => {
       const task = engine.getTask(taskId),
         comparison = task?.externalManifest;
       if (!task || !comparison || comparison.status !== "mismatch")
@@ -2099,11 +2269,12 @@ app.whenReady().then(async () => {
         emit("failed", String(error).replace(/^Error: /, ""), undefined, true);
         throw error;
       }
-    },
+      }),
   );
   handle(
     "existing:reverify-manifest",
-    async (taskId: string, jobId = randomUUID()) => {
+    async (taskId: string, jobId = randomUUID()) =>
+      withMaintenanceLock(`task:${taskId}`, async () => {
       const task = engine.getTask(taskId);
       if (!task?.projectId || !task.externalManifest)
         throw new Error("接管素材卷或外部清单不存在");
@@ -2249,9 +2420,10 @@ app.whenReady().then(async () => {
         emit("failed", String(error).replace(/^Error: /, ""), undefined, true);
         throw error;
       }
-    },
+      }),
   );
-  handle("existing:accept-manifest-extra", async (taskId: string) => {
+  handle("existing:accept-manifest-extra", async (taskId: string) =>
+    withMaintenanceLock(`task:${taskId}`, async () => {
     const task = engine.getTask(taskId),
       comparison = task?.externalManifest;
     if (!task || !comparison || comparison.status !== "mismatch")
@@ -2285,10 +2457,12 @@ app.whenReady().then(async () => {
     task.errorMessage = undefined;
     await Promise.all([persist(), catalog.upsertTask(task)]);
     return task;
-  });
+    }),
+  );
   handle(
     "existing:revise-manifest-missing",
-    async (taskId: string, note: string, confirmation: string) => {
+    async (taskId: string, note: string, confirmation: string) =>
+      withMaintenanceLock(`task:${taskId}`, async () => {
       const task = engine.getTask(taskId),
         comparison = task?.externalManifest;
       if (!task || !comparison || comparison.status !== "mismatch")
@@ -2334,7 +2508,7 @@ app.whenReady().then(async () => {
       ].slice(-120);
       await Promise.all([persist(), catalog.upsertTask(task)]);
       return result;
-    },
+      }),
   );
   handle(
     "existing:reveal-manifest-item",
@@ -2601,7 +2775,7 @@ app.whenReady().then(async () => {
     if (!result.filePath) return null;
     const projects = await store.read<ProjectConfig[]>("projects.json", []);
     const base = {
-      schema: 1,
+      schema: 2,
       application: "Kocpy",
       version: app.getVersion(),
       workstation: createHash("sha256")
@@ -2624,6 +2798,8 @@ app.whenReady().then(async () => {
     return result.filePath;
   });
   handle("workspace:import", async () => {
+    if (engine.hasActive() || proxyBusy)
+      throw new Error("请等待当前任务结束后再合并工作站记录");
     const chosen = await dialog.showOpenDialog({
       properties: ["openFile"],
       filters: [{ name: "Kocpy 工作站配置", extensions: ["json"] }],
@@ -2699,6 +2875,7 @@ app.whenReady().then(async () => {
       store.write("archive-health.json", healthRecords),
       store.write("archive-changes.json", archiveChanges),
       persist(),
+      catalog.rebuild(merged.tasks, merged.projects),
     ]);
     return merged.result;
   });
@@ -2749,7 +2926,7 @@ app.whenReady().then(async () => {
       });
     if (!chosen.filePath) return null;
     const base = {
-        schema: 1,
+        schema: 2,
         application: "Kocpy",
         kind: "cold-archive",
         version: app.getVersion(),
@@ -2758,10 +2935,28 @@ app.whenReady().then(async () => {
         tasks,
       },
       payload = { ...base, integrity: workspaceIntegrity(base) };
-    await fs.writeFile(
-      chosen.filePath,
-      await gzipAsync(Buffer.from(JSON.stringify(payload))),
-    );
+    const archiveBytes = await gzipAsync(Buffer.from(JSON.stringify(payload))),
+      temporary = `${chosen.filePath}.partial-${randomUUID()}`;
+    try {
+      await fs.writeFile(temporary, archiveBytes, { flag: "wx" });
+      await syncFileAndParent(temporary);
+      const check = JSON.parse(
+        (await gunzipAsync(await fs.readFile(temporary))).toString("utf8"),
+      );
+      if (
+        check.integrity !== payload.integrity ||
+        workspaceIntegrity(
+          Object.fromEntries(
+            Object.entries(check).filter(([key]) => key !== "integrity"),
+          ),
+        ) !== check.integrity
+      )
+        throw new Error("冷归档写入后的完整性复核失败，项目记录未删除");
+      await fs.rename(temporary, chosen.filePath);
+      await syncFileAndParent(chosen.filePath);
+    } finally {
+      await fs.unlink(temporary).catch(() => {});
+    }
     project.status = "archived";
     project.coldArchivedAt = Date.now();
     project.coldArchiveFile = chosen.filePath;
@@ -2777,13 +2972,20 @@ app.whenReady().then(async () => {
     return chosen.filePath;
   });
   handle("workspace:restore-cold", async () => {
+    if (engine.hasActive() || proxyBusy)
+      throw new Error("请等待当前任务结束后再恢复冷归档");
     const chosen = await dialog.showOpenDialog({
       properties: ["openFile"],
       filters: [{ name: "Kocpy 冷归档", extensions: ["gz"] }],
     });
     if (chosen.canceled) return null;
+    const archiveStat = await fs.stat(chosen.filePaths[0]);
+    if (archiveStat.size > 512 * 1024 * 1024)
+      throw new Error("冷归档超过 512 MiB 安全限制");
     const parsed = JSON.parse(
-      (await gunzipAsync(await fs.readFile(chosen.filePaths[0]))).toString(
+      (await gunzipAsync(await fs.readFile(chosen.filePaths[0]), {
+        maxOutputLength: 1024 * 1024 * 1024,
+      } as any)).toString(
         "utf8",
       ),
     );
@@ -2800,6 +3002,15 @@ app.whenReady().then(async () => {
       ),
     );
     if (integrity !== parsed.integrity) throw new Error("冷归档完整性校验失败");
+    validateWorkspacePackage({
+      application: "Kocpy",
+      schema: 1,
+      projects: [parsed.project],
+      tasks: parsed.tasks,
+      templates: [],
+      healthRecords: [],
+      archiveChanges: [],
+    });
     const projects = (
         await store.read<ProjectConfig[]>("projects.json", [])
       ).map(normalizeProject),
@@ -3041,6 +3252,15 @@ app.whenReady().then(async () => {
         );
       };
       if (format === "bundle") {
+        const unsafe = tasks.filter(
+          (task) =>
+            !taskMeetsCopyRequirement(task, project.requiredCopies || 2) ||
+            manifestDestinationIndex(task) < 0,
+        );
+        if (unsafe.length)
+          throw new Error(
+            `仍有 ${unsafe.length} 个素材卷未满足校验、清单或物理独立副本要求，不能生成项目归档包`,
+          );
         const chosen = await dialog.showOpenDialog({
           properties: ["openDirectory", "createDirectory"],
         });
@@ -3070,7 +3290,7 @@ app.whenReady().then(async () => {
                 folder,
                 `${segment(task.name)}_${task.id.slice(0, 6)}.mhl`,
               ),
-              generateMhl(task),
+              generateMhl(task, manifestDestinationIndex(task)),
             ),
           ),
         ]);
@@ -3191,9 +3411,24 @@ app.whenReady().then(async () => {
       if (!r.filePath) return null;
       if (format === "json")
         await fs.writeFile(r.filePath, JSON.stringify(task, null, 2));
-      else if (format === "mhl")
-        await fs.writeFile(r.filePath, generateMhl(task));
+      else if (format === "mhl") {
+        const destinationIndex = manifestDestinationIndex(task);
+        if (
+          task.status !== "completed" ||
+          !manifestRequirementMet(task) ||
+          destinationIndex < 0
+        )
+          throw new Error("只有通过完整校验且没有未解决清单差异的副本才能导出 MHL");
+        await fs.writeFile(r.filePath, generateMhl(task, destinationIndex));
+      }
       else if (format === "ascmhl") {
+        const destinationIndex = manifestDestinationIndex(task);
+        if (
+          task.status !== "completed" ||
+          !manifestRequirementMet(task) ||
+          destinationIndex < 0
+        )
+          throw new Error("只有通过完整校验且没有未解决清单差异的副本才能导出 ASC MHL");
         for (const record of task.fileRecords)
           if (!record.ascMhlMd5) {
             const readable =
@@ -3201,7 +3436,7 @@ app.whenReady().then(async () => {
               path.join(task.sourcePath, record.relativePath);
             record.ascMhlMd5 = await hashFile(readable, "md5");
           }
-        await fs.writeFile(r.filePath, generateAscMhl(task));
+        await fs.writeFile(r.filePath, generateAscMhl(task, destinationIndex));
         await persist();
       } else {
         for (const record of task.fileRecords) {
@@ -3525,11 +3760,7 @@ app.whenReady().then(async () => {
   engine.on("progress", (payload) => {
     clearTimeout(persistTimer);
     persistTimer = setTimeout(() => {
-      const task = engine.getTask(payload.taskId);
-      void Promise.all([
-        persist(),
-        task ? catalog.upsertTask(task) : Promise.resolve(),
-      ]).catch(() => {});
+      void persist().catch(() => {});
     }, 1000);
     if (main && !main.isDestroyed())
       main.webContents.send("tasks:progress", payload);
@@ -3633,12 +3864,10 @@ app.whenReady().then(async () => {
         }
         if (
           actions.includes("eject") &&
-          task.destinations.every((item) => item.verified)
+          task.destinations.every((item) => item.verified) &&
+          manifestRequirementMet(task)
         )
-          for (const destination of task.destinations)
-            await ejectVolume(
-              destination.resolvedPath || destination.path,
-            ).catch(() => {});
+          await ejectVolume(task.sourcePath).catch(() => {});
       })().catch((error) => {
         task.faultTimeline = [
           ...(task.faultTimeline || []),
@@ -3740,8 +3969,7 @@ app.on("before-quit", (event) => {
     });
     return;
   }
-  void store
-    .flush()
+  void Promise.all([store.flush(), catalog.flush()])
     .then(() => {
       quitReady = true;
       app.quit();

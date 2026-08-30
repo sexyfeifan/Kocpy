@@ -162,6 +162,44 @@ type CopyTarget = {
   offset: number;
 };
 
+async function syncDirectory(directory: string) {
+  const handle = await fs.open(directory, "r").catch((error) => {
+    if (["EISDIR", "EINVAL", "ENOTSUP"].includes(error.code || ""))
+      return undefined;
+    throw error;
+  });
+  if (!handle) return;
+  try {
+    await handle.sync().catch((error) => {
+      if (!["EINVAL", "ENOTSUP", "EBADF"].includes(error.code || ""))
+        throw error;
+    });
+  } finally {
+    await handle.close();
+  }
+}
+
+async function syncPublishedFile(file: string) {
+  const handle = await fs.open(file, "r");
+  try {
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+  await syncDirectory(path.dirname(file));
+}
+
+async function preserveFileMetadata(
+  file: string,
+  source: { mode: number; atimeMs: number; mtimeMs: number },
+) {
+  await fs.chmod(file, source.mode).catch(() => undefined);
+  await fs
+    .utimes(file, new Date(source.atimeMs), new Date(source.mtimeMs))
+    .catch(() => undefined);
+  await syncPublishedFile(file);
+}
+
 export class BackupEngine extends EventEmitter {
   constructor(private readonly thumbnailDir?: string) {
     super();
@@ -412,6 +450,19 @@ export class BackupEngine extends EventEmitter {
       this.emitProgress(task);
     }
   }
+  private async assertRecordedVolume(
+    location: string,
+    expectedUuid: string | undefined,
+    expectedId: string | undefined,
+    label: string,
+  ) {
+    const identity = await volumeIdentity(location);
+    if (expectedUuid && expectedUuid !== identity.uuid)
+      throw new Error(`${label}磁盘 UUID 已变化，已停止操作`);
+    if (!expectedUuid && expectedId && expectedId !== identity.id)
+      throw new Error(`${label}磁盘身份已变化，已停止操作`);
+    return identity;
+  }
   async reverifyTask(id: string) {
     const task = this.tasks.get(id);
     if (!task) throw new Error("任务不存在");
@@ -433,6 +484,13 @@ export class BackupEngine extends EventEmitter {
     }
     this.emitProgress(task);
     try {
+      for (const destination of task.destinations)
+        await this.assertRecordedVolume(
+          destination.resolvedPath || destination.path,
+          destination.volumeUuid,
+          destination.volumeId,
+          `${destination.label} `,
+        );
       await this.verifyRecords(task, controller.signal);
       if (task.destinations.some((d) => !d.verified))
         throw new Error("部分目的地未通过重新校验");
@@ -550,7 +608,8 @@ export class BackupEngine extends EventEmitter {
           );
           if (!bytesRead) throw new Error("读取源文件时意外结束");
           sourceCopyMeter.add(bytesRead);
-          const chunk = buffer.subarray(0, bytesRead);
+          const chunk = buffer.subarray(0, bytesRead),
+            chunkOffset = position;
           const active = states.filter((state) => state.active);
           const written = (state: (typeof states)[number]) => {
             const d = state.target.destination,
@@ -561,7 +620,7 @@ export class BackupEngine extends EventEmitter {
               task.totalBytes,
               (d.copiedBytes || 0) + bytesRead,
             );
-            state.position = position + bytesRead;
+            state.position = chunkOffset + bytesRead;
             const firstWrite = !task.physicalWrittenBytes;
             task.physicalWrittenBytes =
               (task.physicalWrittenBytes || 0) + bytesRead;
@@ -571,7 +630,7 @@ export class BackupEngine extends EventEmitter {
           await Promise.all(
             active.map(async (state) => {
               const actual = state.handle
-                .write(chunk, 0, bytesRead, position)
+                .write(chunk, 0, bytesRead, chunkOffset)
                 .then(() => written(state))
                 .catch((e: any) => {
                   state.active = false;
@@ -654,7 +713,9 @@ export class BackupEngine extends EventEmitter {
         await published.close();
       }
     });
+    await syncPublishedFile(finalPath);
     await fs.unlink(temp).catch(() => {});
+    await syncDirectory(path.dirname(finalPath));
   }
   private async verifyRecords(
     task: BackupTask,
@@ -974,7 +1035,6 @@ export class BackupEngine extends EventEmitter {
       const sourceIdentity = await volumeIdentity(src);
       if (
         task.sourceVolumeUuid &&
-        sourceIdentity.uuid &&
         task.sourceVolumeUuid !== sourceIdentity.uuid
       )
         throw new Error(
@@ -1036,7 +1096,7 @@ export class BackupEngine extends EventEmitter {
           if (dests[i].startsWith("/Volumes/"))
             await fs.access("/Volumes/" + dests[i].split("/")[2]);
           const identity = await volumeIdentity(dests[i]);
-          if (d.volumeUuid && identity.uuid && d.volumeUuid !== identity.uuid)
+          if (d.volumeUuid && d.volumeUuid !== identity.uuid)
             throw new Error("磁盘 UUID 与任务记录不一致");
           if (!d.volumeUuid && d.volumeId && d.volumeId !== identity.id)
             throw new Error("磁盘身份与任务记录不一致");
@@ -1110,8 +1170,27 @@ export class BackupEngine extends EventEmitter {
         throw new Error(
           "所有目的地均未通过预检，请检查磁盘连接、身份和可用空间",
         );
+      let lastIdentityCheck = 0;
       for (const file of inventory.files) {
         await this.waitIfPaused(id, signal);
+        if (Date.now() - lastIdentityCheck >= 15_000) {
+          await this.assertRecordedVolume(
+            src,
+            task.sourceVolumeUuid,
+            task.sourceVolumeId,
+            "素材源 ",
+          );
+          for (const destination of task.destinations.filter(
+            (item) => item.available !== false && item.resolvedPath,
+          ))
+            await this.assertRecordedVolume(
+              destination.resolvedPath!,
+              destination.volumeUuid,
+              destination.volumeId,
+              `${destination.label} `,
+            );
+          lastIdentityCheck = Date.now();
+        }
         task.status = "running";
         task.currentFile = file.relativePath;
         this.emitProgress(task);
@@ -1224,6 +1303,7 @@ export class BackupEngine extends EventEmitter {
           }
           if (foundTempSize >= 0 && tempSize === file.size) {
             await this.publish(tempPath, finalPath);
+            await preserveFileMetadata(finalPath, file);
             record.destinations.push({
               path: finalPath,
               checksum: "",
@@ -1256,8 +1336,10 @@ export class BackupEngine extends EventEmitter {
           sourceCopyMeter,
         );
         for (const target of targets)
-          if (target.destination.available !== false)
+          if (target.destination.available !== false) {
             await this.publish(target.tempPath, target.finalPath);
+            await preserveFileMetadata(target.finalPath, file);
+          }
         task.transferredBytes += file.size;
         task.completedFiles++;
         task.copyProgress = Math.min(
@@ -1275,6 +1357,71 @@ export class BackupEngine extends EventEmitter {
           throw new Error(`备份期间素材发生变化：${file.relativePath}`);
         this.emitProgress(task, task.completedFiles === 1);
       }
+      const finalInventory = await scan(src, task.includeHidden, signal),
+        initialInventory = new Map(
+          inventory.files.map((file) => [
+            file.relativePath,
+            `${file.size}:${file.mtimeMs}`,
+          ]),
+        ),
+        finalInventoryMap = new Map(
+          finalInventory.files.map((file) => [
+            file.relativePath,
+            `${file.size}:${file.mtimeMs}`,
+          ]),
+        ),
+        initialDirectories = new Set(inventory.directories),
+        finalDirectories = new Set(finalInventory.directories);
+      if (
+        initialInventory.size !== finalInventoryMap.size ||
+        initialDirectories.size !== finalDirectories.size ||
+        [...initialDirectories].some(
+          (relativePath) => !finalDirectories.has(relativePath),
+        ) ||
+        [...initialInventory].some(
+          ([relativePath, fingerprint]) =>
+            finalInventoryMap.get(relativePath) !== fingerprint,
+        )
+      )
+        throw new Error(
+          "备份期间素材源目录发生变化（新增、删除或修改文件），已停止完成判定，请重新扫描并备份",
+        );
+      await this.assertRecordedVolume(
+        src,
+        task.sourceVolumeUuid,
+        task.sourceVolumeId,
+        "素材源 ",
+      );
+      for (const destination of task.destinations.filter(
+        (item) => item.available !== false && item.resolvedPath,
+      ))
+        await this.assertRecordedVolume(
+          destination.resolvedPath!,
+          destination.volumeUuid,
+          destination.volumeId,
+          `${destination.label} `,
+        );
+      for (const destination of task.destinations.filter(
+        (item) => item.available !== false && item.resolvedPath,
+      ))
+        for (const directory of [...inventory.directoryMetadata].sort(
+          (left, right) =>
+            right.relativePath.length - left.relativePath.length,
+        )) {
+          const target = await safeChild(
+            destination.resolvedPath!,
+            directory.relativePath,
+          );
+          await fs.chmod(target, directory.mode).catch(() => undefined);
+          await fs
+            .utimes(
+              target,
+              new Date(directory.atimeMs),
+              new Date(directory.mtimeMs),
+            )
+            .catch(() => undefined);
+          await syncDirectory(target);
+        }
       clearInterval(telemetry);
       task.speedBps = 0;
       task.aggregateSpeedBps = 0;

@@ -43,7 +43,6 @@ export async function benchmarkDirectory(directory: string, sizeMiB = 64): Promi
   }
 }
 
-const basename = (value?: string) => value ? path.basename(value) || "卷根目录" : undefined;
 const anonymousId = (value?: string) => value ? createHash("sha256").update(value).digest("hex").slice(0, 12) : undefined;
 export function recoveryDiagnosis(task: BackupTask) {
   const unavailable = task.destinations.filter((destination) => destination.available === false);
@@ -61,17 +60,17 @@ export function recoveryDiagnosis(task: BackupTask) {
 
 export function buildDiagnosticSnapshot(input: { version: string; tasks: BackupTask[]; volumes: any[]; benchmarks: BenchmarkResult[] }) {
   const tasks = input.tasks.slice(-100).map((task) => ({
-    id: task.id.slice(0, 12), name: task.name, status: task.status, createdAt: task.createdAt, startedAt: task.startedAt, completedAt: task.completedAt,
-    source: basename(task.sourcePath), sourceVolume: task.sourceVolumeName, sourceVolumeId: anonymousId(task.sourceVolumeUuid || task.sourceVolumeId),
+    id: task.id.slice(0, 12), name: `task-${anonymousId(task.name)}`, status: task.status, createdAt: task.createdAt, startedAt: task.startedAt, completedAt: task.completedAt,
+    source: `source-${anonymousId(task.sourcePath)}`, sourceVolume: anonymousId(task.sourceVolumeName), sourceVolumeId: anonymousId(task.sourceVolumeUuid || task.sourceVolumeId),
     totals: { files: task.totalFiles, bytes: task.totalBytes, copied: task.transferredBytes, verified: task.verifiedBytes || 0 },
-    destinations: task.destinations.map((destination) => ({ label: destination.label, volume: destination.volumeName, volumeId: anonymousId(destination.volumeUuid || destination.volumeId), verified: destination.verified, available: destination.available, error: destination.error, performance: destination.performance, verifyPerformance: destination.verifyPerformance })),
+    destinations: task.destinations.map((destination) => ({ label: anonymousId(destination.label), volume: anonymousId(destination.volumeName), volumeId: anonymousId(destination.volumeUuid || destination.volumeId), verified: destination.verified, available: destination.available, error: destination.error, performance: destination.performance, verifyPerformance: destination.verifyPerformance })),
     diagnosis: recoveryDiagnosis(task), performanceSummary: task.performanceSummary, error: task.errorMessage, timeline: (task.faultTimeline || []).slice(-30),
   }));
   return {
     schema: 1, generatedAt: new Date().toISOString(), app: { name: "Kocpy", version: input.version },
     system: { platform: process.platform, release: os.release(), arch: process.arch, cpu: os.cpus()[0]?.model, memoryBytes: os.totalmem() },
-    volumes: input.volumes.map((volume) => ({ name: volume.name, type: volume.deviceType, filesystem: volume.protocol || volume.type, total: volume.total, free: volume.free, writable: volume.writable, network: volume.isNetwork, latencyMs: volume.latencyMs, volumeId: anonymousId(volume.identity?.uuid || volume.identity?.id) })),
-    benchmarks: input.benchmarks.slice(-20).map((result) => ({ ...result, path: basename(result.path) })), tasks,
+    volumes: input.volumes.map((volume) => ({ name: anonymousId(volume.name), type: volume.deviceType, filesystem: volume.protocol || volume.type, total: volume.total, free: volume.free, writable: volume.writable, network: volume.isNetwork, latencyMs: volume.latencyMs, volumeId: anonymousId(volume.identity?.uuid || volume.identity?.id) })),
+    benchmarks: input.benchmarks.slice(-20).map((result) => ({ ...result, path: anonymousId(result.path) })), tasks,
     privacy: "不包含素材内容、完整文件路径、用户账号或文件清单。",
   };
 }

@@ -243,6 +243,27 @@ describe("0.1.0 production lifecycle", () => {
       await fs.rm(root, { recursive: true, force: true });
     }
   });
+  it("rejects duplicate or traversal paths in untrusted external manifests", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "kocpy-bad-manifest-"));
+    try {
+      await fs.writeFile(path.join(root, "clip.mov"), "media");
+      await fs.writeFile(
+        path.join(root, "CARD.mhl"),
+        `<?xml version="1.0"?><mhl><hashlist>
+<hash><file>clip.mov</file><sha256>${"a".repeat(64)}</sha256></hash>
+<hash><file>clip.mov</file><sha256>${"a".repeat(64)}</sha256></hash>
+</hashlist></mhl>`,
+      );
+      await expect(inspectExternalManifest(root)).rejects.toThrow(/重复路径/);
+      await fs.writeFile(
+        path.join(root, "CARD.mhl"),
+        `<?xml version="1.0"?><mhl><hashlist><hash><file>../escape.mov</file><sha256>${"a".repeat(64)}</sha256></hash></hashlist></mhl>`,
+      );
+      await expect(inspectExternalManifest(root)).rejects.toThrow(/越界/);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
   it("imports Kocard MHL files with leading paths and decimal xxHash32", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "kocpy-kocard-mhl-"));
     try {

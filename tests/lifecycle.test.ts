@@ -25,5 +25,7 @@ describe("archive lifecycle and workstation merge", () => {
     expect(() => validateWorkspacePackage({ ...old, tasks: [{ ...task("bad"), status: "owned" }] })).toThrow(/状态或哈希算法/);
     expect(() => validateWorkspacePackage({ ...old, projects: "not-an-array" })).toThrow(/数据列表/);
     expect(() => validateWorkspacePackage({ application: "Elsewhere", schema: 1 })).toThrow(/受支持/);
+    expect(() => validateWorkspacePackage({ ...old, schema: 2 })).toThrow(/完整性签名/);
+    expect(() => validateWorkspacePackage({ ...old, tasks: [{ ...task("bad-path"), fileRecords: [{ ...task("bad-path").fileRecords[0], relativePath: "../escape.mov" }] }] })).toThrow(/相对路径越界/);
   });
 });

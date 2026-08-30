@@ -25,9 +25,18 @@ export class Storage {
         const file = path.join(this.root, name),
           temp = file + "." + randomUUID() + ".tmp";
         try {
-          await fs.copyFile(file, file + ".bak").catch((e) => {
-            if (e.code !== "ENOENT") throw e;
-          });
+          const currentIsValid = await fs
+            .readFile(file, "utf8")
+            .then((current) => {
+              JSON.parse(current);
+              return true;
+            })
+            .catch((error) => {
+              if (error.code === "ENOENT" || error instanceof SyntaxError)
+                return false;
+              throw error;
+            });
+          if (currentIsValid) await fs.copyFile(file, file + ".bak");
           await fs.writeFile(temp, data, { flag: "wx" });
           const handle = await fs.open(temp, "r+");
           try {
@@ -36,6 +45,15 @@ export class Storage {
             await handle.close();
           }
           await fs.rename(temp, file);
+          const directory = await fs.open(this.root, "r");
+          try {
+            await directory.sync().catch((error) => {
+              if (!["EINVAL", "ENOTSUP", "EBADF"].includes(error.code || ""))
+                throw error;
+            });
+          } finally {
+            await directory.close();
+          }
         } finally {
           await fs.unlink(temp).catch(() => {});
         }
