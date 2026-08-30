@@ -58,7 +58,10 @@ import {
   inspectProjectStructure,
   makeProjectFolderName,
 } from "./project-path";
-import { verifiedPhysicalCopyCount } from "./project-closeout";
+import {
+  manifestRequirementMet,
+  verifiedPhysicalCopyCount,
+} from "./project-closeout";
 import {
   benchmarkDirectory,
   buildDiagnosticSnapshot,
@@ -78,6 +81,7 @@ import {
   inspectExternalManifest,
   previewExistingBackup,
   projectCoverage,
+  repairMissingManifestFiles,
 } from "./production-lifecycle";
 import { LanProjectIndex } from "./lan-index";
 import {
@@ -142,6 +146,27 @@ const normalizeProject = (project: ProjectConfig): ProjectConfig => {
     requiredCopies: Math.max(1, Math.min(4, project.requiredCopies || 2)),
   };
 };
+
+const sameManifestDifferences = (
+  left: BackupTask["externalManifest"],
+  right: BackupTask["externalManifest"],
+) =>
+  Boolean(
+    left &&
+      right &&
+      JSON.stringify({
+        missing: left.missing,
+        extra: left.extra,
+        sizeMismatches: left.sizeMismatches,
+        checksumMismatches: left.checksumMismatches,
+      }) ===
+        JSON.stringify({
+          missing: right.missing,
+          extra: right.extra,
+          sizeMismatches: right.sizeMismatches,
+          checksumMismatches: right.checksumMismatches,
+        }),
+  );
 
 const consolidateProjectExistingRecords = (projectId: string) => {
   const imported = engine
@@ -1766,11 +1791,22 @@ app.whenReady().then(async () => {
         if (unavailableSources.has(existingSourceKey(task.sourcePath)))
           continue;
         try {
-          const comparison = await inspectExternalManifest(task.sourcePath);
+          const previousComparison = task.externalManifest,
+            comparison = await inspectExternalManifest(task.sourcePath);
+          if (
+            comparison &&
+            previousComparison?.resolution &&
+            sameManifestDifferences(previousComparison, comparison)
+          )
+            comparison.resolution = previousComparison.resolution;
           task.externalManifest = comparison;
           if (!comparison) continue;
           manifestsInspected++;
           if (comparison.status === "mismatch") {
+            if (comparison.resolution?.type === "accepted-extra") {
+              task.errorMessage = undefined;
+              continue;
+            }
             manifestDifferences++;
             const summary = [
               comparison.missing.length &&
@@ -1962,6 +1998,278 @@ app.whenReady().then(async () => {
         emit("failed", task.errorMessage, undefined, true);
         throw error;
       }
+    },
+  );
+  handle(
+    "existing:repair-manifest-missing",
+    async (taskId: string, jobId = randomUUID()) => {
+      const task = engine.getTask(taskId),
+        comparison = task?.externalManifest;
+      if (!task || !comparison || comparison.status !== "mismatch")
+        throw new Error("没有可修复的外部清单差异");
+      if (!comparison.missing.length)
+        throw new Error("这份素材卷没有缺失文件");
+      const chosen = await dialog.showOpenDialog({
+        title: "选择同一素材卷的健康副本根目录",
+        defaultPath: path.dirname(task.sourcePath),
+        properties: ["openDirectory"],
+        message: "所选目录必须包含清单列出的同路径文件",
+      });
+      if (chosen.canceled) return null;
+      const healthyRoot = await canonical(chosen.filePaths[0]),
+        targetRoot = await canonical(task.sourcePath);
+      if (healthyRoot === targetRoot)
+        throw new Error("健康副本不能与待修复目录相同");
+
+      let totalFiles = comparison.missing.length * 2,
+        totalBytes = Math.max(1, task.totalBytes * 2);
+      const startedAt = Date.now();
+      let completedFiles = 0,
+        completedBytes = 0,
+        lastEmittedAt = 0;
+      const emit = (
+        phase: "hashing" | "finalizing" | "completed" | "failed",
+        message: string,
+        currentFile?: string,
+        force = false,
+      ) => {
+        const now = Date.now();
+        if (!force && now - lastEmittedAt < 120) return;
+        lastEmittedAt = now;
+        const speedBps =
+            completedBytes / Math.max(0.001, (now - startedAt) / 1000),
+          eta = speedBps
+            ? Math.max(0, totalBytes - completedBytes) / speedBps
+            : 0;
+        if (main && !main.isDestroyed())
+          main.webContents.send("existing:progress", {
+            jobId,
+            phase,
+            message,
+            totalFiles,
+            completedFiles,
+            totalBytes,
+            completedBytes,
+            totalCandidates: 1,
+            completedCandidates: phase === "completed" ? 1 : 0,
+            currentCandidate: task.name,
+            currentFile,
+            speedBps,
+            eta,
+          });
+      };
+      emit("hashing", "正在预检健康副本，写入前逐文件核对清单", undefined, true);
+      try {
+        const result = await repairMissingManifestFiles(
+          targetRoot,
+          healthyRoot,
+          comparison.path,
+          comparison.missing,
+          {
+            onPlan: (files, bytes) => {
+              totalFiles = Math.max(1, files * 2);
+              totalBytes = Math.max(1, bytes * 2);
+              emit(
+                "hashing",
+                `已找到 ${files} 个候选文件，开始逐文件校验`,
+                undefined,
+                true,
+              );
+            },
+            onBytes: (count, file) => {
+              completedBytes += count;
+              emit("hashing", "正在校验并安全补回缺失文件", file);
+            },
+            onFile: (file) => {
+              completedFiles++;
+              emit("finalizing", "文件阶段完成", file, true);
+            },
+          },
+        );
+        task.verifyLog = [
+          ...task.verifyLog,
+          `已从用户选择的健康副本补回 ${result.files} 个文件（${result.bytes} 字节）；随后必须完整重校验外部清单`,
+        ].slice(-120);
+        await Promise.all([persist(), catalog.upsertTask(task)]);
+        emit("completed", `已补回 ${result.files} 个文件，准备完整重校验`, undefined, true);
+        return result;
+      } catch (error) {
+        emit("failed", String(error).replace(/^Error: /, ""), undefined, true);
+        throw error;
+      }
+    },
+  );
+  handle(
+    "existing:reverify-manifest",
+    async (taskId: string, jobId = randomUUID()) => {
+      const task = engine.getTask(taskId);
+      if (!task?.projectId || !task.externalManifest)
+        throw new Error("接管素材卷或外部清单不存在");
+      const projects = (
+          await store.read<ProjectConfig[]>("projects.json", [])
+        ).map(normalizeProject),
+        project = projects.find((item) => item.id === task.projectId);
+      if (!project) throw new Error("项目不存在");
+      const preview = await previewExistingBackup(
+          task.sourcePath,
+          project,
+          "card",
+          task.shootingDate,
+        ),
+        totalFiles = Math.max(1, preview.files),
+        totalBytes = Math.max(1, preview.bytes),
+        startedAt = Date.now();
+      let completedFiles = 0,
+        completedBytes = 0,
+        lastEmittedAt = 0;
+      const emit = (
+        phase: "hashing" | "completed" | "failed",
+        message: string,
+        currentFile?: string,
+        force = false,
+      ) => {
+        const now = Date.now();
+        if (!force && now - lastEmittedAt < 120) return;
+        lastEmittedAt = now;
+        const speedBps =
+            completedBytes / Math.max(0.001, (now - startedAt) / 1000),
+          eta = speedBps
+            ? Math.max(0, totalBytes - completedBytes) / speedBps
+            : 0;
+        if (main && !main.isDestroyed())
+          main.webContents.send("existing:progress", {
+            jobId,
+            phase,
+            message,
+            totalFiles,
+            completedFiles,
+            totalBytes,
+            completedBytes,
+            totalCandidates: 1,
+            completedCandidates: phase === "completed" ? 1 : 0,
+            currentCandidate: task.name,
+            currentFile,
+            speedBps,
+            eta,
+          });
+      };
+      emit("hashing", "正在按外部清单完整重读并校验", undefined, true);
+      const previousComparison = task.externalManifest;
+      try {
+        const verified = await importExistingBackup(
+          project,
+          task.sourcePath,
+          "manifest-import",
+          {
+            shootingDate: task.shootingDate,
+            device: task.devices[0],
+            cameraPosition: task.cameraPosition,
+            card: task.name,
+          },
+          {
+            onBytes: (count, file) => {
+              completedBytes += count;
+              emit("hashing", "正在计算文件校验值", file);
+            },
+            onFile: (file) => {
+              completedFiles++;
+              emit("hashing", "文件校验完成", file, true);
+            },
+          },
+        );
+        if (verified.status !== "completed") {
+          if (
+            verified.externalManifest &&
+            previousComparison.resolution &&
+            sameManifestDifferences(previousComparison, verified.externalManifest)
+          )
+            verified.externalManifest.resolution = previousComparison.resolution;
+          task.externalManifest = verified.externalManifest;
+          task.errorMessage = verified.errorMessage;
+          task.verifyLog = [...task.verifyLog, ...verified.verifyLog].slice(-120);
+          await Promise.all([persist(), catalog.upsertTask(task)]);
+          throw new Error(verified.errorMessage || "外部清单仍不匹配");
+        }
+        const originalDestination = task.destinations[0],
+          verifiedDestination = verified.destinations[0];
+        verified.destinations[0] = {
+          ...originalDestination,
+          ...verifiedDestination,
+          id: originalDestination?.id || verifiedDestination.id,
+          volumeId: originalDestination?.volumeId,
+          volumeUuid: originalDestination?.volumeUuid,
+          volumeName: originalDestination?.volumeName,
+        };
+        const originalId = task.id,
+          originalCreatedAt = task.createdAt,
+          log = task.verifyLog;
+        Object.assign(task, verified, {
+          id: originalId,
+          createdAt: originalCreatedAt,
+          verifyLog: [...log, ...verified.verifyLog].slice(-120),
+        });
+        await Promise.all([persist(), catalog.upsertTask(task)]);
+        completedBytes = totalBytes;
+        completedFiles = totalFiles;
+        emit("completed", "外部清单完整校验通过", undefined, true);
+        return task;
+      } catch (error) {
+        emit("failed", String(error).replace(/^Error: /, ""), undefined, true);
+        throw error;
+      }
+    },
+  );
+  handle("existing:accept-manifest-extra", async (taskId: string) => {
+    const task = engine.getTask(taskId),
+      comparison = task?.externalManifest;
+    if (!task || !comparison || comparison.status !== "mismatch")
+      throw new Error("没有可确认的外部清单差异");
+    if (manifestRequirementMet(task)) throw new Error("这项差异已经确认");
+    if (
+      !comparison.extra.length ||
+      comparison.missing.length ||
+      comparison.sizeMismatches.length ||
+      comparison.checksumMismatches.length
+    )
+      throw new Error("只有单纯的额外文件可以按当前基线确认");
+    if (
+      task.status !== "completed" ||
+      task.confidence !== "baseline" ||
+      !task.fileRecords.length ||
+      task.fileRecords.some(
+        (record) =>
+          !record.srcChecksum ||
+          !record.destinations.length ||
+          record.destinations.some((destination) => !destination.verified),
+      )
+    )
+      throw new Error("请先完整读取现存文件并建立可信哈希基线");
+    comparison.resolution = {
+      type: "accepted-extra",
+      resolvedAt: Date.now(),
+      note: "用户确认额外文件属于有效素材；保留外部清单差异，并以 Kocpy 首次哈希基线作为当前可信状态",
+    };
+    task.verifyLog = [...task.verifyLog, comparison.resolution.note].slice(-120);
+    task.errorMessage = undefined;
+    await Promise.all([persist(), catalog.upsertTask(task)]);
+    return task;
+  });
+  handle(
+    "existing:reveal-manifest-item",
+    async (taskId: string, relativePath?: string) => {
+      const task = engine.getTask(taskId);
+      if (!task) throw new Error("素材卷记录不存在");
+      const itemPath = relativePath
+        ? await safeChild(task.sourcePath, relativePath)
+        : task.sourcePath;
+      if (
+        await fs
+          .access(itemPath)
+          .then(() => true, () => false)
+      )
+        shell.showItemInFolder(itemPath);
+      else shell.showItemInFolder(path.dirname(itemPath));
+      return true;
     },
   );
   handle("library:relink", async (taskId: string, relativePath: string) => {

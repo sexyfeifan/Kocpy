@@ -125,6 +125,11 @@ export interface ExternalManifestComparison {
   }>;
   checksumMismatches: string[];
   checkedAt: number;
+  resolution?: {
+    type: "accepted-extra";
+    resolvedAt: number;
+    note: string;
+  };
 }
 
 export interface BackupTask {

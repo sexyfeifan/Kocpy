@@ -214,6 +214,19 @@ export interface API {
     taskId: string,
     jobId?: string,
   ): Promise<BackupTask>;
+  repairExistingManifest(
+    taskId: string,
+    jobId?: string,
+  ): Promise<{ files: number; bytes: number } | null>;
+  reverifyExistingManifest(
+    taskId: string,
+    jobId?: string,
+  ): Promise<BackupTask>;
+  acceptExistingManifestExtra(taskId: string): Promise<BackupTask>;
+  revealExistingManifestItem(
+    taskId: string,
+    relativePath?: string,
+  ): Promise<void>;
   relinkLibraryFile(
     taskId: string,
     relativePath: string,

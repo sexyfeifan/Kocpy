@@ -111,15 +111,15 @@ type Page =
   | "settings";
 const navigation: [Page, string, typeof LayoutDashboard][] = [
   ["overview", "工作台", LayoutDashboard],
+  ["projects", "拍摄项目", FolderKanban],
   ["transfers", "传输队列", ArrowLeftRight],
   ["recovery", "恢复中心", RefreshCw],
-  ["projects", "拍摄项目", FolderKanban],
   ["library", "素材库", Film],
   ["processing", "代理队列", Activity],
   ["reports", "报告中心", FileCheck2],
   ["storage", "存储设备", HardDrive],
-  ["diagnostics", "诊断中心", Gauge],
   ["maintenance", "归档维护", Database],
+  ["diagnostics", "诊断中心", Gauge],
   ["help", "使用说明", CircleHelp],
 ];
 const projectDates = (project: ProjectConfig, tasks: BackupTask[]) => {
@@ -253,6 +253,8 @@ const performanceText = (performance?: TransferPerformance) =>
 const taskTrustState = (task: BackupTask) => {
   if (!task.provenance || task.provenance === "kocpy-transfer")
     return { status: task.status, label: statusText[task.status] };
+  if (task.externalManifest?.resolution?.type === "accepted-extra")
+    return { status: "completed", label: "额外文件已确认 · 当前基线可信" };
   if (task.externalManifest?.status === "mismatch") {
     const manifest = task.externalManifest,
       detail = [
@@ -300,6 +302,7 @@ export function App() {
       preview: ExistingImportPreview;
     } | null>(null),
     [existingBaseline, setExistingBaseline] = useState<BackupTask | null>(null),
+    [manifestIssue, setManifestIssue] = useState<BackupTask | null>(null),
     [detail, setDetail] = useState<string | null>(null),
     [detailTask, setDetailTask] = useState<BackupTask | null>(null),
     [projectDetailId, setProjectDetailId] = useState<string | null>(null);
@@ -672,7 +675,7 @@ export function App() {
           <img src="./icon.png" alt="Kocpy 图标" />
           <div>
             <strong>
-              Kocpy<span>0.1.9</span>
+              Kocpy<span>0.1.10</span>
             </strong>
             <small>素材工作台</small>
           </div>
@@ -729,7 +732,7 @@ export function App() {
                   ? `可升级 ${updateInfo.latest}`
                   : "检查更新"}
               </span>
-              <b>v0.1.9</b>
+              <b>v0.1.10</b>
             </button>
             <div className="sidebar-author-links">
               <span>
@@ -1953,7 +1956,18 @@ export function App() {
                                 <span className="task-state-actions">
                                   {(() => {
                                     const trust = taskTrustState(task);
-                                    return (
+                                    return task.externalManifest?.status ===
+                                      "mismatch" ? (
+                                      <button
+                                        className={`badge manifest-badge ${trust.status}`}
+                                        title="查看差异并处理"
+                                        onClick={() => setManifestIssue(task)}
+                                      >
+                                        <i />
+                                        {trust.label}
+                                        <ChevronRight size={13} />
+                                      </button>
+                                    ) : (
                                       <span
                                         className={`badge ${trust.status}`}
                                         title={task.errorMessage}
@@ -2309,6 +2323,17 @@ export function App() {
               setExistingBaseline(null);
               await refresh();
               notify("现存副本已完成读取并建立首次哈希基线");
+            }}
+          />
+        )}
+        {manifestIssue && (
+          <ManifestIssueModal
+            task={manifestIssue}
+            onClose={() => setManifestIssue(null)}
+            onCompleted={async (message) => {
+              setManifestIssue(null);
+              await refresh();
+              notify(message);
             }}
           />
         )}
@@ -3413,6 +3438,285 @@ function ExistingImportModal({
   );
 }
 
+function ManifestIssueModal({
+  task,
+  onClose,
+  onCompleted,
+}: {
+  task: BackupTask;
+  onClose: () => void;
+  onCompleted: (message: string) => Promise<void>;
+}) {
+  const comparison = task.externalManifest;
+  const [busy, setBusy] = useState(false),
+    [progress, setProgress] = useState<ExistingImportProgress | null>(null),
+    [error, setError] = useState(""),
+    [repairConfirmed, setRepairConfirmed] = useState(false),
+    [extraConfirmed, setExtraConfirmed] = useState(false);
+  const jobIdRef = useRef("");
+  useEffect(
+    () =>
+      api.onExistingImportProgress((payload) => {
+        if (payload.jobId === jobIdRef.current) setProgress(payload);
+      }),
+    [],
+  );
+  if (!comparison) return null;
+  const percent = progress?.totalBytes
+      ? Math.min(100, (progress.completedBytes / progress.totalBytes) * 100)
+      : 0,
+    extraOnly =
+      comparison.extra.length > 0 &&
+      !comparison.missing.length &&
+      !comparison.sizeMismatches.length &&
+      !comparison.checksumMismatches.length,
+    canAcceptExtra =
+      extraOnly &&
+      task.status === "completed" &&
+      task.confidence === "baseline" &&
+      !comparison.resolution;
+  const reverify = async (jobId = crypto.randomUUID()) => {
+    jobIdRef.current = jobId;
+    setProgress(null);
+    setError("");
+    setBusy(true);
+    try {
+      await api.reverifyExistingManifest(task.id, jobId);
+      await onCompleted("外部清单完整校验通过，项目收工状态已刷新");
+    } catch (reason) {
+      setError(String(reason).replace(/^Error: /, ""));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const list = (
+    title: string,
+    values: Array<string | { path: string; label: string }>,
+    tone: "missing" | "extra" | "different",
+  ) =>
+    values.length ? (
+      <section className="manifest-difference-group">
+        <div className="row between">
+          <strong>{title}</strong>
+          <span>{values.length} 项</span>
+        </div>
+        <div className="manifest-file-list">
+          {values.map((value) => {
+            const relativePath =
+                typeof value === "string" ? value : value.path,
+              label = typeof value === "string" ? value : value.label;
+            return (
+            <div key={`${tone}-${relativePath}`}>
+              <span className="mono">{label}</span>
+              <button
+                title={tone === "missing" ? "显示目标目录" : "在 Finder 中显示"}
+                onClick={() =>
+                  void api.revealExistingManifestItem(task.id, relativePath)
+                }
+              >
+                <FolderOpen size={13} />
+                Finder
+              </button>
+            </div>
+            );
+          })}
+        </div>
+      </section>
+    ) : null;
+  return (
+    <div className="modal-backdrop top-layer">
+      <section
+        className="form-modal manifest-issue-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label="处理外部清单差异"
+      >
+        <div className="modal-header">
+          <div>
+            <span className="eyebrow">MANIFEST DIFFERENCE</span>
+            <h2>处理外部清单差异</h2>
+          </div>
+          <Button kind="icon" title="关闭" onClick={onClose} disabled={busy}>
+            <X size={19} />
+          </Button>
+        </div>
+        <div className="form-body">
+          <div className="notice amber">
+            <AlertTriangle size={17} />
+            <span>
+              这是当前素材卷与外部清单的真实逐路径对比。红色状态不会自动算作安全副本；修复或确认后会保留审计记录。
+            </span>
+          </div>
+          <div className="import-preview">
+            <strong>
+              {task.shootingDate?.replace(/-/g, "")} · {task.devices.join("/")} · {task.name}
+            </strong>
+            <span>
+              清单 {comparison.entries} 项 · 当前匹配 {comparison.matched} 项
+            </span>
+            <small className="mono">{task.sourcePath}</small>
+            <div className="row wrap manifest-path-actions">
+              <Button
+                kind="subtle"
+                onClick={() => void api.revealExistingManifestItem(task.id)}
+              >
+                <FolderOpen size={14} />
+                素材卷目录
+              </Button>
+              <Button
+                kind="subtle"
+                onClick={() => void api.reveal(comparison.path)}
+              >
+                <FileCheck2 size={14} />
+                外部清单
+              </Button>
+            </div>
+          </div>
+          {list("清单有记录、当前目录缺少", comparison.missing, "missing")}
+          {list("当前目录存在、清单没有记录", comparison.extra, "extra")}
+          {list(
+            "文件大小不同",
+            comparison.sizeMismatches.map((item) => ({
+              path: item.relativePath,
+              label: `${item.relativePath} · 清单 ${bytes(item.expected)} / 当前 ${bytes(item.actual)}`,
+            })),
+            "different",
+          )}
+          {list("文件校验值不同", comparison.checksumMismatches, "different")}
+          {comparison.missing.length > 0 && (
+            <div className="manifest-action-card">
+              <strong>补回缺失文件</strong>
+              <p>
+                选择同一张素材卡或另一份健康副本的根目录。Kocpy 会先按这份外部清单预检全部缺失文件，全部通过后才写入当前备份；随后自动完整重校验。
+              </p>
+              <label className="manifest-confirm">
+                <input
+                  type="checkbox"
+                  checked={repairConfirmed}
+                  onChange={(event) => setRepairConfirmed(event.target.checked)}
+                  disabled={busy}
+                />
+                <span>我确认将选择同一素材卷的健康副本，并允许补回缺失文件。</span>
+              </label>
+              <Button
+                kind="primary"
+                disabled={busy || !repairConfirmed}
+                onClick={() => {
+                  const jobId = crypto.randomUUID();
+                  jobIdRef.current = jobId;
+                  setProgress(null);
+                  setError("");
+                  setBusy(true);
+                  void api
+                    .repairExistingManifest(task.id, jobId)
+                    .then(async (result) => {
+                      if (!result) return;
+                      setProgress(null);
+                      await api.reverifyExistingManifest(task.id, jobId);
+                      await onCompleted(
+                        `已安全补回 ${result.files} 个文件并通过完整清单校验`,
+                      );
+                    })
+                    .catch((reason) =>
+                      setError(String(reason).replace(/^Error: /, "")),
+                    )
+                    .finally(() => setBusy(false));
+                }}
+              >
+                {busy ? (
+                  <LoaderCircle size={15} className="spin" />
+                ) : (
+                  <ShieldCheck size={15} />
+                )}
+                选择健康副本并修复、校验
+              </Button>
+            </div>
+          )}
+          {extraOnly && (
+            <div className="manifest-action-card">
+              <strong>确认额外文件</strong>
+              <p>
+                如果上方文件确属有效素材，可保留外部清单的差异记录，并以 Kocpy 已建立的完整哈希基线作为当前可信状态。此操作不会修改原 MHL。
+              </p>
+              {!canAcceptExtra && !comparison.resolution && (
+                <div className="notice amber compact">
+                  <Info size={15} />
+                  <span>请先返回并为这份素材卷建立首次哈希基线。</span>
+                </div>
+              )}
+              <label className="manifest-confirm">
+                <input
+                  type="checkbox"
+                  checked={extraConfirmed}
+                  onChange={(event) => setExtraConfirmed(event.target.checked)}
+                  disabled={busy || !canAcceptExtra}
+                />
+                <span>我已检查文件内容，确认它属于这份素材卷并应被保留。</span>
+              </label>
+              <Button
+                kind="primary"
+                disabled={busy || !canAcceptExtra || !extraConfirmed}
+                onClick={() => {
+                  setBusy(true);
+                  setError("");
+                  void api
+                    .acceptExistingManifestExtra(task.id)
+                    .then(() =>
+                      onCompleted("额外文件已确认；外部清单差异已保留在审计记录中"),
+                    )
+                    .catch((reason) =>
+                      setError(String(reason).replace(/^Error: /, "")),
+                    )
+                    .finally(() => setBusy(false));
+                }}
+              >
+                <Check size={15} />
+                确认额外文件并采用当前基线
+              </Button>
+            </div>
+          )}
+          {progress && (
+            <div className="existing-import-progress">
+              <div className="row between">
+                <strong>{progress.message}</strong>
+                <span>{Math.round(percent)}%</span>
+              </div>
+              <div className="progress-track">
+                <i style={{ width: `${percent}%` }} />
+              </div>
+              <div className="existing-progress-metrics">
+                <span>
+                  文件阶段 {progress.completedFiles} / {progress.totalFiles}
+                </span>
+                <span>
+                  {bytes(progress.completedBytes)} / {bytes(progress.totalBytes)}
+                </span>
+                <span>
+                  {progress.speedBps ? `${bytes(progress.speedBps)}/s` : "准备读取"}
+                </span>
+                <span>{progress.eta ? `剩余 ${duration(progress.eta)}` : "—"}</span>
+              </div>
+              {progress.currentFile && (
+                <small className="mono">{progress.currentFile}</small>
+              )}
+            </div>
+          )}
+          {error && <div className="error-box">{error}</div>}
+        </div>
+        <div className="modal-footer">
+          <Button kind="subtle" onClick={onClose} disabled={busy}>
+            关闭
+          </Button>
+          <Button kind="subtle" disabled={busy} onClick={() => void reverify()}>
+            <RefreshCw size={14} />
+            重新完整核对
+          </Button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function ExistingBaselineModal({
   task,
   onClose,
@@ -3796,6 +4100,25 @@ function HelpPage({
       page: "projects",
     },
     {
+      id: "manifest-differences",
+      icon: AlertTriangle,
+      title: "处理外部清单差异（0.1.10）",
+      purpose: "查看缺少、额外、大小或校验值不同的完整文件列表，并安全完成处理。",
+      steps: [
+        "在拍摄项目的素材卷明细中点击红色“清单差异”状态。",
+        "使用 Finder 按钮打开素材卷、外部清单或具体差异文件的位置。",
+        "出现“缺少”时，勾选确认并选择同一素材卷的健康副本根目录；Kocpy 会先验证所有候选文件，全部通过后才补回并完整重校验。",
+        "只出现“额外”时，先检查文件内容；若确属有效素材且已有完整首次基线，可明确确认并采用当前基线。",
+        "手工处理文件后也可以点击“重新完整核对”，只有整卷清单通过后才会恢复绿色状态。",
+      ],
+      tips: [
+        "健康副本有任一文件大小或校验值不符时，修复会在写入前停止。",
+        "确认额外文件不会修改原 MHL；原始差异和确认时间都会保留在审计记录中。",
+        "缺失、大小不同或校验值不同不能通过人工确认跳过。",
+      ],
+      page: "projects",
+    },
+    {
       id: "checklist",
       icon: CheckCheck,
       title: "开工、收工与交接",
@@ -3863,7 +4186,7 @@ function HelpPage({
       <section className="panel help-start">
         <div>
           <span className="mini-label">
-            <BookOpen size={13} /> KOCPY 0.1.9 · QUICK START
+            <BookOpen size={13} /> KOCPY 0.1.10 · QUICK START
           </span>
           <h2>软件使用说明</h2>
           <p>
@@ -3888,9 +4211,9 @@ function HelpPage({
       <section className="help-release-note">
         <RefreshCw size={20} />
         <div>
-          <strong>0.1.9：默认窗口和最小窗口完整显示全部功能入口</strong>
+          <strong>0.1.10：外部清单差异可以直接定位和处理</strong>
           <p>
-            Kocpy 会按显示器可用区域决定默认尺寸；窗口较小时启用紧凑侧栏和响应式网格，长页面与大型表格使用安全滚动，不再裁掉底部入口或关键操作。
+            点击素材卷明细中的红色状态可查看全部差异：缺失文件可从同卷健康副本安全补回并自动完整重校验；单纯额外文件可在已有哈希基线后明确确认。左侧模块也已按实际工作流重新排序。
           </p>
         </div>
       </section>
@@ -5511,7 +5834,7 @@ function SettingsPage({
         <img src="./icon.png" alt="Kocpy 图标" />
         <div>
           <h3>
-            Kocpy <span>0.1.9</span>
+            Kocpy <span>0.1.10</span>
           </h3>
           <p>从现场接卡、项目归档到交付报告，为每一份创作保留可靠副本。</p>
           <small>本地优先 · 独立校验 · 项目全周期记录 · @sexyfeifan</small>

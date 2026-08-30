@@ -8,6 +8,7 @@ import {
   inspectExternalManifest,
   previewExistingBackup,
   projectCoverage,
+  repairMissingManifestFiles,
 } from "../src/main/production-lifecycle";
 import { generateMhl } from "../src/main/backup/ManifestGenerator";
 const project: any = {
@@ -291,6 +292,80 @@ describe("0.1.0 production lifecycle", () => {
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }
+  });
+  it("repairs only files that match the external manifest, then verifies the roll", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "kocpy-mhl-repair-")),
+      target = path.join(root, "target"),
+      healthy = path.join(root, "healthy");
+    try {
+      await fs.mkdir(path.join(healthy, "DCIM"), { recursive: true });
+      await fs.mkdir(target, { recursive: true });
+      await fs.writeFile(path.join(healthy, "DCIM", "clip.mov"), "abc");
+      const manifest = path.join(target, "CARD.mhl");
+      await fs.writeFile(
+        manifest,
+        `<hashlist version="1.1"><hash><file>/DCIM/clip.mov</file><size>3</size><xxhash>852579327</xxhash></hash></hashlist>`,
+      );
+      const repaired = await repairMissingManifestFiles(
+        target,
+        healthy,
+        manifest,
+        ["DCIM/clip.mov"],
+      );
+      expect(repaired).toEqual({ files: 1, bytes: 3 });
+      expect(await fs.readFile(path.join(target, "DCIM", "clip.mov"), "utf8")).toBe(
+        "abc",
+      );
+      const imported = await importExistingBackup(project, target, "manifest-import");
+      expect(imported.externalManifest?.status).toBe("verified");
+      expect(imported.status).toBe("completed");
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+  it("does not write a repair when the selected copy fails manifest validation", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "kocpy-mhl-bad-repair-")),
+      target = path.join(root, "target"),
+      healthy = path.join(root, "healthy");
+    try {
+      await fs.mkdir(healthy, { recursive: true });
+      await fs.mkdir(target, { recursive: true });
+      await fs.writeFile(path.join(healthy, "clip.mov"), "wrong");
+      const manifest = path.join(target, "CARD.mhl");
+      await fs.writeFile(
+        manifest,
+        `<hashlist version="1.1"><hash><file>clip.mov</file><size>5</size><xxhash>852579327</xxhash></hash></hashlist>`,
+      );
+      await expect(
+        repairMissingManifestFiles(target, healthy, manifest, ["clip.mov"]),
+      ).rejects.toThrow("健康副本校验值不符");
+      await expect(fs.access(path.join(target, "clip.mov"))).rejects.toThrow();
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+  it("counts an audited extra-file acceptance as a trusted baseline", () => {
+    const coverage = projectCoverage(project, [
+      {
+        projectId: "p",
+        status: "completed",
+        externalManifest: {
+          status: "mismatch",
+          resolution: {
+            type: "accepted-extra",
+            resolvedAt: Date.now(),
+            note: "confirmed",
+          },
+        },
+        destinations: [
+          { verified: true, path: "/Volumes/A/card" },
+          { verified: true, path: "/Volumes/B/card" },
+        ],
+      } as any,
+    ]);
+    expect(coverage.verified).toBe(1);
+    expect(coverage.compliant).toBe(1);
+    expect(coverage.attention).toBe(0);
   });
   it("keeps flat folders as one import candidate", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "kocpy-flat-import-"));

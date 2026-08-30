@@ -18,13 +18,20 @@ export function verifiedPhysicalCopyCount(task: BackupTask): number {
   ).size;
 }
 
+export function manifestRequirementMet(task: BackupTask): boolean {
+  return (
+    task.externalManifest?.status !== "mismatch" ||
+    task.externalManifest.resolution?.type === "accepted-extra"
+  );
+}
+
 export function taskMeetsCopyRequirement(
   task: BackupTask,
   requiredCopies: number,
 ): boolean {
   return (
     task.status === "completed" &&
-    task.externalManifest?.status !== "mismatch" &&
+    manifestRequirementMet(task) &&
     verifiedPhysicalCopyCount(task) >= requiredCopies
   );
 }

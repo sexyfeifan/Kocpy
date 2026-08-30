@@ -1,8 +1,9 @@
-import { promises as fs } from "node:fs";
+import { constants, promises as fs } from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { scan } from "./backup/safety";
+import { canonical, safeChild, scan } from "./backup/safety";
 import { hashFile } from "./backup/BackupEngine";
+import { manifestRequirementMet } from "./project-closeout";
 import type {
   BackupTask,
   ExternalManifestComparison,
@@ -41,6 +42,11 @@ interface ParsedManifest {
   file?: string;
   algorithm?: HashAlgorithm;
   entries: Map<string, ManifestEntry>;
+}
+
+export interface ManifestRepairResult {
+  files: number;
+  bytes: number;
 }
 
 const datePattern =
@@ -545,6 +551,119 @@ export async function inspectExternalManifest(
   );
 }
 
+export async function repairMissingManifestFiles(
+  targetRoot: string,
+  healthyRoot: string,
+  manifestPath: string,
+  missing: string[],
+  progress?: {
+    onPlan?: (files: number, bytes: number) => void;
+    onBytes?: (bytes: number, file: string) => void;
+    onFile?: (file: string) => void;
+  },
+): Promise<ManifestRepairResult> {
+  targetRoot = await canonical(targetRoot);
+  healthyRoot = await canonical(healthyRoot);
+  const manifest = await readManifest(manifestPath);
+  if (!manifest.algorithm || !manifest.entries.size)
+    throw new Error("外部清单不含可用于修复的校验值");
+  if (!missing.length) throw new Error("这份素材卷没有待补回的缺失文件");
+
+  const planned: Array<{
+    relativePath: string;
+    source: string;
+    target: string;
+    size: number;
+    checksum: string;
+  }> = [];
+  for (const relativePath of [...new Set(missing)]) {
+    const normalized = normalizeManifestPath(relativePath),
+      expected = manifest.entries.get(normalized);
+    if (!expected)
+      throw new Error(`清单中找不到待修复条目：${relativePath}`);
+    const source = await safeChild(healthyRoot, normalized),
+      target = await safeChild(targetRoot, normalized),
+      stat = await fs.stat(source).catch(() => undefined);
+    if (!stat?.isFile())
+      throw new Error(`健康副本缺少文件：${relativePath}`);
+    if (expected.size !== undefined && expected.size !== stat.size)
+      throw new Error(`健康副本文件大小不符：${relativePath}`);
+    if (
+      await fs
+        .access(target)
+        .then(() => true, () => false)
+    )
+      throw new Error(`目标中已出现文件，请先重新核对：${relativePath}`);
+    planned.push({
+      relativePath: normalized,
+      source,
+      target,
+      size: stat.size,
+      checksum: expected.checksum,
+    });
+  }
+  progress?.onPlan?.(
+    planned.length,
+    planned.reduce((sum, file) => sum + file.size, 0),
+  );
+  for (const file of planned) {
+    const checksum = await hashFile(
+      file.source,
+      manifest.algorithm,
+      undefined,
+      (count) => progress?.onBytes?.(count, file.relativePath),
+    );
+    if (normalizeChecksum(checksum, manifest.algorithm) !== file.checksum)
+      throw new Error(`健康副本校验值不符：${file.relativePath}`);
+    progress?.onFile?.(file.relativePath);
+  }
+
+  let copiedBytes = 0;
+  for (const file of planned) {
+    await fs.mkdir(path.dirname(file.target), { recursive: true });
+    const temporary = `${file.target}.kocpy-repair-${randomUUID()}.partial`;
+    try {
+      await fs.copyFile(file.source, temporary, constants.COPYFILE_EXCL);
+      const handle = await fs.open(temporary, "r");
+      try {
+        await handle.sync();
+      } finally {
+        await handle.close();
+      }
+      const checksum = await hashFile(
+        temporary,
+        manifest.algorithm,
+        undefined,
+        (count) => progress?.onBytes?.(count, file.relativePath),
+      );
+      if (normalizeChecksum(checksum, manifest.algorithm) !== file.checksum)
+        throw new Error(`补回文件写入后校验失败：${file.relativePath}`);
+      try {
+        await fs.link(temporary, file.target);
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (
+          ![
+            "EPERM",
+            "EACCES",
+            "EINVAL",
+            "ENOTSUP",
+            "EOPNOTSUPP",
+            "EXDEV",
+          ].includes(code || "")
+        )
+          throw error;
+        await fs.copyFile(temporary, file.target, constants.COPYFILE_EXCL);
+      }
+      copiedBytes += file.size;
+      progress?.onFile?.(file.relativePath);
+    } finally {
+      await fs.unlink(temporary).catch(() => undefined);
+    }
+  }
+  return { files: planned.length, bytes: copiedBytes };
+}
+
 export async function importExistingBackup(
   project: ProjectConfig,
   root: string,
@@ -733,7 +852,7 @@ export function projectCoverage(
       task.destinations
         .filter(
           (item) =>
-            item.verified && task.externalManifest?.status !== "mismatch",
+            item.verified && manifestRequirementMet(task),
         )
         .map((item) => item.volumeUuid || item.volumeId || item.path),
     ).size;

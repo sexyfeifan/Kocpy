@@ -8,7 +8,7 @@
 
 ![Kocpy 工作台](docs/screenshots/dashboard.png)
 
-当前版本：**0.1.9** · [完整使用手册](docs/USER_GUIDE.md) · [0.1.9 更新说明](docs/RELEASE_NOTES_0.1.9.md) · [下载最新版](https://github.com/sexyfeifan/Kocpy/releases/latest)
+当前版本：**0.1.10** · [完整使用手册](docs/USER_GUIDE.md) · [0.1.10 更新说明](docs/RELEASE_NOTES_0.1.10.md) · [下载最新版](https://github.com/sexyfeifan/Kocpy/releases/latest)
 
 ## 中文
 
@@ -59,6 +59,8 @@ Kocpy 将素材卡接收、多目标备份、逐目标回读校验、项目归�
 
 刷新只处理已经接管到 Kocpy 的外部记录：不会重新哈希、移动、删除或重新复制素材，不会修改 Kocpy 原生备份任务，也不会自动发现后来新加入且从未接管的文件夹。来源暂时离线时原记录会保留；重新连接后可再次刷新。关于接管可信度、目录识别、收工状态和旧项目修正，请参阅[完整使用手册](docs/USER_GUIDE.md#5-018刷新接管信息)。
 
+0.1.10 将素材卷明细中的清单差异改为可点击的处理入口：可以查看全部差异路径并在 Finder 中定位；缺失文件可从用户选择的同卷健康副本补回，写入前后均按原清单校验，随后自动整卷重校验；单纯的额外文件可在已有完整哈希基线后由用户明确确认。原 MHL 不会被修改，差异与处理决定会保留在审计记录中。
+
 项目完成后可导出：
 
 - 项目完整 PDF：项目总览、日期与设备矩阵、全部素材卷、目的地、校验结论和完整文件明细。
@@ -103,7 +105,7 @@ Kocpy 将素材卡接收、多目标备份、逐目标回读校验、项目归�
 
 ### 外观、隐私与更新
 
-Kocpy 支持真实深色与浅色外观，任务、项目、偏好、缩略图和代理记录保存在 `~/Library/Application Support/Kocpy/`。软件无需账号，不上传素材。0.1.9 会根据当前显示器可用区域选择默认窗口尺寸；在 1080 × 720 最小窗口中，全部侧栏入口仍然可见，内容页、表格和弹窗使用各自的安全滚动区域。左下角可检查 GitHub Release 更新，并提供作者 [@sexyfeifan](https://github.com/sexyfeifan) 的 GitHub 与[小红书](https://www.xiaohongshu.com/user/profile/5d24d2ca000000001103fe97)入口。
+Kocpy 支持真实深色与浅色外观，任务、项目、偏好、缩略图和代理记录保存在 `~/Library/Application Support/Kocpy/`。软件无需账号，不上传素材。应用会根据当前显示器可用区域选择默认窗口尺寸；在 1080 × 720 最小窗口中，全部侧栏入口仍然可见，内容页、表格和弹窗使用各自的安全滚动区域。0.1.10 将侧栏按“工作台 → 项目 → 接收与恢复 → 素材管理与交付 → 存储与维护 → 诊断与说明”重新排序。左下角可检查 GitHub Release 更新，并提供作者 [@sexyfeifan](https://github.com/sexyfeifan) 的 GitHub 与[小红书](https://www.xiaohongshu.com/user/profile/5d24d2ca000000001103fe97)入口。
 
 ![存储设备](docs/screenshots/storage.png)
 
@@ -113,8 +115,8 @@ Kocpy 支持真实深色与浅色外观，任务、项目、偏好、缩略图�
 
 从 [GitHub Releases](https://github.com/sexyfeifan/Kocpy/releases) 下载对应架构：
 
-- `Kocpy-0.1.9-arm64.dmg`：Apple Silicon Mac
-- `Kocpy-0.1.9-x64.dmg`：Intel Mac
+- `Kocpy-0.1.10-arm64.dmg`：Apple Silicon Mac
+- `Kocpy-0.1.10-x64.dmg`：Intel Mac
 
 打开 DMG，将 Kocpy 拖入“应用程序”。当前公开包尚未使用 Apple Developer ID 签名和公证。若 macOS 明确提示应用“已损坏”，请先确认文件来自本仓库官方 Release，再执行：
 
@@ -132,7 +134,7 @@ Project mode organizes media by project, shooting date, camera, optional A–E c
 
 Kocpy also includes media thumbnails and metadata, H.264/ProRes proxy queues, Resolve CSV export, light/dark appearance, update checks, and architecture-specific DMGs for Apple Silicon and Intel Macs. An in-app guide documents every module with steps, safety notes, and direct links. Media and records stay on the Mac unless the user explicitly selects a report mirror folder.
 
-Version 0.1.9 sizes the first window to the current display's usable work area. Compact-height and narrow-width layouts keep every navigation and settings entry available at the 1080 × 720 minimum, while long pages, tables, and dialogs scroll inside safe containers instead of being clipped.
+Version 0.1.10 turns external-manifest differences into an actionable workflow. Users can inspect every path, reveal it in Finder, restore missing files only from a copy that passes the original manifest, fully reverify the roll, or explicitly accept valid extra files after a complete local hash baseline. The sidebar now follows the production workflow from project setup and receiving through delivery, archive maintenance, diagnostics, and help.
 
 ## 日本語
 
@@ -142,7 +144,7 @@ Kocpy は、macOS 向けのローカル優先メディアバックアップ／�
 
 素材サムネイルとメタデータ、H.264／ProRes プロキシキュー、Resolve CSV、ライト／ダーク表示、更新確認、Apple Silicon／Intel 用 DMG も備えています。アプリ内ガイドでは、各機能の手順、注意事項、画面への直接リンクを確認できます。素材と記録は、ユーザーが明示的にレポート同期先を選ばない限り Mac 内に保持されます。
 
-バージョン 0.1.9 では、現在のディスプレイの使用可能領域に合わせて初期ウインドウサイズを決定します。最小 1080 × 720 でもすべてのナビゲーションと設定入口を表示し、長いページ、表、ダイアログは安全な内部スクロールで確認できます。
+バージョン 0.1.10 では、外部マニフェストとの差異をクリックして全パスを確認できます。不足ファイルは元のマニフェストを通過した同一素材巻の正常コピーからのみ補完し、その後に巻全体を再検証します。有効な追加ファイルは完全なローカルハッシュ基準がある場合だけ明示的に承認できます。サイドバーも制作ワークフロー順に並べ替えました。
 
 ## License
 
