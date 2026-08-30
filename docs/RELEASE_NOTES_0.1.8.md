@@ -24,9 +24,9 @@
 
 ## 下载校验
 
-- `Kocpy-0.1.8-arm64.dmg`：`1473846bfb1b1aef33f315f010470e383448b66baf9ebd685bd36f8b1bad107e`
-- `Kocpy-0.1.8-x64.dmg`：`dc1e831783e02045df5b4455ab6107fd79898fb295d2c1add2fb2709a2bfccb2`
+- `Kocpy-0.1.8-arm64.dmg`：`6abdc1fa2ed30adfd539eea352ba68c9565a0b438a5b2d2f4d0efc17d9dabe07`
+- `Kocpy-0.1.8-x64.dmg`：`6e8c333f4aae7aeec735d49c11bbe282a602b40ede10c6b415bb16f79c8f5e08`
 
-两套本地构建 DMG 均已通过 `hdiutil verify`；包内版本为 0.1.8，主程序架构分别为 arm64 与 x86_64。
+以上 SHA-256 来自 GitHub Release 实际回下载文件。两套远端 DMG 均已通过 `hdiutil verify`；挂载后包内版本为 0.1.8，主程序架构分别为 arm64 与 x86_64。
 
 完整操作步骤与差异状态说明请参阅 [Kocpy 0.1.8 使用手册](https://github.com/sexyfeifan/Kocpy/blob/main/docs/USER_GUIDE.md)。

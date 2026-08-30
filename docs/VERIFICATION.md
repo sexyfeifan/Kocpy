@@ -12,6 +12,7 @@
 - 真实项目验证只读取素材与当前数据库，未写入或修改任何用户数据。
 - TypeScript、78 项自动化测试与生产构建通过，2 项可选环境压力测试跳过；`npm audit --audit-level=high` 为 0 个漏洞。
 - arm64 与 x86_64 DMG 均通过 `hdiutil verify`，包内版本为 0.1.8，主程序架构正确。
+- 从 GitHub Release 回下载两套公开 DMG 后再次通过 `hdiutil verify`；远端 SHA-256 为 arm64 `6abdc1fa2ed30adfd539eea352ba68c9565a0b438a5b2d2f4d0efc17d9dabe07`、x64 `6e8c333f4aae7aeec735d49c11bbe282a602b40ede10c6b415bb16f79c8f5e08`，挂载检查版本与架构均正确。
 
 ## 0.1.7 当前结果
 
