@@ -9,8 +9,9 @@
 - `npm audit --audit-level=high` 为 0 个已知漏洞；Electron 生产构建通过。
 - 新增专项覆盖：复制完成前素材源变化拒绝、文件与空目录元数据保留、损坏 JSON 不覆盖健康备份、SQLite 完整性恢复与文件记录重建、工作站路径越界拒绝、外部清单重复/越界拒绝、重名目的地 MHL 真实路径、安全推出子目录解析、诊断字段进一步脱敏。
 - 双架构 DMG 均通过 `hdiutil verify`；包内版本均为 0.1.14，主程序分别为 arm64 与 x86_64。
-- `Kocpy-0.1.14-arm64.dmg`：SHA-256 `97763f97f5fc497318c01221a448af0254dc6fae4d032f32a57189b984e7152a`。
-- `Kocpy-0.1.14-x64.dmg`：SHA-256 `b1ad3ec524131a90bfa047699a764c13ddc94f40a87aaa23342d26a328e4bede`。
+- 从 GitHub Release 回下载的 `Kocpy-0.1.14-arm64.dmg`：SHA-256 `befb558a445f82a82a0cf85738206e5f2df1676e6d7d283fab540e5262a7ff52`。
+- 从 GitHub Release 回下载的 `Kocpy-0.1.14-x64.dmg`：SHA-256 `a3a915f61391219ab79424d30588c79ad5db51ff6ce5e9a8ea912e0bdedb656c`。
+- 两套公开 DMG 回下载后均再次通过 `hdiutil verify`；挂载检查版本为 0.1.14，主程序架构正确。临时下载目录验证后已移入废纸篓，可恢复。
 - 当前机器没有有效 Developer ID Application 证书，生成的是 ad-hoc/未签名、未公证验收包。GitHub Workflow 已区分无证书构建与配置凭据后的签名、公证构建。
 - 详细修复范围见 [0.1.14 安全与可靠性审计](SAFETY_AUDIT_0.1.14.md)。
 

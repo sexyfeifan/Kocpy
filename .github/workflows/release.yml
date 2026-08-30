@@ -34,11 +34,14 @@ jobs:
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: npm run build && npx electron-builder --mac --${{ matrix.arch }} --publish never
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: Kocpy-${{ matrix.arch }}
           path: release/Kocpy-*.dmg
-      - uses: softprops/action-gh-release@v2
+      - name: Publish GitHub release asset
         if: startsWith(github.ref, 'refs/tags/')
-        with:
-          files: release/Kocpy-*.dmg
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "${GITHUB_REF_NAME}" >/dev/null || gh release create "${GITHUB_REF_NAME}" --title "Kocpy ${GITHUB_REF_NAME#v}" --generate-notes || gh release view "${GITHUB_REF_NAME}" >/dev/null
+          gh release upload "${GITHUB_REF_NAME}" release/Kocpy-*.dmg --clobber
