@@ -38,7 +38,7 @@
 - `npm audit --audit-level=high` 报告 0 个已知漏洞。
 - 两套 DMG 均通过 `hdiutil verify`；挂载后应用版本为 0.1.13，主程序架构分别为 arm64 与 x86_64。
 
-- `Kocpy-0.1.13-arm64.dmg`：`ab6a2ce556f66ba4389376a2c19e63f80c25128446dd39b36cca3e203e1c4c86`
-- `Kocpy-0.1.13-x64.dmg`：`56f3814e7ec4c04673f79935cccafcd12c523f74e78a670ca22e1ae5e1a9d0f4`
+- `Kocpy-0.1.13-arm64.dmg`：`db313e07e086e99c2c8ba31f182807716ec77d19792f399037a25b1ee9b246e0`
+- `Kocpy-0.1.13-x64.dmg`：`36718f1808612be0b6e4705bc8f7b486ddf00c8c80fe9563dd128a0dfc8129e3`
 
 完整操作步骤请参阅 [Kocpy 0.1.13 使用手册](https://github.com/sexyfeifan/Kocpy/blob/main/docs/USER_GUIDE.md)。

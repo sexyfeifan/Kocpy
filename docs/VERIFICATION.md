@@ -10,7 +10,7 @@
 - 纯额外差异可在同一弹窗建立当前完整哈希基线，再经用户确认采用；Kocpy 不会自动删除或移动误放文件。
 - 对真实 `20260828 / POCKET / Pocket4` 只读核对：MHL 所需的 `D(1).LRF` 为 83,918,050 字节，当前 DiskRAID 同名基础文件为 0 字节；健康副本中的有效文件与前一拍摄日副本 SHA-256 一致，确认属于真实混合差异。
 - 自动化测试 89 项通过、2 项可选压力测试跳过；TypeScript 类型检查、生产构建、补丁格式检查通过；`npm audit --audit-level=high` 为 0 个已知漏洞。
-- arm64 与 x86_64 DMG 均通过 `hdiutil verify`；挂载后版本均为 0.1.13，主程序架构正确。SHA-256 分别为 arm64 `ab6a2ce556f66ba4389376a2c19e63f80c25128446dd39b36cca3e203e1c4c86`、x64 `56f3814e7ec4c04673f79935cccafcd12c523f74e78a670ca22e1ae5e1a9d0f4`。
+- 从 GitHub Release 回下载 arm64 与 x86_64 DMG 后均通过 `hdiutil verify`；挂载后版本均为 0.1.13，主程序架构正确。远端 SHA-256 分别为 arm64 `db313e07e086e99c2c8ba31f182807716ec77d19792f399037a25b1ee9b246e0`、x64 `36718f1808612be0b6e4705bc8f7b486ddf00c8c80fe9563dd128a0dfc8129e3`。
 - 此版本无 Developer ID 签名与 Apple 公证。
 
 ## 0.1.12 当前结果
