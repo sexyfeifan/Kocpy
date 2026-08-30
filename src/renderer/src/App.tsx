@@ -672,7 +672,7 @@ export function App() {
           <img src="./icon.png" alt="Kocpy 图标" />
           <div>
             <strong>
-              Kocpy<span>0.1.8</span>
+              Kocpy<span>0.1.9</span>
             </strong>
             <small>素材工作台</small>
           </div>
@@ -729,7 +729,7 @@ export function App() {
                   ? `可升级 ${updateInfo.latest}`
                   : "检查更新"}
               </span>
-              <b>v0.1.8</b>
+              <b>v0.1.9</b>
             </button>
             <div className="sidebar-author-links">
               <span>
@@ -3571,6 +3571,22 @@ function HelpPage({
       ],
     },
     {
+      id: "window-layout",
+      icon: LayoutDashboard,
+      title: "窗口与页面布局",
+      purpose: "根据当前显示器自动选择初始尺寸，在最小窗口下保留全部功能入口。",
+      steps: [
+        "首次打开时，Kocpy 会读取当前显示器的可用工作区域并把窗口完整放入屏幕。",
+        "窗口高度较小时，左侧导航自动使用紧凑间距，所有模块、设置和更新入口仍会保留。",
+        "长页面在主内容区独立滚动；窄窗口中的大型表格可以横向滚动，不会被边界直接裁掉。",
+        "窗口可缩小到 1080 × 720；更小的显示器会以其实际可用工作区域作为安全下限。",
+      ],
+      tips: [
+        "滚动内容页不会带走左侧导航和顶部状态栏。",
+        "新建备份等弹窗会限制在窗口内部，内容过长时由弹窗内部滚动。",
+      ],
+    },
+    {
       id: "transfers",
       icon: ArrowLeftRight,
       title: "传输队列",
@@ -3847,7 +3863,7 @@ function HelpPage({
       <section className="panel help-start">
         <div>
           <span className="mini-label">
-            <BookOpen size={13} /> KOCPY 0.1.8 · QUICK START
+            <BookOpen size={13} /> KOCPY 0.1.9 · QUICK START
           </span>
           <h2>软件使用说明</h2>
           <p>
@@ -3872,9 +3888,9 @@ function HelpPage({
       <section className="help-release-note">
         <RefreshCw size={20} />
         <div>
-          <strong>0.1.8：父级误识别自动清理，真实清单差异明确显示</strong>
+          <strong>0.1.9：默认窗口和最小窗口完整显示全部功能入口</strong>
           <p>
-            在项目详情点击“刷新接管信息”，会保留真实卡卷、移除日期/设备父级汇总，并区分缺少、额外和大小不同；不会重新哈希、复制、移动或删除素材。
+            Kocpy 会按显示器可用区域决定默认尺寸；窗口较小时启用紧凑侧栏和响应式网格，长页面与大型表格使用安全滚动，不再裁掉底部入口或关键操作。
           </p>
         </div>
       </section>
@@ -5495,7 +5511,7 @@ function SettingsPage({
         <img src="./icon.png" alt="Kocpy 图标" />
         <div>
           <h3>
-            Kocpy <span>0.1.8</span>
+            Kocpy <span>0.1.9</span>
           </h3>
           <p>从现场接卡、项目归档到交付报告，为每一份创作保留可靠副本。</p>
           <small>本地优先 · 独立校验 · 项目全周期记录 · @sexyfeifan</small>

@@ -8,7 +8,7 @@
 
 ![Kocpy 工作台](docs/screenshots/dashboard.png)
 
-当前版本：**0.1.8** · [完整使用手册](docs/USER_GUIDE.md) · [0.1.8 更新说明](docs/RELEASE_NOTES_0.1.8.md) · [下载最新版](https://github.com/sexyfeifan/Kocpy/releases/latest)
+当前版本：**0.1.9** · [完整使用手册](docs/USER_GUIDE.md) · [0.1.9 更新说明](docs/RELEASE_NOTES_0.1.9.md) · [下载最新版](https://github.com/sexyfeifan/Kocpy/releases/latest)
 
 ## 中文
 
@@ -103,7 +103,7 @@ Kocpy 将素材卡接收、多目标备份、逐目标回读校验、项目归�
 
 ### 外观、隐私与更新
 
-Kocpy 支持真实深色与浅色外观，任务、项目、偏好、缩略图和代理记录保存在 `~/Library/Application Support/Kocpy/`。软件无需账号，不上传素材。左下角可检查 GitHub Release 更新，并提供作者 [@sexyfeifan](https://github.com/sexyfeifan) 的 GitHub 与[小红书](https://www.xiaohongshu.com/user/profile/5d24d2ca000000001103fe97)入口。
+Kocpy 支持真实深色与浅色外观，任务、项目、偏好、缩略图和代理记录保存在 `~/Library/Application Support/Kocpy/`。软件无需账号，不上传素材。0.1.9 会根据当前显示器可用区域选择默认窗口尺寸；在 1080 × 720 最小窗口中，全部侧栏入口仍然可见，内容页、表格和弹窗使用各自的安全滚动区域。左下角可检查 GitHub Release 更新，并提供作者 [@sexyfeifan](https://github.com/sexyfeifan) 的 GitHub 与[小红书](https://www.xiaohongshu.com/user/profile/5d24d2ca000000001103fe97)入口。
 
 ![存储设备](docs/screenshots/storage.png)
 
@@ -113,8 +113,8 @@ Kocpy 支持真实深色与浅色外观，任务、项目、偏好、缩略图�
 
 从 [GitHub Releases](https://github.com/sexyfeifan/Kocpy/releases) 下载对应架构：
 
-- `Kocpy-0.1.8-arm64.dmg`：Apple Silicon Mac
-- `Kocpy-0.1.8-x64.dmg`：Intel Mac
+- `Kocpy-0.1.9-arm64.dmg`：Apple Silicon Mac
+- `Kocpy-0.1.9-x64.dmg`：Intel Mac
 
 打开 DMG，将 Kocpy 拖入“应用程序”。当前公开包尚未使用 Apple Developer ID 签名和公证。若 macOS 明确提示应用“已损坏”，请先确认文件来自本仓库官方 Release，再执行：
 
@@ -132,7 +132,7 @@ Project mode organizes media by project, shooting date, camera, optional A–E c
 
 Kocpy also includes media thumbnails and metadata, H.264/ProRes proxy queues, Resolve CSV export, light/dark appearance, update checks, and architecture-specific DMGs for Apple Silicon and Intel Macs. An in-app guide documents every module with steps, safety notes, and direct links. Media and records stay on the Mac unless the user explicitly selects a report mirror folder.
 
-Version 0.1.8 removes legacy date/device parent aggregates that duplicated their descendant card rolls. It reads card-root MHL/SHA metadata, supports Kocard decimal xxHash32 manifests, and reports missing, extra, and size-changed files separately. Refresh remains metadata-only and never rehashes, copies, moves, or deletes media.
+Version 0.1.9 sizes the first window to the current display's usable work area. Compact-height and narrow-width layouts keep every navigation and settings entry available at the 1080 × 720 minimum, while long pages, tables, and dialogs scroll inside safe containers instead of being clipped.
 
 ## 日本語
 
@@ -142,7 +142,7 @@ Kocpy は、macOS 向けのローカル優先メディアバックアップ／�
 
 素材サムネイルとメタデータ、H.264／ProRes プロキシキュー、Resolve CSV、ライト／ダーク表示、更新確認、Apple Silicon／Intel 用 DMG も備えています。アプリ内ガイドでは、各機能の手順、注意事項、画面への直接リンクを確認できます。素材と記録は、ユーザーが明示的にレポート同期先を選ばない限り Mac 内に保持されます。
 
-バージョン 0.1.8 では、旧版が誤って素材巻として保存した日付／機器の親集計を削除し、実際のカード巻だけを残します。カード直下の MHL/SHA メタデータと Kocard の十進数 xxHash32 に対応し、不足・追加・サイズ変更を個別に表示します。更新時に素材の再ハッシュ、コピー、移動、削除は行いません。
+バージョン 0.1.9 では、現在のディスプレイの使用可能領域に合わせて初期ウインドウサイズを決定します。最小 1080 × 720 でもすべてのナビゲーションと設定入口を表示し、長いページ、表、ダイアログは安全な内部スクロールで確認できます。
 
 ## License
 

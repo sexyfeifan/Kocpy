@@ -9,6 +9,7 @@ import {
   powerMonitor,
   Notification,
   nativeTheme,
+  screen,
 } from "electron";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
@@ -28,6 +29,7 @@ import {
 import { Storage, defaultSettings } from "./storage";
 import { listVolumes, driveInfo, ejectVolume, volumeIdentity } from "./system";
 import { makeProxy } from "./proxy";
+import { mainWindowLayout } from "./window-layout";
 import { inspectMedia, isThumbnailMedia, pruneMediaCache } from "./media";
 import {
   generateReport,
@@ -466,11 +468,10 @@ async function processProxyQueue() {
   }
 }
 function createWindow() {
+  const layout = mainWindowLayout(screen.getPrimaryDisplay().workAreaSize);
   main = new BrowserWindow({
-    width: 1400,
-    height: 900,
-    minWidth: 1080,
-    minHeight: 720,
+    ...layout,
+    center: true,
     title: "Kocpy",
     titleBarStyle: "hiddenInset",
     trafficLightPosition: { x: 22, y: 23 },

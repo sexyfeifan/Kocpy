@@ -1,4 +1,4 @@
-# Kocpy 0.1.8 architecture
+# Kocpy 0.1.9 architecture
 
 ## Transfer pipeline
 
@@ -22,6 +22,10 @@ The UI reports two rates. `aggregateSpeedBps` is physical bytes written across a
 ## Compatibility
 
 Kocpy ships separate native FFmpeg binaries for Apple Silicon and Intel. All tasks, projects, preferences, thumbnails, and proxy records remain in the Kocpy local data directory.
+
+## Window layout
+
+The main process derives initial and minimum bounds from Electron's primary-display work area. The renderer uses compact-height breakpoints for the persistent sidebar and narrow-width breakpoints for grids, tables, and dialogs. Navigation, page content, horizontal data tables, and modal bodies have separate overflow boundaries so reducing the window cannot permanently clip a feature entry or action.
 
 ## Existing-backup reconciliation
 

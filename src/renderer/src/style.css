@@ -243,11 +243,14 @@ small {
 .sidebar {
   width: 216px;
   flex-shrink: 0;
+  min-height: 0;
   background: var(--side);
   border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
   padding: 0 16px;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 .window-drag {
   height: 62px;
@@ -1562,6 +1565,7 @@ small {
   flex-direction: column;
   overflow: hidden;
   outline: 0;
+  max-width: 100%;
 }
 .composer-modal {
   width: 1000px;
@@ -2612,6 +2616,9 @@ small {
   .date-stamp {
     font-size: 9px;
   }
+  .project-task-breakdown {
+    --task-columns: minmax(120px, 1.1fr) minmax(145px, 1.25fr) minmax(105px, .8fr) minmax(180px, 1fr);
+  }
   .library-head,
   .library-row {
     grid-template-columns: minmax(150px, 1fr) 80px 90px 130px;
@@ -2636,6 +2643,69 @@ small {
   .flow-diagram {
     height: 191px;
   }
+}
+@media (max-width: 980px) {
+  .sidebar {
+    width: 176px;
+    padding-inline: 11px;
+  }
+  .topbar,
+  .page-content {
+    padding-left: 18px;
+    padding-right: 18px;
+  }
+  .page-heading,
+  .help-start {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+  .stats-grid,
+  .project-total-cards,
+  .completion-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .projects-grid,
+  .volumes-grid,
+  .overview-bottom {
+    grid-template-columns: 1fr;
+  }
+  .project-matrix,
+  .project-task-breakdown {
+    overflow-x: auto;
+  }
+  .project-matrix-head,
+  .project-matrix-row {
+    min-width: 760px;
+  }
+  .project-task-breakdown-head,
+  .project-task-breakdown-row,
+  .project-task-breakdown-title {
+    min-width: 650px;
+  }
+}
+@media (max-height: 1000px) {
+  .window-drag { height: 38px; }
+  .brand { padding: 2px 7px 12px; }
+  .brand img { width: 34px; height: 34px; border-radius: 9px; }
+  .brand strong { font-size: 20px; }
+  .brand small { font-size: 9px; }
+  .new-button { padding: 8px 10px; }
+  .nav-label { padding: 14px 10px 6px; }
+  .nav-item { gap: 9px; padding: 7px 9px; margin-bottom: 1px; font-size: 11px; }
+  .nav-item svg { width: 16px; height: 16px; }
+  .local-card { margin: 8px 0; padding: 8px; }
+  .local-card small { margin-top: 2px; line-height: 1.25; }
+  .sidebar-foot { gap: 4px; padding: 5px 0 8px; margin-top: 4px; }
+  .sidebar-update { padding: 5px 7px; }
+  .sidebar-author-links button { width: 24px; height: 24px; }
+}
+@media (max-height: 720px) {
+  .window-drag { height: 30px; }
+  .brand { padding-bottom: 8px; }
+  .nav-label { padding-top: 9px; }
+  .nav-item { padding-block: 6px; }
+  .local-card { margin-block: 5px; padding-block: 6px; }
+  .sidebar-foot { padding-bottom: 5px; }
 }
 @media (prefers-reduced-motion: reduce) {
   *,
