@@ -12,6 +12,9 @@
 - 双架构 DMG 均通过 `hdiutil verify`；挂载检查版本为 0.1.16，主程序分别为 arm64 与 x86_64。
 - 本地 `Kocpy-0.1.16-arm64.dmg`：SHA-256 `897b777505255db9208be3866a7947dadb752651d593dc0192caa7e3c2519c77`。
 - 本地 `Kocpy-0.1.16-x64.dmg`：SHA-256 `cffeb72d9b9368c59a7ba51aa547a08490b2120e06e469f7908915645112b3dd`。
+- GitHub Release 回下载的 `Kocpy-0.1.16-arm64.dmg`：SHA-256 `686addf0cde730ff7fb956009580f5f2aeed035b72ae67d419fab47b9764b75b`。
+- GitHub Release 回下载的 `Kocpy-0.1.16-x64.dmg`：SHA-256 `2dc9b65980fafa84ba7bfdc6c6ae3f5185da9e283d525a3243e354385fb4603b`。
+- 两套公开 DMG 回下载后均再次通过 `hdiutil verify`；挂载检查版本为 0.1.16，主程序架构正确。
 - 当前机器没有有效 Developer ID Application 证书，生成的是未签名、未公证验收包。
 
 ## 0.1.15 当前结果
