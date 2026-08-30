@@ -198,8 +198,16 @@ describe("0.1.0 production lifecycle", () => {
     expect(coverage.compliant).toBe(0);
     expect(coverage.coveragePercent).toBe(25);
   });
-  it("ships five production templates", () =>
-    expect(builtInProductionTemplates()).toHaveLength(5));
+  it("ships five explained production templates with distinct workflows", () => {
+    const templates = builtInProductionTemplates();
+    expect(templates).toHaveLength(5);
+    expect(templates.every((template) => template.kind === "builtin")).toBe(true);
+    expect(templates.every((template) => Boolean(template.description?.trim()))).toBe(true);
+    expect(templates.every((template) => (template.checklists?.length ?? 0) > 0)).toBe(true);
+    expect(templates.every((template) => Object.keys(template.volumePrefixByDevice ?? {}).length > 0)).toBe(true);
+    expect(new Set(templates.map((template) => template.requiredCopies)).size).toBeGreaterThan(1);
+    expect(new Set(templates.map((template) => template.completionActions.join(","))).size).toBeGreaterThan(1);
+  });
   it("imports Kocpy legacy MHL files that use file elements", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "kocpy-mhl-import-"));
     try {

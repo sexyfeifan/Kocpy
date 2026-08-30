@@ -430,13 +430,35 @@ export interface ArchiveHealthRecord {
 export interface ProjectTemplate {
   id: string;
   name: string;
+  description?: string;
+  kind?: "builtin" | "custom";
+  hidden?: boolean;
+  productionType?: ProjectConfig["productionType"];
   devices: string[];
   volumePrefix: string;
+  volumePrefixByDevice?: Record<string, string>;
+  devicePositions?: Record<string, string[]>;
   requiredCopies: number;
   namingRule: string;
   completionActions: Array<"report" | "delivery" | "proxy" | "eject">;
+  expectedVolumes?: number;
+  checklists?: ProjectConfig["checklists"];
+  crew?: ProjectConfig["crew"];
   createdAt: number;
   updatedAt: number;
+}
+export interface ProjectDeletionPreview {
+  projectId: string;
+  projectName: string;
+  status: "active" | "archived";
+  taskCount: number;
+  proxyJobCount: number;
+  healthRecordCount: number;
+  archiveChangeCount: number;
+  reminderCount: number;
+  blockingTasks: number;
+  blockingProxyJobs: number;
+  canDelete: boolean;
 }
 export interface WorkspaceMergeResult {
   projectsAdded: number;

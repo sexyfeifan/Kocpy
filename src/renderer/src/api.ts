@@ -176,10 +176,31 @@ export interface API {
     projectId: string,
     name?: string,
   ): Promise<ProjectTemplate[]>;
+  saveProjectTemplate(template: ProjectTemplate): Promise<ProjectTemplate[]>;
   deleteProjectTemplate(id: string): Promise<ProjectTemplate[]>;
+  hideProjectTemplate(
+    id: string,
+    hidden: boolean,
+  ): Promise<ProjectTemplate[]>;
+  exportProjectTemplates(): Promise<string | null>;
+  importProjectTemplates(): Promise<ProjectTemplate[]>;
+  previewProjectTemplate(
+    templateId: string,
+    projectId: string,
+  ): Promise<{
+    templateId: string;
+    projectId: string;
+    changes: Array<{
+      field: string;
+      label: string;
+      before: string;
+      after: string;
+    }>;
+  }>;
   applyProjectTemplate(
     templateId: string,
     projectId: string,
+    selectedFields?: string[],
   ): Promise<ProjectConfig[]>;
   previewExistingBackup(
     root: string,
@@ -296,7 +317,20 @@ export interface API {
   getSettings(): Promise<Settings>;
   saveSettings(settings: Settings): Promise<void>;
   getProjects(): Promise<ProjectConfig[]>;
-  deleteProject(id: string): Promise<{
+  previewProjectDeletion(id: string): Promise<{
+    projectId: string;
+    projectName: string;
+    status: "active" | "archived";
+    taskCount: number;
+    proxyJobCount: number;
+    healthRecordCount: number;
+    archiveChangeCount: number;
+    reminderCount: number;
+    blockingTasks: number;
+    blockingProxyJobs: number;
+    canDelete: boolean;
+  }>;
+  deleteProject(id: string, confirmationName: string): Promise<{
     projects: ProjectConfig[];
     deletedTasks: number;
     deletedProxyJobs: number;

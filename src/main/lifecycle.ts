@@ -237,15 +237,73 @@ export function templateFromProject(
   return {
     id: `template-${project.id}`,
     name,
+    description: `从项目“${project.name}”保存的自定义模板`,
+    kind: "custom",
+    productionType: project.productionType || "custom",
     devices: [...project.devices],
     volumePrefix: project.volumePrefix,
+    volumePrefixByDevice: { ...(project.volumePrefixByDevice || {}) },
+    devicePositions: Object.fromEntries(
+      Object.entries(project.devicePositions || {}).map(([device, values]) => [
+        device,
+        [...values],
+      ]),
+    ),
     requiredCopies: project.requiredCopies || 2,
     namingRule:
       project.namingRule ||
       "{date}_{project}/{shootingDate}/{device}/{position}/{card}",
     completionActions: [...(project.completionActions || ["report"])],
+    expectedVolumes: project.expectedVolumes,
+    checklists: project.checklists?.map((item) => ({ ...item })),
+    crew: project.crew?.map((item) => ({ ...item })),
     createdAt: now,
     updatedAt: now,
+  };
+}
+
+export function normalizeProjectTemplate(
+  template: ProjectTemplate,
+): ProjectTemplate {
+  const devices = [
+    ...new Set(
+      (template.devices || [])
+        .filter((device): device is string => typeof device === "string")
+        .map((device) => device.trim())
+        .filter(Boolean),
+    ),
+  ].slice(0, 10);
+  if (!devices.length) devices.push("A Cam");
+  return {
+    ...template,
+    name: template.name?.trim() || "未命名模板",
+    description: template.description || "自定义项目制作流程",
+    kind: template.id.startsWith("builtin-") ? "builtin" : "custom",
+    productionType: template.productionType || "custom",
+    devices,
+    volumePrefix: template.volumePrefix || `${devices[0]}_`,
+    volumePrefixByDevice: Object.fromEntries(
+      devices.map((device) => [
+        device,
+        template.volumePrefixByDevice?.[device] ||
+          (devices.length === 1 ? template.volumePrefix : `${device}_`),
+      ]),
+    ),
+    devicePositions: Object.fromEntries(
+      Object.entries(template.devicePositions || {}).map(([device, values]) => [
+        device,
+        [...values],
+      ]),
+    ),
+    requiredCopies: Math.max(1, Math.min(4, template.requiredCopies || 2)),
+    namingRule:
+      template.namingRule ||
+      "{date}_{project}/{shootingDate}/{device}/{position}/{card}",
+    completionActions: [...(template.completionActions || ["report"])],
+    checklists: template.checklists?.map((item) => ({ ...item })),
+    crew: template.crew?.map((item) => ({ ...item })),
+    createdAt: template.createdAt || Date.now(),
+    updatedAt: template.updatedAt || Date.now(),
   };
 }
 

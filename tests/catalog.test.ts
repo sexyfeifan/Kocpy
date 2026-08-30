@@ -15,7 +15,7 @@ const fixture = () => {
   };
 };
 
-describe("0.1.15 indexed catalog", () => {
+describe("0.1.16 indexed catalog", () => {
   it("stores task headers separately and reconstructs all file records", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "kocpy-catalog-"));
     try {
@@ -46,7 +46,7 @@ describe("0.1.15 indexed catalog", () => {
     }
   });
 
-  it("deletes an archived project's indexed tasks and files as one record operation", async () => {
+  it("deletes a project's indexed tasks and files as one record operation", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "kocpy-catalog-delete-"));
     try {
       const db = new CatalogDatabase(root), { task, project } = fixture(),

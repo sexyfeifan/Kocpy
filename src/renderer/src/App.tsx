@@ -92,6 +92,11 @@ import {
 import { Composer } from "./Composer";
 import { ProjectEditor } from "./ProjectEditor";
 import {
+  TemplateApplyDialog,
+  TemplateEditor,
+  projectTemplateDraft,
+} from "./TemplateEditor";
+import {
   projectCellStatus,
   projectCloseoutSummary,
   projectDeviceCells,
@@ -334,7 +339,12 @@ export function App() {
       run: () => Promise<unknown>;
       actionLabel?: string;
       danger?: boolean;
+      requiredText?: string;
+      acknowledgement?: string;
     } | null>(null),
+    [confirmInput, setConfirmInput] = useState(""),
+    [confirmAcknowledged, setConfirmAcknowledged] = useState(false),
+    [projectMenuId, setProjectMenuId] = useState<string | null>(null),
     [proxy, setProxy] = useState<{
       path: string;
       name: string;
@@ -346,6 +356,15 @@ export function App() {
   const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
     undefined,
   );
+  useEffect(() => {
+    setConfirmInput("");
+    setConfirmAcknowledged(false);
+  }, [confirm]);
+  useEffect(() => {
+    const closeProjectMenu = () => setProjectMenuId(null);
+    window.addEventListener("click", closeProjectMenu);
+    return () => window.removeEventListener("click", closeProjectMenu);
+  }, []);
   const notify = useCallback((message: string, error = false) => {
     setToast({ message, error });
     clearTimeout(toastTimer.current);
@@ -761,6 +780,38 @@ export function App() {
     }
     setProjects(await api.saveProject(next, false));
   };
+  const requestProjectDeletion = async (project: ProjectConfig) => {
+    setProjectMenuId(null);
+    try {
+      const preview = await api.previewProjectDeletion(project.id);
+      if (!preview.canDelete) {
+        notify(
+          `项目仍有 ${preview.blockingTasks} 个未结束备份任务和 ${preview.blockingProxyJobs} 个未结束代理任务，请先完成或取消这些任务`,
+          true,
+        );
+        return;
+      }
+      setConfirm({
+        text: `将永久删除「${project.name}」在 Kocpy 内的项目配置、${preview.taskCount} 个任务、${preview.proxyJobCount} 个代理记录、${preview.healthRecordCount} 条健康记录、${preview.archiveChangeCount} 条归档变化和 ${preview.reminderCount} 条提醒。不会删除素材文件、备份目录、报告、MHL 或已导出的归档包。`,
+        actionLabel: "删除项目记录",
+        danger: true,
+        requiredText: project.name,
+        acknowledgement:
+          "我理解此操作只删除 Kocpy 内部记录，且删除后无法在软件内撤销。",
+        run: async () => {
+          const result = await api.deleteProject(project.id, project.name);
+          setProjects(result.projects);
+          setTasks(await api.getTasks());
+          if (projectDetailId === project.id) setProjectDetailId(null);
+          notify(
+            `项目记录已删除：移除 ${result.deletedTasks} 个关联任务；磁盘素材未改动`,
+          );
+        },
+      });
+    } catch (error) {
+      notify(String(error).replace(/^Error: /, ""), true);
+    }
+  };
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -769,7 +820,7 @@ export function App() {
           <img src="./icon.png" alt="Kocpy 图标" />
           <div>
             <strong>
-              Kocpy<span>0.1.15</span>
+              Kocpy<span>0.1.16</span>
             </strong>
             <small>素材工作台</small>
           </div>
@@ -826,7 +877,7 @@ export function App() {
                   ? `可升级 ${updateInfo.latest}`
                   : "检查更新"}
               </span>
-              <b>v0.1.15</b>
+              <b>v0.1.16</b>
             </button>
             <div className="sidebar-author-links">
               <span>
@@ -1499,7 +1550,7 @@ export function App() {
                             <span className="project-icon">
                               <FolderKanban size={24} />
                             </span>
-                            <div className="row">
+                            <div className="row project-card-tools">
                               <Button
                                 kind="icon"
                                 title="检查项目目录结构"
@@ -1526,13 +1577,72 @@ export function App() {
                               >
                                 <ShieldCheck size={16} />
                               </Button>
-                              <Button
-                                kind="icon"
-                                title="编辑项目"
-                                onClick={() => setEditor(p)}
+                              <div
+                                className="project-action-wrap"
+                                onClick={(event) => event.stopPropagation()}
                               >
-                                <SlidersHorizontal size={16} />
-                              </Button>
+                                <Button
+                                  kind="icon"
+                                  title="更多项目操作"
+                                  onClick={() =>
+                                    setProjectMenuId((current) =>
+                                      current === p.id ? null : p.id,
+                                    )
+                                  }
+                                >
+                                  <MoreHorizontal size={17} />
+                                </Button>
+                                {projectMenuId === p.id && (
+                                  <div className="project-action-menu">
+                                    <button
+                                      onClick={() => {
+                                        setProjectMenuId(null);
+                                        setEditor(p);
+                                      }}
+                                    >
+                                      <SlidersHorizontal size={14} />
+                                      编辑项目
+                                    </button>
+                                    <button
+                                      onClick={() => {
+                                        setProjectMenuId(null);
+                                        void act(
+                                          async () =>
+                                            setProjects(
+                                              await api.saveProject(
+                                                {
+                                                  ...p,
+                                                  status:
+                                                    p.status === "archived"
+                                                      ? "active"
+                                                      : "archived",
+                                                },
+                                                false,
+                                              ),
+                                            ),
+                                          p.status === "archived"
+                                            ? "项目已恢复到进行中"
+                                            : "项目已归档",
+                                        );
+                                      }}
+                                    >
+                                      <Archive size={14} />
+                                      {p.status === "archived"
+                                        ? "恢复为进行中"
+                                        : "归档项目"}
+                                    </button>
+                                    <button
+                                      className="danger"
+                                      onClick={() =>
+                                        void requestProjectDeletion(p)
+                                      }
+                                    >
+                                      <Trash2 size={14} />
+                                      删除项目记录
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
                             </div>
                           </div>
                           <h2>{p.name}</h2>
@@ -1672,59 +1782,6 @@ export function App() {
                                 <ArrowRight size={14} />
                               </Button>
                             </div>
-                            <Button
-                              kind="icon"
-                              title={
-                                p.status === "archived"
-                                  ? "恢复项目"
-                                  : "归档项目"
-                              }
-                              onClick={() =>
-                                void act(
-                                  async () =>
-                                    setProjects(
-                                      await api.saveProject(
-                                        {
-                                          ...p,
-                                          status:
-                                            p.status === "archived"
-                                              ? "active"
-                                              : "archived",
-                                        },
-                                        false,
-                                      ),
-                                    ),
-                                  "项目状态已更新",
-                                )
-                              }
-                            >
-                              <Archive size={16} />
-                            </Button>
-                            {p.status === "archived" && (
-                              <Button
-                                kind="icon danger"
-                                title="删除项目记录"
-                                onClick={() =>
-                                  setConfirm({
-                                    text: `删除「${p.name}」的 Kocpy 项目配置、关联任务记录、代理队列记录和归档维护历史？此操作无法撤销，但不会删除任何素材文件、备份目录、报告或 MHL。删除后可重新创建项目并完整测试。`,
-                                    actionLabel: "删除项目记录",
-                                    danger: true,
-                                    run: async () => {
-                                      const result = await api.deleteProject(p.id);
-                                      setProjects(result.projects);
-                                      setTasks(await api.getTasks());
-                                      if (projectDetailId === p.id)
-                                        setProjectDetailId(null);
-                                      notify(
-                                        `项目记录已删除：移除 ${result.deletedTasks} 个关联任务；磁盘素材未改动`,
-                                      );
-                                    },
-                                  })
-                                }
-                              >
-                                <Trash2 size={16} />
-                              </Button>
-                            )}
                           </div>
                         </section>
                       ))}
@@ -2925,10 +2982,40 @@ export function App() {
             <AlertTriangle size={27} />
             <h2>请确认此操作</h2>
             <p>{confirm.text}</p>
+            {confirm.acknowledgement && (
+              <label className="confirm-acknowledgement">
+                <input
+                  type="checkbox"
+                  checked={confirmAcknowledged}
+                  onChange={(event) =>
+                    setConfirmAcknowledged(event.target.checked)
+                  }
+                />
+                <span>{confirm.acknowledgement}</span>
+              </label>
+            )}
+            {confirm.requiredText && (
+              <label className="confirm-required-text">
+                输入项目名称“{confirm.requiredText}”继续
+                <input
+                  autoFocus
+                  value={confirmInput}
+                  onChange={(event) => setConfirmInput(event.target.value)}
+                  placeholder={confirm.requiredText}
+                />
+              </label>
+            )}
             <div className="row">
               <Button onClick={() => setConfirm(null)}>取消</Button>
               <Button
                 kind={confirm.danger ? "danger" : "primary"}
+                disabled={
+                  Boolean(
+                    (confirm.requiredText &&
+                      confirmInput !== confirm.requiredText) ||
+                      (confirm.acknowledgement && !confirmAcknowledged),
+                  )
+                }
                 onClick={() => {
                   const action = confirm.run;
                   setConfirm(null);
@@ -4253,7 +4340,7 @@ function HelpPage({
       purpose: "根据当前显示器自动选择初始尺寸，在最小窗口下保留全部功能入口。",
       steps: [
         "首次打开时，Kocpy 会读取当前显示器的可用工作区域并把窗口完整放入屏幕。",
-        "窗口高度较小时，左侧导航自动使用紧凑间距，所有模块、设置和更新入口仍会保留。",
+        "窗口高度较小时，侧栏文字、图标、品牌和按钮保持正常比例；滚动中间导航区域即可访问全部模块。",
         "长页面在主内容区独立滚动；窄窗口中的大型表格可以横向滚动，不会被边界直接裁掉。",
         "窗口可缩小到 1080 × 720；更小的显示器会以其实际可用工作区域作为安全下限。",
       ],
@@ -4309,13 +4396,15 @@ function HelpPage({
         "设置收工需要的独立副本数量。",
         "每天查看日期 × 设备矩阵；只有确认当天没有拍摄时，才标记休息日或未使用设备。",
         "项目结束后导出 PDF、JSON、CSV 或完整归档包。",
-        "需要重新做一次全流程测试时，先归档项目，再点击项目卡片右下角的删除按钮并阅读高风险确认。",
+        "需要重新做一次全流程测试时，在进行中或已归档项目卡片右上角打开更多菜单，选择删除项目记录。",
+        "核对关联记录数量、勾选风险确认并输入完整项目名称；未结束任务会阻止删除。",
       ],
       tips: [
         "同一磁盘的多个文件夹只计算一份安全副本。",
         "“当天未发现素材 · 待确认”不等于漏备份，也不等于当天未使用。",
-        "项目模板可复用设备和收工标准。",
-        "删除已归档项目只清理 Kocpy 内部的项目配置、任务索引、代理记录和归档维护历史；不会删除素材、备份目录、报告、MHL 或已导出的冷归档文件。",
+        "项目模板可自定义名称、说明、设备、机位、素材卷前缀、副本标准、命名规则、检查表、制作人员和完成动作；应用前可逐项预览并选择覆盖范围。",
+        "进行中和已归档项目都能从卡片右上角菜单删除内部记录。删除前必须勾选风险确认并准确输入项目名称；活动备份或代理任务会阻止删除。",
+        "删除项目只清理 Kocpy 内部的项目配置、任务索引、代理记录和归档维护历史；不会删除素材、备份目录、报告、MHL 或已导出的冷归档文件。",
       ],
       page: "projects",
     },
@@ -4409,12 +4498,16 @@ function HelpPage({
         "对归档根目录扫描未登记新增文件，并查看读取吞吐与风险等级。",
         "发现失败副本后，从另一健康副本修复。",
         "修复前原损坏文件会改名保留。",
+        "在项目模板区查看五个系统模板的适用说明；需要修改时先复制为自定义模板，或直接新建模板。",
+        "应用模板前逐项比较当前配置和模板配置，只勾选需要覆盖的部分；项目名称、日期和目的地不会被模板修改。",
+        "自定义模板可导入导出；系统模板可隐藏并恢复。",
         "导出本地数据备份或工作站包。",
         "合并其他工作站记录后检查重复项和冲突。",
       ],
       tips: [
         "修复必须至少存在一份哈希匹配的健康副本。",
         "导入前建议先导出本地数据备份。",
+        "模板要求的副本数超过项目目的地数量时不会应用，应先补齐目的地或取消该项。",
       ],
       page: "maintenance",
     },
@@ -4571,7 +4664,7 @@ function HelpPage({
       <section className="panel help-start">
         <div>
           <span className="mini-label">
-            <BookOpen size={13} /> KOCPY 0.1.15 · QUICK START
+            <BookOpen size={13} /> KOCPY 0.1.16 · QUICK START
           </span>
           <h2>软件使用说明</h2>
           <p>
@@ -4596,9 +4689,9 @@ function HelpPage({
       <section className="help-release-note">
         <RefreshCw size={20} />
         <div>
-          <strong>0.1.15：任务识别、路径追踪与项目重置</strong>
+          <strong>0.1.16：项目清理、自定义模板与稳定侧栏</strong>
           <p>
-            传输任务按素材类型显示图标，并完整列出可在 Finder 定位的源路径与每个目的地路径；已归档项目可在重要确认后仅删除 Kocpy 内部记录，便于重新执行全流程测试，磁盘素材保持不变。
+            进行中和已归档项目均可在重要确认后清理 Kocpy 内部记录；项目模板可新建、重命名、编辑、导入导出并选择性应用；缩小窗口时侧栏保持原有文字与图标比例，由导航区域独立滚动。
           </p>
         </div>
       </section>
@@ -4661,7 +4754,21 @@ function MaintenancePage({
     ),
     [templates, setTemplates] = useState<import("./api").ProjectTemplate[]>([]),
     [busy, setBusy] = useState<string | null>(null),
-    [handoff, setHandoff] = useState("");
+    [handoff, setHandoff] = useState(""),
+    [templateEditor, setTemplateEditor] = useState<
+      Partial<import("./api").ProjectTemplate> | null
+    >(null),
+    [templateApply, setTemplateApply] = useState<{
+      template: import("./api").ProjectTemplate;
+      projectId: string;
+      projectName: string;
+      changes: Array<{
+        field: string;
+        label: string;
+        before: string;
+        after: string;
+      }>;
+    } | null>(null);
   const reload = useCallback(async () => {
     const [records, values] = await Promise.all([
       api.getArchiveHealth(),
@@ -4692,6 +4799,10 @@ function MaintenancePage({
   };
   const lastHealth = (projectId: string) =>
     [...health].reverse().find((record) => record.projectId === projectId);
+  const visibleTemplates = templates.filter((template) => !template.hidden),
+    hiddenSystemTemplates = templates.filter(
+      (template) => template.hidden && template.id.startsWith("builtin-"),
+    );
   return (
     <div className="maintenance-center">
       <section className="panel diagnostics-hero">
@@ -4830,11 +4941,7 @@ function MaintenancePage({
                     kind="subtle"
                     disabled={busy !== null}
                     onClick={() =>
-                      void run(
-                        `template-${project.id}`,
-                        () => api.createTemplateFromProject(project.id),
-                        "项目模板已保存",
-                      )
+                      setTemplateEditor(projectTemplateDraft(project))
                     }
                   >
                     <Copy size={14} />
@@ -4891,65 +4998,199 @@ function MaintenancePage({
               模板保存设备、副本标准、命名规则与完成动作；交接记录随工作站包合并
             </span>
           </div>
-          <span className="muted small">{templates.length} 个模板</span>
+          <div className="row template-toolbar">
+            <span className="muted small">
+              {visibleTemplates.length} 个可用模板
+            </span>
+            {hiddenSystemTemplates.length > 0 && (
+              <Button
+                kind="subtle"
+                disabled={busy !== null}
+                onClick={() =>
+                  void run(
+                    "restore-templates",
+                    async () => {
+                      for (const template of hiddenSystemTemplates)
+                        await api.hideProjectTemplate(template.id, false);
+                    },
+                    "系统模板已恢复",
+                  )
+                }
+              >
+                恢复系统模板
+              </Button>
+            )}
+            <Button
+              kind="subtle"
+              disabled={busy !== null}
+              onClick={() =>
+                void run(
+                  "import-templates",
+                  () => api.importProjectTemplates(),
+                  "项目模板已导入",
+                )
+              }
+            >
+              <Upload size={14} />
+              导入
+            </Button>
+            <Button
+              kind="subtle"
+              disabled={busy !== null}
+              onClick={() =>
+                void run(
+                  "export-templates",
+                  async () => {
+                    const file = await api.exportProjectTemplates();
+                    if (file) await api.reveal(file);
+                  },
+                  "自定义模板已导出",
+                )
+              }
+            >
+              <Download size={14} />
+              导出
+            </Button>
+            <Button
+              kind="primary"
+              disabled={busy !== null}
+              onClick={() => setTemplateEditor({})}
+            >
+              <Plus size={14} />
+              新建模板
+            </Button>
+          </div>
         </div>
-        {templates.length ? (
+        {visibleTemplates.length ? (
           <div className="template-list">
-            {templates.map((template) => (
-              <div key={template.id}>
-                <span>
-                  <strong>{template.name}</strong>
-                  <small>
-                    {template.devices.join(" / ")} · {template.requiredCopies}{" "}
-                    份副本 · {template.namingRule}
-                  </small>
-                </span>
-                <div className="row">
-                  <select
-                    id={`template-project-${template.id}`}
-                    aria-label="应用模板到项目"
-                  >
-                    {projects.map((project) => (
-                      <option key={project.id} value={project.id}>
-                        {project.name}
-                      </option>
-                    ))}
-                  </select>
-                  <Button
-                    kind="subtle"
-                    disabled={!projects.length}
-                    onClick={() => {
-                      const select = document.getElementById(
-                        `template-project-${template.id}`,
-                      ) as HTMLSelectElement;
-                      void run(
-                        `apply-${template.id}`,
-                        () =>
-                          api.applyProjectTemplate(template.id, select.value),
-                        "模板已应用到项目",
-                      );
-                    }}
-                  >
-                    应用
-                  </Button>
-                  {!template.id.startsWith("builtin-") && (
+            {visibleTemplates.map((template) => {
+              const system = template.id.startsWith("builtin-");
+              return (
+                <div className="template-card" key={template.id}>
+                  <div className="template-card-copy">
+                    <div className="row">
+                      <strong>{template.name}</strong>
+                      <span className={`template-kind ${system ? "system" : "custom"}`}>
+                        {system ? "系统模板" : "自定义"}
+                      </span>
+                    </div>
+                    <p>{template.description || "未填写模板说明"}</p>
+                    <div className="template-facts">
+                      <span>{template.devices.join(" / ")}</span>
+                      <span>{template.requiredCopies} 份物理副本</span>
+                      <span>{template.checklists?.length || 0} 项检查表</span>
+                      <span>
+                        {template.completionActions
+                          .map(
+                            (item) =>
+                              ({
+                                report: "报告",
+                                delivery: "交付",
+                                proxy: "代理",
+                                eject: "推出",
+                              })[item],
+                          )
+                          .join(" / ") || "无自动动作"}
+                      </span>
+                    </div>
+                    <code>{template.namingRule}</code>
+                  </div>
+                  <div className="template-card-actions">
+                    <select
+                      id={`template-project-${template.id}`}
+                      aria-label="应用模板到项目"
+                    >
+                      {projects.map((project) => (
+                        <option key={project.id} value={project.id}>
+                          {project.name}
+                        </option>
+                      ))}
+                    </select>
+                    <Button
+                      kind="subtle"
+                      disabled={!projects.length || busy !== null}
+                      onClick={() => {
+                        const select = document.getElementById(
+                            `template-project-${template.id}`,
+                          ) as HTMLSelectElement,
+                          project = projects.find(
+                            (item) => item.id === select.value,
+                          );
+                        if (!project) return;
+                        setBusy(`preview-${template.id}`);
+                        void api
+                          .previewProjectTemplate(template.id, project.id)
+                          .then((preview) =>
+                            setTemplateApply({
+                              template,
+                              projectId: project.id,
+                              projectName: project.name,
+                              changes: preview.changes,
+                            }),
+                          )
+                          .catch((error) =>
+                            notify(
+                              String(error).replace(/^Error: /, ""),
+                              true,
+                            ),
+                          )
+                          .finally(() => setBusy(null));
+                      }}
+                    >
+                      应用并预览
+                    </Button>
                     <Button
                       kind="icon"
-                      title="删除模板"
+                      title={system ? "复制为自定义模板" : "编辑模板"}
                       onClick={() =>
-                        void run(
-                          `delete-${template.id}`,
-                          () => api.deleteProjectTemplate(template.id),
-                          "模板已删除",
+                        setTemplateEditor(
+                          system
+                            ? {
+                                ...template,
+                                id: undefined,
+                                name: `${template.name} 副本`,
+                                kind: "custom",
+                                hidden: false,
+                              }
+                            : template,
                         )
                       }
                     >
-                      <Trash2 size={14} />
+                      {system ? <Copy size={14} /> : <SlidersHorizontal size={14} />}
                     </Button>
-                  )}
+                    {system ? (
+                      <Button
+                        kind="icon"
+                        title="隐藏系统模板"
+                        onClick={() =>
+                          void run(
+                            `hide-${template.id}`,
+                            () => api.hideProjectTemplate(template.id, true),
+                            "系统模板已隐藏",
+                          )
+                        }
+                      >
+                        <Eye size={14} />
+                      </Button>
+                    ) : (
+                      <Button
+                        kind="icon danger"
+                        title="删除自定义模板"
+                        onClick={() =>
+                          void run(
+                            `delete-${template.id}`,
+                            () => api.deleteProjectTemplate(template.id),
+                            "模板已删除",
+                          )
+                        }
+                      >
+                        <Trash2 size={14} />
+                      </Button>
+                    )}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         ) : (
           <Empty
@@ -4997,6 +5238,29 @@ function MaintenancePage({
         notify={notify}
         refreshProjects={refreshProjects}
       />
+      {templateEditor && (
+        <TemplateEditor
+          initial={templateEditor}
+          onClose={() => setTemplateEditor(null)}
+          onSaved={(values) => {
+            setTemplates(values);
+            notify("项目模板已保存");
+          }}
+        />
+      )}
+      {templateApply && (
+        <TemplateApplyDialog
+          template={templateApply.template}
+          projectId={templateApply.projectId}
+          projectName={templateApply.projectName}
+          changes={templateApply.changes}
+          onClose={() => setTemplateApply(null)}
+          onApplied={() => {
+            void refreshProjects();
+            notify("模板已按所选配置应用到项目");
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -6219,7 +6483,7 @@ function SettingsPage({
         <img src="./icon.png" alt="Kocpy 图标" />
         <div>
           <h3>
-            Kocpy <span>0.1.15</span>
+            Kocpy <span>0.1.16</span>
           </h3>
           <p>从现场接卡、项目归档到交付报告，为每一份创作保留可靠副本。</p>
           <small>本地优先 · 独立校验 · 项目全周期记录 · @sexyfeifan</small>

@@ -1268,19 +1268,83 @@ export function projectCoverage(
 
 export const builtInProductionTemplates = (): ProjectTemplate[] =>
   [
-    ["commercial", "广告", ["A Cam", "B Cam"], 3],
-    ["documentary", "纪录片", ["A Cam", "Audio"], 2],
-    ["short", "短片", ["A Cam", "B Cam", "Audio"], 3],
-    ["variety", "综艺", ["Cam 1", "Cam 2", "Cam 3", "Audio"], 2],
-    ["feature", "电影", ["A Cam", "B Cam", "Sound"], 3],
-  ].map(([id, name, devices, copies]) => ({
+    [
+      "commercial",
+      "广告",
+      "双机位、三份独立副本，适合客户监看与规范交付。",
+      ["A Cam", "B Cam"],
+      3,
+      ["report", "delivery"],
+    ],
+    [
+      "documentary",
+      "纪录片",
+      "轻量摄影机与独立录音，两份副本并保留长期可追溯记录。",
+      ["A Cam", "Audio"],
+      2,
+      ["report", "proxy"],
+    ],
+    [
+      "short",
+      "短片",
+      "双机位与独立录音，三份副本并生成代理和交付清单。",
+      ["A Cam", "B Cam", "Audio"],
+      3,
+      ["report", "delivery", "proxy"],
+    ],
+    [
+      "variety",
+      "综艺",
+      "三机位与独立录音，两份副本并优先生成代理供快速整理。",
+      ["Cam 1", "Cam 2", "Cam 3", "Audio"],
+      2,
+      ["report", "proxy"],
+    ],
+    [
+      "feature",
+      "电影",
+      "双摄影机与现场录音，三份副本、代理和完整交付记录。",
+      ["A Cam", "B Cam", "Sound"],
+      3,
+      ["report", "delivery", "proxy"],
+    ],
+  ].map(([id, name, description, devices, copies, actions]) => ({
     id: `builtin-${id}`,
     name: `${name}制作`,
+    description: String(description),
+    kind: "builtin" as const,
+    productionType: id as ProjectTemplate["productionType"],
     devices: devices as string[],
     volumePrefix: "ROLL_",
+    volumePrefixByDevice: Object.fromEntries(
+      (devices as string[]).map((device) => [
+        device,
+        `${device.replaceAll(" ", "_").toUpperCase()}_`,
+      ]),
+    ),
     requiredCopies: Number(copies),
     namingRule: "{date}_{project}/{shootingDate}/{device}/{position}/{card}",
-    completionActions: ["report", "delivery"],
+    completionActions: actions as ProjectTemplate["completionActions"],
+    checklists: [
+      {
+        id: `builtin-${id}-source`,
+        phase: "start" as const,
+        label: "确认项目、拍摄日期、设备与独立目的地",
+        required: true,
+      },
+      {
+        id: `builtin-${id}-copies`,
+        phase: "close" as const,
+        label: `每个素材卷达到 ${copies} 份物理独立校验副本`,
+        required: true,
+      },
+      {
+        id: `builtin-${id}-handoff`,
+        phase: "close" as const,
+        label: "报告、异常与交接信息已经记录",
+        required: true,
+      },
+    ],
     createdAt: 0,
     updatedAt: 0,
   }));

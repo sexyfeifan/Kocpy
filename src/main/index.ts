@@ -71,6 +71,7 @@ import {
 import { generateDeliveryManifest } from "./delivery";
 import {
   mergeWorkspace,
+  normalizeProjectTemplate,
   sourceSuggestion,
   templateFromProject,
   validateWorkspacePackage,
@@ -92,6 +93,7 @@ import {
   existingSourceKey,
 } from "./existing-records";
 import { ensureTaskMediaBreakdown } from "./media-kind";
+import { buildProjectDeletionPreview } from "./project-deletion";
 
 app.setName("Kocpy");
 const appDataRoot = app.getPath("appData");
@@ -638,10 +640,9 @@ app.whenReady().then(async () => {
     "archive-health.json",
     [],
   );
-  projectTemplates = await store.read<ProjectTemplate[]>(
-    "project-templates.json",
-    [],
-  );
+  projectTemplates = (
+    await store.read<ProjectTemplate[]>("project-templates.json", [])
+  ).map(normalizeProjectTemplate);
   archiveChanges = await store.read<ArchiveChangeRecord[]>(
     "archive-changes.json",
     [],
@@ -698,9 +699,15 @@ app.whenReady().then(async () => {
       })(),
     3_600_000,
   );
-  for (const template of builtInProductionTemplates())
-    if (!projectTemplates.some((item) => item.id === template.id))
-      projectTemplates.push(template);
+  for (const template of builtInProductionTemplates()) {
+    const index = projectTemplates.findIndex((item) => item.id === template.id);
+    if (index < 0) projectTemplates.push(template);
+    else
+      projectTemplates[index] = {
+        ...template,
+        hidden: projectTemplates[index].hidden,
+      };
+  }
   for (const job of proxyJobs)
     if (job.status === "running") {
       job.status = "failed";
@@ -2720,33 +2727,245 @@ app.whenReady().then(async () => {
     await store.write("project-templates.json", projectTemplates);
     return projectTemplates;
   });
+  handle("templates:save", async (input: ProjectTemplate) => {
+    if (!input || typeof input !== "object") throw new Error("模板数据无效");
+    if (!input.name?.trim()) throw new Error("请输入模板名称");
+    if (!input.devices?.length) throw new Error("模板至少需要一个设备");
+    if (input.devices.length > 10) throw new Error("模板最多保存 10 个设备");
+    if (!input.namingRule?.includes("{card}"))
+      throw new Error("模板命名规则必须包含 {card}");
+    if (input.id?.startsWith("builtin-"))
+      throw new Error("系统模板不可直接修改，请先复制为自定义模板");
+    const existing = projectTemplates.find((item) => item.id === input.id),
+      template = normalizeProjectTemplate({
+        ...input,
+        id: input.id || `template-${randomUUID()}`,
+        kind: "custom",
+        createdAt: existing?.createdAt || input.createdAt || Date.now(),
+        updatedAt: Date.now(),
+      });
+    const index = projectTemplates.findIndex((item) => item.id === template.id);
+    if (index < 0) projectTemplates.push(template);
+    else projectTemplates[index] = template;
+    await store.write("project-templates.json", projectTemplates);
+    return projectTemplates;
+  });
   handle("templates:delete", async (id: string) => {
+    if (id.startsWith("builtin-"))
+      throw new Error("系统模板不能删除，可以选择隐藏");
     projectTemplates = projectTemplates.filter((item) => item.id !== id);
     await store.write("project-templates.json", projectTemplates);
     return projectTemplates;
   });
-  handle("templates:apply", async (templateId: string, projectId: string) => {
-    const template = projectTemplates.find((item) => item.id === templateId);
-    if (!template) throw new Error("模板不存在");
-    const projects = (
-        await store.read<ProjectConfig[]>("projects.json", [])
-      ).map(normalizeProject),
-      project = projects.find((item) => item.id === projectId);
-    if (!project) throw new Error("项目不存在");
-    Object.assign(project, {
-      devices: [...template.devices],
-      volumePrefix: template.volumePrefix,
-      requiredCopies: template.requiredCopies,
-      namingRule: template.namingRule,
-      completionActions: [...template.completionActions],
-    });
-    if ((project.destinationPaths?.length || 0) < template.requiredCopies)
-      throw new Error(
-        `模板要求 ${template.requiredCopies} 份副本，当前项目目的地不足`,
-      );
-    await store.write("projects.json", projects);
-    return projects;
+  handle("templates:hide", async (id: string, hidden: boolean) => {
+    const template = projectTemplates.find((item) => item.id === id);
+    if (!template?.id.startsWith("builtin-"))
+      throw new Error("只有系统模板可以隐藏或恢复");
+    template.hidden = Boolean(hidden);
+    await store.write("project-templates.json", projectTemplates);
+    return projectTemplates;
   });
+  handle("templates:export", async () => {
+    const custom = projectTemplates.filter(
+      (item) => !item.id.startsWith("builtin-"),
+    );
+    if (!custom.length) throw new Error("还没有可导出的自定义模板");
+    const result = await dialog.showSaveDialog({
+      defaultPath: `Kocpy_项目模板_${Date.now()}.json`,
+      filters: [{ name: "Kocpy 项目模板", extensions: ["json"] }],
+    });
+    if (!result.filePath) return null;
+    await fs.writeFile(
+      result.filePath,
+      JSON.stringify(
+        {
+          application: "Kocpy",
+          schema: 1,
+          exportedAt: Date.now(),
+          templates: custom,
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+    return result.filePath;
+  });
+  handle("templates:import", async () => {
+    const chosen = await dialog.showOpenDialog({
+      properties: ["openFile"],
+      filters: [{ name: "Kocpy 项目模板", extensions: ["json"] }],
+    });
+    if (chosen.canceled) return projectTemplates;
+    const importPath = chosen.filePaths[0],
+      stat = await fs.stat(importPath);
+    if (stat.size > 2 * 1024 * 1024)
+      throw new Error("模板文件超过 2 MiB 安全限制");
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(await fs.readFile(importPath, "utf8"));
+    } catch {
+      throw new Error("模板文件不是有效 JSON");
+    }
+    const raw = Array.isArray(parsed)
+      ? parsed
+      : (parsed as { templates?: unknown })?.templates;
+    if (!Array.isArray(raw) || !raw.length || raw.length > 100)
+      throw new Error("模板文件必须包含 1–100 个模板");
+    const imported = raw.map((value, index) => {
+      if (!value || typeof value !== "object")
+        throw new Error(`第 ${index + 1} 个模板数据无效`);
+      const candidate = value as ProjectTemplate;
+      if (!candidate.name?.trim() || !candidate.devices?.length)
+        throw new Error(`第 ${index + 1} 个模板缺少名称或设备`);
+      if (candidate.devices.length > 10)
+        throw new Error(`第 ${index + 1} 个模板超过 10 个设备`);
+      if (!candidate.namingRule?.includes("{card}"))
+        throw new Error(`第 ${index + 1} 个模板命名规则缺少 {card}`);
+      return normalizeProjectTemplate({
+        ...candidate,
+        id: `template-${randomUUID()}`,
+        kind: "custom",
+        hidden: false,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+    });
+    projectTemplates = [...projectTemplates, ...imported];
+    await store.write("project-templates.json", projectTemplates);
+    return projectTemplates;
+  });
+  handle(
+    "templates:preview-apply",
+    async (templateId: string, projectId: string) => {
+      const template = projectTemplates.find((item) => item.id === templateId),
+        project = (
+          await store.read<ProjectConfig[]>("projects.json", [])
+        ).find((item) => item.id === projectId);
+      if (!template) throw new Error("模板不存在");
+      if (!project) throw new Error("项目不存在");
+      const actionLabels: Record<string, string> = {
+        report: "报告",
+        delivery: "交付清单",
+        proxy: "代理",
+        eject: "安全推出",
+      };
+      return {
+        templateId,
+        projectId,
+        changes: [
+          {
+            field: "devices",
+            label: "设备、素材卷前缀与机位",
+            before: project.devices.join(" / "),
+            after: template.devices.join(" / "),
+          },
+          {
+            field: "requiredCopies",
+            label: "物理独立副本",
+            before: `${project.requiredCopies || 2} 份`,
+            after: `${template.requiredCopies} 份`,
+          },
+          {
+            field: "namingRule",
+            label: "目录命名规则",
+            before: project.namingRule || "默认规则",
+            after: template.namingRule,
+          },
+          {
+            field: "completionActions",
+            label: "完成动作",
+            before: (project.completionActions || ["report"])
+              .map((item) => actionLabels[item])
+              .join(" / "),
+            after: template.completionActions
+              .map((item) => actionLabels[item])
+              .join(" / "),
+          },
+          {
+            field: "checklists",
+            label: "开工与收工检查表",
+            before: `${project.checklists?.length || 0} 项`,
+            after: `${template.checklists?.length || 0} 项`,
+          },
+          {
+            field: "crew",
+            label: "制作人员与角色",
+            before: `${project.crew?.length || 0} 人`,
+            after: `${template.crew?.length || 0} 人`,
+          },
+          {
+            field: "projectDefaults",
+            label: "制作类型与预计素材卷",
+            before: `${project.productionType || "custom"} / ${project.expectedVolumes || "未知"}`,
+            after: `${template.productionType || "custom"} / ${template.expectedVolumes || "未知"}`,
+          },
+        ],
+      };
+    },
+  );
+  handle(
+    "templates:apply",
+    async (templateId: string, projectId: string, selectedFields?: string[]) => {
+      const template = projectTemplates.find(
+        (item) => item.id === templateId,
+      );
+      if (!template) throw new Error("模板不存在");
+      const projects = (
+          await store.read<ProjectConfig[]>("projects.json", [])
+        ).map(normalizeProject),
+        project = projects.find((item) => item.id === projectId);
+      if (!project) throw new Error("项目不存在");
+      const allowedFields = [
+        "devices",
+        "requiredCopies",
+        "namingRule",
+        "completionActions",
+        "checklists",
+        "crew",
+        "projectDefaults",
+      ];
+      if (selectedFields && !selectedFields.length)
+        throw new Error("请至少选择一项要应用的模板配置");
+      if (selectedFields?.some((field) => !allowedFields.includes(field)))
+        throw new Error("模板包含不受支持的应用字段");
+      const fields = new Set(selectedFields || allowedFields);
+      if (
+        fields.has("requiredCopies") &&
+        (project.destinationPaths?.length || 0) < template.requiredCopies
+      )
+        throw new Error(
+          `模板要求 ${template.requiredCopies} 份副本，当前项目目的地不足`,
+        );
+      if (fields.has("devices"))
+        Object.assign(project, {
+          devices: [...template.devices],
+          volumePrefix: template.volumePrefix,
+          volumePrefixByDevice: { ...(template.volumePrefixByDevice || {}) },
+          devicePositions: Object.fromEntries(
+            Object.entries(template.devicePositions || {}).map(
+              ([device, positions]) => [device, [...positions]],
+            ),
+          ),
+        });
+      if (fields.has("requiredCopies"))
+        project.requiredCopies = template.requiredCopies;
+      if (fields.has("namingRule")) project.namingRule = template.namingRule;
+      if (fields.has("completionActions"))
+        project.completionActions = [...template.completionActions];
+      if (fields.has("checklists"))
+        project.checklists = template.checklists?.map((item) => ({ ...item }));
+      if (fields.has("crew"))
+        project.crew = template.crew?.map((item) => ({ ...item }));
+      if (fields.has("projectDefaults")) {
+        project.productionType = template.productionType || "custom";
+        project.expectedVolumes = template.expectedVolumes;
+      }
+      await store.write("projects.json", projects);
+      await catalog.upsertProject(project);
+      return projects;
+    },
+  );
   handle(
     "projects:add-handoff",
     async (projectId: string, operator: string, note: string) => {
@@ -2852,7 +3071,7 @@ app.whenReady().then(async () => {
       if (!engine.getTask(task.id)) engine.loadTask(task);
     projectTemplates = [
       ...projectTemplates,
-      ...(incoming.templates || []),
+      ...(incoming.templates || []).map(normalizeProjectTemplate),
     ].filter(
       (item, index, all) =>
         all.findIndex((other) => other.id === item.id) === index,
@@ -3128,83 +3347,99 @@ app.whenReady().then(async () => {
       return all;
     },
   );
-  handle("projects:delete", async (projectId: string) => {
+  handle("projects:delete-preview", async (projectId: string) => {
     const projects = (
         await store.read<ProjectConfig[]>("projects.json", [])
       ).map(normalizeProject),
       project = projects.find((item) => item.id === projectId);
     if (!project) throw new Error("项目不存在或已经删除");
-    if (project.status !== "archived")
-      throw new Error("只有已归档项目可以删除，请先归档项目");
-    const relatedTasks = engine
-      .getAllTasks()
-      .filter((task) => task.projectId === projectId);
-    if (
-      relatedTasks.some((task) =>
-        ["pending", "running", "paused", "verifying"].includes(task.status),
-      )
-    )
-      throw new Error("项目仍有未结束的任务，不能删除项目记录");
-    const taskIds = new Set(relatedTasks.map((task) => task.id)),
-      nextProjects = projects.filter((item) => item.id !== projectId),
-      nextTasks = engine
-        .getAllTasks()
-        .filter((task) => task.projectId !== projectId)
-        .slice()
-        .reverse(),
-      nextProxyJobs = proxyJobs.filter(
-        (job) => !job.sourceTaskId || !taskIds.has(job.sourceTaskId),
-      ),
-      deletedProxyJobs = proxyJobs.length - nextProxyJobs.length,
-      nextHealthRecords = healthRecords.filter(
-        (item) => item.projectId !== projectId,
-      ),
-      nextArchiveChanges = archiveChanges.filter(
-        (item) => item.projectId !== projectId,
-      ),
-      nextArchiveReminders = archiveReminders.filter(
-        (item) => item.projectId !== projectId,
-      );
-    if (
-      proxyJobs.some(
-        (job) =>
-          Boolean(job.sourceTaskId && taskIds.has(job.sourceTaskId)) &&
-          ["pending", "running", "paused"].includes(job.status),
-      )
-    )
-      throw new Error("项目仍有关联的代理任务未结束，不能删除项目记录");
-    try {
-      await Promise.all([
-        store.write("projects.json", nextProjects),
-        store.write("tasks.json", nextTasks),
-        store.write("proxy-jobs.json", nextProxyJobs),
-        store.write("archive-health.json", nextHealthRecords),
-        store.write("archive-changes.json", nextArchiveChanges),
-        store.write("archive-reminders.json", nextArchiveReminders),
-      ]);
-      await catalog.deleteProjectRecords(projectId);
-    } catch (error) {
-      await Promise.all([
-        store.write("projects.json", projects),
-        store.write("tasks.json", engine.getAllTasks().slice().reverse()),
-        store.write("proxy-jobs.json", proxyJobs),
-        store.write("archive-health.json", healthRecords),
-        store.write("archive-changes.json", archiveChanges),
-        store.write("archive-reminders.json", archiveReminders),
-      ]).catch(() => undefined);
-      throw error;
-    }
-    for (const task of relatedTasks) engine.deleteTask(task.id);
-    proxyJobs = nextProxyJobs;
-    healthRecords = nextHealthRecords;
-    archiveChanges = nextArchiveChanges;
-    archiveReminders = nextArchiveReminders;
-    return {
-      projects: nextProjects,
-      deletedTasks: relatedTasks.length,
-      deletedProxyJobs,
-    };
+    return buildProjectDeletionPreview(
+      project,
+      engine.getAllTasks(),
+      proxyJobs,
+      healthRecords,
+      archiveChanges,
+      archiveReminders,
+    );
   });
+  handle(
+    "projects:delete",
+    async (projectId: string, confirmationName: string) => {
+      const projects = (
+          await store.read<ProjectConfig[]>("projects.json", [])
+        ).map(normalizeProject),
+        project = projects.find((item) => item.id === projectId);
+      if (!project) throw new Error("项目不存在或已经删除");
+      if (confirmationName !== project.name)
+        throw new Error("项目名称确认不匹配，未删除任何记录");
+      const relatedTasks = engine
+        .getAllTasks()
+        .filter((task) => task.projectId === projectId);
+      const deletionPreview = buildProjectDeletionPreview(
+        project,
+        engine.getAllTasks(),
+        proxyJobs,
+        healthRecords,
+        archiveChanges,
+        archiveReminders,
+      );
+      if (deletionPreview.blockingTasks)
+        throw new Error("项目仍有未结束的任务，不能删除项目记录");
+      const taskIds = new Set(relatedTasks.map((task) => task.id)),
+        nextProjects = projects.filter((item) => item.id !== projectId),
+        nextTasks = engine
+          .getAllTasks()
+          .filter((task) => task.projectId !== projectId)
+          .slice()
+          .reverse(),
+        nextProxyJobs = proxyJobs.filter(
+          (job) => !job.sourceTaskId || !taskIds.has(job.sourceTaskId),
+        ),
+        deletedProxyJobs = proxyJobs.length - nextProxyJobs.length,
+        nextHealthRecords = healthRecords.filter(
+          (item) => item.projectId !== projectId,
+        ),
+        nextArchiveChanges = archiveChanges.filter(
+          (item) => item.projectId !== projectId,
+        ),
+        nextArchiveReminders = archiveReminders.filter(
+          (item) => item.projectId !== projectId,
+        );
+      if (deletionPreview.blockingProxyJobs)
+        throw new Error("项目仍有关联的代理任务未结束，不能删除项目记录");
+      try {
+        await Promise.all([
+          store.write("projects.json", nextProjects),
+          store.write("tasks.json", nextTasks),
+          store.write("proxy-jobs.json", nextProxyJobs),
+          store.write("archive-health.json", nextHealthRecords),
+          store.write("archive-changes.json", nextArchiveChanges),
+          store.write("archive-reminders.json", nextArchiveReminders),
+        ]);
+        await catalog.deleteProjectRecords(projectId);
+      } catch (error) {
+        await Promise.all([
+          store.write("projects.json", projects),
+          store.write("tasks.json", engine.getAllTasks().slice().reverse()),
+          store.write("proxy-jobs.json", proxyJobs),
+          store.write("archive-health.json", healthRecords),
+          store.write("archive-changes.json", archiveChanges),
+          store.write("archive-reminders.json", archiveReminders),
+        ]).catch(() => undefined);
+        throw error;
+      }
+      for (const task of relatedTasks) engine.deleteTask(task.id);
+      proxyJobs = nextProxyJobs;
+      healthRecords = nextHealthRecords;
+      archiveChanges = nextArchiveChanges;
+      archiveReminders = nextArchiveReminders;
+      return {
+        projects: nextProjects,
+        deletedTasks: relatedTasks.length,
+        deletedProxyJobs,
+      };
+    },
+  );
   handle(
     "projects:claim-volume",
     async (projectId: string, device: string, prefixOverride?: string) => {

@@ -8,7 +8,7 @@
 
 ![Kocpy 工作台](docs/screenshots/dashboard.png)
 
-当前版本：**0.1.15** · [完整使用手册](docs/USER_GUIDE.md) · [0.1.15 更新说明](docs/RELEASE_NOTES_0.1.15.md) · [下载最新版](https://github.com/sexyfeifan/Kocpy/releases/latest)
+当前版本：**0.1.16** · [完整使用手册](docs/USER_GUIDE.md) · [0.1.16 更新说明](docs/RELEASE_NOTES_0.1.16.md) · [下载最新版](https://github.com/sexyfeifan/Kocpy/releases/latest)
 
 ## 中文
 
@@ -71,6 +71,8 @@ Kocpy 将素材卡接收、多目标备份、逐目标回读校验、项目归�
 
 0.1.15 让传输任务更容易辨认和追踪：视频、照片/RAW、音频、混合素材与其他素材卷使用不同图标，图标颜色继续表达任务状态；每条任务完整列出源路径和所有目的地的实际最终路径，并可直接在 Finder 中定位。已归档项目新增受保护的内部记录删除入口，便于重新执行完整测试；它只清理 Kocpy 的项目、任务、代理和归档维护记录，不删除素材、备份目录、报告、MHL 或已导出的归档文件。
 
+0.1.16 将受保护的内部记录删除扩展到进行中项目，无需为了重做测试而先归档；删除前会显示准确范围，要求勾选风险确认并输入完整项目名称，任何活动备份或代理任务都会阻止删除。项目模板升级为可解释、可新建、重命名、编辑、导入导出和选择性应用的制作流程；五个系统模板会直接说明其设备、副本、检查表和完成动作差异。低高度窗口中的侧栏不再压缩文字和图标，中间导航改为独立滚动。
+
 项目完成后可导出：
 
 - 项目完整 PDF：项目总览、日期与设备矩阵、全部素材卷、目的地、校验结论和完整文件明细。
@@ -92,7 +94,7 @@ Kocpy 将素材卡接收、多目标备份、逐目标回读校验、项目归�
 - 代理完成后检查帧率、时间码和音轨，并可导出 Resolve CSV、Premiere CSV、Final Cut XML 或完整 JSON 交付清单。
 - 归档维护中心支持项目级长期复校验、健康历史、从健康副本修复失败副本，并保留原损坏文件以供检查。
 - 长期复校验覆盖整盘、项目、拍摄日、素材卷和单文件，记录真实读取吞吐、风险等级、未登记新增文件、位置迁移与变化时间线。
-- 项目模板可复用设备、副本标准、命名规则和完成动作；项目交接记录随工作站包保存与合并。
+- 项目模板可自定义名称、说明、设备/机位、每台设备的素材卷前缀、副本标准、预计卷数、命名规则、完成动作、开工/收工检查表和制作人员；应用前可逐项预览并选择覆盖范围，自定义模板支持导入导出。
 - 插入历史素材卡时会建议项目、设备和下一卷号；发现相同文件结构与容量时会明确提示重复接收风险，且不会自动开始写入。
 - 支持完整本地数据备份，以及多台 Kocpy 工作站之间的项目、任务、模板与健康记录合并；内容指纹用于跳过重复素材并报告命名冲突。
 - 大型素材库按批次加载，诊断、事件和健康历史均设有体积上限，避免长期项目拖慢界面与记录写入。
@@ -115,7 +117,7 @@ Kocpy 将素材卡接收、多目标备份、逐目标回读校验、项目归�
 
 ### 外观、隐私与更新
 
-Kocpy 支持真实深色与浅色外观，任务、项目、偏好、缩略图和代理记录保存在 `~/Library/Application Support/Kocpy/`。软件无需账号，不上传素材。应用会根据当前显示器可用区域选择默认窗口尺寸；在 1080 × 720 最小窗口中，全部侧栏入口仍然可见，内容页、表格和弹窗使用各自的安全滚动区域。0.1.10 将侧栏按“工作台 → 项目 → 接收与恢复 → 素材管理与交付 → 存储与维护 → 诊断与说明”重新排序。左下角可检查 GitHub Release 更新，并提供作者 [@sexyfeifan](https://github.com/sexyfeifan) 的 GitHub 与[小红书](https://www.xiaohongshu.com/user/profile/5d24d2ca000000001103fe97)入口。
+Kocpy 支持真实深色与浅色外观，任务、项目、偏好、缩略图和代理记录保存在 `~/Library/Application Support/Kocpy/`。软件无需账号，不上传素材。应用会根据当前显示器可用区域选择默认窗口尺寸；在 1080 × 720 最小窗口中，内容页、表格和弹窗使用各自的安全滚动区域。侧栏始终保持正常文字、图标和品牌比例，高度不足时仅中间导航区域滚动。功能按“工作台 → 项目 → 接收与恢复 → 素材管理与交付 → 存储与维护 → 诊断与说明”排列。左下角可检查 GitHub Release 更新，并提供作者 [@sexyfeifan](https://github.com/sexyfeifan) 的 GitHub 与[小红书](https://www.xiaohongshu.com/user/profile/5d24d2ca000000001103fe97)入口。
 
 ![存储设备](docs/screenshots/storage.png)
 
@@ -125,8 +127,8 @@ Kocpy 支持真实深色与浅色外观，任务、项目、偏好、缩略图�
 
 从 [GitHub Releases](https://github.com/sexyfeifan/Kocpy/releases) 下载对应架构：
 
-- `Kocpy-0.1.15-arm64.dmg`：Apple Silicon Mac
-- `Kocpy-0.1.15-x64.dmg`：Intel Mac
+- `Kocpy-0.1.16-arm64.dmg`：Apple Silicon Mac
+- `Kocpy-0.1.16-x64.dmg`：Intel Mac
 
 打开 DMG，将 Kocpy 拖入“应用程序”。当前公开包尚未使用 Apple Developer ID 签名和公证。若 macOS 明确提示应用“已损坏”，请先确认文件来自本仓库官方 Release，再执行：
 
@@ -152,6 +154,8 @@ Version 0.1.14 hardens completion, persistence, and recovery. Kocpy rescans the 
 
 Version 0.1.15 adds media-aware task icons, full source and final-destination paths with Finder reveal, and a guarded reset for archived projects. Project reset removes only Kocpy's internal project, task, proxy, and archive-maintenance records; it never deletes media, backup folders, reports, MHL manifests, or exported archives.
 
+Version 0.1.16 extends guarded internal-record deletion to active projects, while blocking deletion whenever backup or proxy work is unfinished and requiring both an acknowledgement and exact project-name confirmation. Project templates are now described, editable, importable/exportable, and selectively applied after a field-by-field preview. The sidebar keeps stable text and icon proportions at reduced window heights and scrolls only its navigation area.
+
 ## 日本語
 
 Kocpy は、macOS 向けのローカル優先メディアバックアップ／プロジェクト管理アプリです。1つの素材ソースを最大4つの保存先へコピーし、各コピーを独立して読み戻してチェックサム検証します。大容量ファイルの再開、物理ボリューム識別、容量事前確認に加え、成功済みコピーを保持したまま失敗した保存先だけを再試行できます。
@@ -167,6 +171,8 @@ Kocpy は、macOS 向けのローカル優先メディアバックアップ／�
 バージョン 0.1.14 では、完了判定、永続化、復旧を強化しました。完了前の素材ソース再走査、ボリューム識別の継続確認、低速保存先の書き込み位置修正、ファイルと記録の fsync、JSON と索引の最新チェックポイント統合、冷却アーカイブの書き込み後検証、安全取り出し前の再確認を行います。MHL は検証済み保存先の実際のパスを記録し、未解決差異やコピー不足を信頼済みアーカイブとして出力しません。
 
 バージョン 0.1.15 では、素材種別ごとのタスクアイコン、Finder で表示できる完全なソース／最終保存先パス、そしてアーカイブ済みプロジェクトの保護されたリセット機能を追加しました。リセットは Kocpy 内部のプロジェクト、タスク、プロキシ、アーカイブ保守記録だけを削除し、素材、バックアップフォルダ、レポート、MHL、書き出し済みアーカイブには触れません。
+
+バージョン 0.1.16 では、保護された内部記録の削除を進行中プロジェクトにも拡張しました。未完了のバックアップまたはプロキシ作業がある場合は拒否され、確認チェックと正確なプロジェクト名入力が必要です。プロジェクトテンプレートは説明表示、編集、読み込み／書き出し、項目別プレビュー後の選択適用に対応しました。低いウインドウでもサイドバーの文字とアイコン比率を維持し、ナビゲーション部分だけをスクロールします。
 
 ## License
 
