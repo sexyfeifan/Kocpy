@@ -40,6 +40,6 @@
 - `Kocpy-0.1.10-arm64.dmg`：`f25c5ac62df948b6ca0d4cb79788880b978d399119944087b1d7ee539cf9246f`
 - `Kocpy-0.1.10-x64.dmg`：`58a82d252f3a61e1b405d7fb6cebb9667103419771ee04809e30b3c9e56e641c`
 
-两套本地发布 DMG 均通过 `hdiutil verify`；挂载后版本为 0.1.10，主程序架构分别为 arm64 与 x86_64。上传 GitHub Release 后还应回下载并再次核对以上 SHA-256。
+两套本地发布 DMG 均通过 `hdiutil verify`；挂载后版本为 0.1.10，主程序架构分别为 arm64 与 x86_64。GitHub Release 返回的两份资产大小与服务器端 SHA-256 均已核对，并与以上结果完全一致。
 
 完整说明请参阅 [Kocpy 0.1.10 使用手册](https://github.com/sexyfeifan/Kocpy/blob/main/docs/USER_GUIDE.md)。
