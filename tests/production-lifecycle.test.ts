@@ -9,6 +9,7 @@ import {
   previewExistingBackup,
   projectCoverage,
   repairMissingManifestFiles,
+  reviseMhlMissingEntries,
 } from "../src/main/production-lifecycle";
 import { generateMhl } from "../src/main/backup/ManifestGenerator";
 const project: any = {
@@ -289,6 +290,59 @@ describe("0.1.0 production lifecycle", () => {
         missing: ["missing.mov"],
         extra: ["extra.mov"],
       });
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+  it("audits the original MHL before excluding intentionally removed files", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "kocpy-mhl-revision-")),
+      media = path.join(root, "media"),
+      audit = path.join(media, ".kocpy-manifest-history");
+    try {
+      await fs.mkdir(media, { recursive: true });
+      await fs.writeFile(path.join(media, "kept.mov"), "abc");
+      const manifest = path.join(media, "CARD.mhl"),
+        original = `<hashlist version="1.1">
+<hash><file>/kept.mov</file><size>3</size><xxhash>852579327</xxhash></hash>
+<hash><file>/removed.mov</file><size>7</size><xxhash>1</xxhash></hash>
+</hashlist>`;
+      await fs.writeFile(manifest, original);
+      expect(await inspectExternalManifest(media)).toMatchObject({
+        status: "mismatch",
+        missing: ["removed.mov"],
+      });
+      const result = await reviseMhlMissingEntries(
+        manifest,
+        ["removed.mov"],
+        audit,
+      );
+      expect(result.excluded).toEqual(["removed.mov"]);
+      expect(await fs.readFile(result.auditPath, "utf8")).toBe(original);
+      expect(await fs.readFile(manifest, "utf8")).not.toContain("removed.mov");
+      expect(await inspectExternalManifest(media)).toMatchObject({
+        status: "structure-match",
+        entries: 1,
+        matched: 1,
+        missing: [],
+      });
+      const imported = await importExistingBackup(project, media, "manifest-import");
+      expect(imported.externalManifest?.status).toBe("verified");
+      expect(imported.status).toBe("completed");
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+  it("does not revise an MHL when the requested exclusion is not recorded", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "kocpy-mhl-revision-reject-"));
+    try {
+      const manifest = path.join(root, "CARD.mhl"),
+        original = `<hashlist version="1.1"><hash><file>/kept.mov</file><size>3</size><xxhash>852579327</xxhash></hash></hashlist>`;
+      await fs.writeFile(manifest, original);
+      await expect(
+        reviseMhlMissingEntries(manifest, ["other.mov"], path.join(root, "audit")),
+      ).rejects.toThrow("找不到待排除记录");
+      expect(await fs.readFile(manifest, "utf8")).toBe(original);
+      await expect(fs.access(path.join(root, "audit"))).rejects.toThrow();
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }

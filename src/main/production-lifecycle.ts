@@ -1,6 +1,6 @@
 import { constants, promises as fs } from "node:fs";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { canonical, inside, safeChild, scan } from "./backup/safety";
 import { hashFile } from "./backup/BackupEngine";
 import { manifestRequirementMet } from "./project-closeout";
@@ -49,6 +49,13 @@ export interface ManifestRepairResult {
   bytes: number;
   sourceRoot: string;
   manifestRoot: string;
+}
+
+export interface ManifestRevisionResult {
+  excluded: string[];
+  originalManifestSha256: string;
+  revisedManifestSha256: string;
+  auditPath: string;
 }
 
 const datePattern =
@@ -551,6 +558,101 @@ export async function inspectExternalManifest(
     await readManifest(manifestFile.absolutePath),
     scanned.files,
   );
+}
+
+export async function reviseMhlMissingEntries(
+  manifestPath: string,
+  missing: string[],
+  auditRoot: string,
+): Promise<ManifestRevisionResult> {
+  if (!/\.mhl$/i.test(manifestPath))
+    throw new Error("只有 MHL 清单支持经审计的缺失项修订");
+  const originalPathInfo = await fs.lstat(manifestPath);
+  if (!originalPathInfo.isFile() || originalPathInfo.isSymbolicLink())
+    throw new Error("MHL 必须是普通文件，不能是符号链接");
+  manifestPath = await canonical(manifestPath);
+  const original = await readManifest(manifestPath);
+  if (!original.algorithm || !original.entries.size)
+    throw new Error("MHL 不含可用于修订的有效校验记录");
+  const excluded = [
+    ...new Set(missing.map((relativePath) => normalizeManifestPath(relativePath))),
+  ].sort();
+  if (!excluded.length) throw new Error("当前 MHL 没有可排除的缺失记录");
+  for (const relativePath of excluded)
+    if (!original.entries.has(relativePath))
+      throw new Error(`MHL 中找不到待排除记录：${relativePath}`);
+
+  const originalManifestSha256 = await hashFile(manifestPath, "sha256"),
+    text = await fs.readFile(manifestPath, "utf8"),
+    textSha256 = createHash("sha256").update(text).digest("hex"),
+    excludedSet = new Set(excluded),
+    hashBlockPattern = /<hash(?:\s[^>]*)?>([\s\S]*?)<\/hash>\s*/gi;
+  if (textSha256 !== originalManifestSha256)
+    throw new Error("MHL 在读取期间发生变化，请重新完整核对后再修订");
+  let removedBlocks = 0;
+  const revisedText = text.replace(hashBlockPattern, (whole, block: string) => {
+    const nameMatch = block.match(
+        /<(path|file)(?:\s[^>]*)?>([^<]+)<\/\1>/i,
+      ),
+      relativePath = nameMatch?.[2]
+        ? normalizeManifestPath(decodeXml(nameMatch[2]))
+        : "";
+    if (!excludedSet.has(relativePath)) return whole;
+    removedBlocks++;
+    return "";
+  });
+  if (removedBlocks !== excluded.length)
+    throw new Error(
+      `MHL 结构与解析记录不一致：应排除 ${excluded.length} 项，实际定位 ${removedBlocks} 项，未修改清单`,
+    );
+
+  auditRoot = await canonical(auditRoot);
+  await fs.mkdir(auditRoot, { recursive: true });
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-"),
+    auditPath = path.join(
+      auditRoot,
+      `${stamp}-${originalManifestSha256.slice(0, 16)}-${randomUUID().slice(0, 8)}-${path.basename(manifestPath)}`,
+    );
+  await fs.copyFile(manifestPath, auditPath, constants.COPYFILE_EXCL);
+  const auditHandle = await fs.open(auditPath, "r");
+  try {
+    await auditHandle.sync();
+  } finally {
+    await auditHandle.close();
+  }
+  if ((await hashFile(auditPath, "sha256")) !== originalManifestSha256)
+    throw new Error("原始 MHL 审计副本校验失败，未修改生效清单");
+
+  const temporary = `${manifestPath}.kocpy-revision-${randomUUID()}.partial`;
+  try {
+    const handle = await fs.open(temporary, "wx", originalPathInfo.mode);
+    try {
+      await handle.writeFile(revisedText, "utf8");
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    const revised = await readManifest(temporary);
+    if (
+      revised.algorithm !== original.algorithm ||
+      revised.entries.size !== original.entries.size - excluded.length ||
+      excluded.some((relativePath) => revised.entries.has(relativePath))
+    )
+      throw new Error("修订后的 MHL 自检失败，生效清单保持不变");
+    const revisedManifestSha256 = await hashFile(temporary, "sha256");
+    if ((await hashFile(manifestPath, "sha256")) !== originalManifestSha256)
+      throw new Error("MHL 在修订期间被其他程序修改，已停止替换");
+    await fs.chmod(temporary, originalPathInfo.mode);
+    await fs.rename(temporary, manifestPath);
+    return {
+      excluded,
+      originalManifestSha256,
+      revisedManifestSha256,
+      auditPath,
+    };
+  } finally {
+    await fs.unlink(temporary).catch(() => undefined);
+  }
 }
 
 interface ManifestRepairCandidate {

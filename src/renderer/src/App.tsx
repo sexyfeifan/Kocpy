@@ -282,6 +282,14 @@ const taskTrustState = (task: BackupTask) => {
     task.status !== "completed"
   )
     return { status: "unverified", label: "清单结构一致 · 待完整校验" };
+  if (
+    task.externalManifest?.status === "verified" &&
+    task.externalManifest.resolution?.type === "revised-missing"
+  )
+    return {
+      status: "completed",
+      label: `修订 MHL 校验通过 · 排除 ${task.externalManifest.resolution.excluded.length}`,
+    };
   if (task.confidence === "verified")
     return { status: "completed", label: "外部清单校验通过" };
   if (task.confidence === "baseline" && task.status === "completed")
@@ -680,7 +688,7 @@ export function App() {
           <img src="./icon.png" alt="Kocpy 图标" />
           <div>
             <strong>
-              Kocpy<span>0.1.11</span>
+              Kocpy<span>0.1.12</span>
             </strong>
             <small>素材工作台</small>
           </div>
@@ -737,7 +745,7 @@ export function App() {
                   ? `可升级 ${updateInfo.latest}`
                   : "检查更新"}
               </span>
-              <b>v0.1.11</b>
+              <b>v0.1.12</b>
             </button>
             <div className="sidebar-author-links">
               <span>
@@ -1971,6 +1979,21 @@ export function App() {
                                         <i />
                                         {trust.label}
                                         <ChevronRight size={13} />
+                                      </button>
+                                    ) : task.externalManifest?.resolution
+                                        ?.type === "revised-missing" ? (
+                                      <button
+                                        className={`badge manifest-badge ${trust.status}`}
+                                        title="显示修订前的原始 MHL 审计副本"
+                                        onClick={() =>
+                                          void api.revealExistingManifestAudit(
+                                            task.id,
+                                          )
+                                        }
+                                      >
+                                        <i />
+                                        {trust.label}
+                                        <FolderOpen size={13} />
                                       </button>
                                     ) : (
                                       <span
@@ -3457,7 +3480,10 @@ function ManifestIssueModal({
     [progress, setProgress] = useState<ExistingImportProgress | null>(null),
     [error, setError] = useState(""),
     [repairConfirmed, setRepairConfirmed] = useState(false),
-    [extraConfirmed, setExtraConfirmed] = useState(false);
+    [extraConfirmed, setExtraConfirmed] = useState(false),
+    [revisionConfirmed, setRevisionConfirmed] = useState(false),
+    [revisionNote, setRevisionNote] = useState(""),
+    [revisionPhrase, setRevisionPhrase] = useState("");
   const jobIdRef = useRef("");
   useEffect(
     () =>
@@ -3479,7 +3505,13 @@ function ManifestIssueModal({
       extraOnly &&
       task.status === "completed" &&
       task.confidence === "baseline" &&
-      !comparison.resolution;
+      !comparison.resolution,
+    canReviseMissing =
+      comparison.missing.length > 0 &&
+      !comparison.extra.length &&
+      !comparison.sizeMismatches.length &&
+      !comparison.checksumMismatches.length &&
+      /\.mhl$/i.test(comparison.path);
   const reverify = async (jobId = crypto.randomUUID()) => {
     jobIdRef.current = jobId;
     setProgress(null);
@@ -3633,6 +3665,84 @@ function ManifestIssueModal({
                   <ShieldCheck size={15} />
                 )}
                 选择健康副本并修复、校验
+              </Button>
+            </div>
+          )}
+          {canReviseMissing && (
+            <div className="manifest-action-card manifest-revision-card">
+              <strong>确认这些素材已被有意剔除，并修订 MHL</strong>
+              <div className="notice amber compact">
+                <AlertTriangle size={16} />
+                <span>
+                  这是不可忽略的重要定义变更：修订后，绿色通过只证明“保留素材集合”完整，不再证明它与原数据卡全部内容一致。原始 MHL 会先保存到 Kocpy 审计历史，不会被无痕删除。
+                </span>
+              </div>
+              <p>
+                仅当上方 {comparison.missing.length} 个文件确实由操作人主动剔除、无需补回时使用。大小不同、哈希不同或额外文件不能通过此功能消除。
+              </p>
+              <label>
+                素材剔除原因
+                <input
+                  value={revisionNote}
+                  onChange={(event) => setRevisionNote(event.target.value)}
+                  placeholder="例如：客户隐私要求，禁止对外移交"
+                  maxLength={500}
+                  disabled={busy}
+                />
+              </label>
+              <label className="manifest-confirm">
+                <input
+                  type="checkbox"
+                  checked={revisionConfirmed}
+                  onChange={(event) => setRevisionConfirmed(event.target.checked)}
+                  disabled={busy}
+                />
+                <span>
+                  我确认这些文件是有意剔除，不是漏拷、损坏或误删；我理解原始清单与修订清单将保留审计关联。
+                </span>
+              </label>
+              <label>
+                输入“修改 MHL”确认
+                <input
+                  value={revisionPhrase}
+                  onChange={(event) => setRevisionPhrase(event.target.value)}
+                  placeholder="修改 MHL"
+                  autoComplete="off"
+                  disabled={busy}
+                />
+              </label>
+              <Button
+                kind="danger"
+                disabled={
+                  busy ||
+                  !revisionConfirmed ||
+                  revisionNote.trim().length < 2 ||
+                  revisionPhrase.trim() !== "修改 MHL"
+                }
+                onClick={() => {
+                  const jobId = crypto.randomUUID();
+                  jobIdRef.current = jobId;
+                  setProgress(null);
+                  setError("");
+                  setBusy(true);
+                  void api
+                    .reviseExistingManifestMissing(
+                      task.id,
+                      revisionNote,
+                      revisionPhrase,
+                    )
+                    .then(async (result) => {
+                      await api.reverifyExistingManifest(task.id, jobId);
+                      await onCompleted(
+                        `已从生效 MHL 排除 ${result.excluded.length} 个有意剔除记录，原始清单已保存到审计历史，并通过完整重校验`,
+                      );
+                    })
+                    .catch((reason) => setError(readableError(reason)))
+                    .finally(() => setBusy(false));
+                }}
+              >
+                <AlertTriangle size={15} />
+                修订 MHL 并重新完整校验
               </Button>
             </div>
           )}
@@ -4104,20 +4214,22 @@ function HelpPage({
     {
       id: "manifest-differences",
       icon: AlertTriangle,
-      title: "处理外部清单差异（0.1.11）",
+      title: "处理外部清单差异（0.1.12）",
       purpose: "查看缺少、额外、大小或校验值不同的完整文件列表，并安全完成处理。",
       steps: [
         "在拍摄项目的素材卷明细中点击红色“清单差异”状态。",
         "使用 Finder 按钮打开素材卷、外部清单或具体差异文件的位置。",
         "出现“缺少”时，可选择同一素材卡根目录、对应素材子目录或其上级目录；Kocpy 只接受唯一完整的路径映射。",
         "映射确定后先检查容量并验证全部源文件，再统一暂存、校验、提交，最后执行整卷重校验。",
+        "若缺失文件确实由操作人主动剔除，可填写原因、勾选风险确认并输入“修改 MHL”，经审计修订生效清单。",
         "只出现“额外”时，先检查文件内容；若确属有效素材且已有完整首次基线，可明确确认并采用当前基线。",
         "手工处理文件后也可以点击“重新完整核对”，只有整卷清单通过后才会恢复绿色状态。",
       ],
       tips: [
         "存在多种完整映射，或健康副本有任一文件大小、校验值不符时，修复会在写入前停止。",
         "确认额外文件不会修改原 MHL；原始差异和确认时间都会保留在审计记录中。",
-        "缺失、大小不同或校验值不同不能通过人工确认跳过。",
+        "修订前原始 MHL 会按 SHA-256 备份到 Kocpy 审计历史；绿色状态会明确显示排除数量，点击可定位原始清单。",
+        "大小不同或校验值不同不能通过清单修订跳过。",
       ],
       page: "projects",
     },
@@ -4189,7 +4301,7 @@ function HelpPage({
       <section className="panel help-start">
         <div>
           <span className="mini-label">
-            <BookOpen size={13} /> KOCPY 0.1.11 · QUICK START
+            <BookOpen size={13} /> KOCPY 0.1.12 · QUICK START
           </span>
           <h2>软件使用说明</h2>
           <p>
@@ -4214,9 +4326,9 @@ function HelpPage({
       <section className="help-release-note">
         <RefreshCw size={20} />
         <div>
-          <strong>0.1.11：重组目录中的健康副本也可安全修复</strong>
+          <strong>0.1.12：有意剔除素材可经审计修订 MHL</strong>
           <p>
-            健康副本不再要求复制 MHL 的完整上层目录。Kocpy 会寻找唯一且完整的路径映射，预检全部文件后统一暂存、校验并提交；映射歧义或内容不符时不会写入。
+            对于因隐私、授权或交付范围而主动剔除的素材，可在强确认后修订生效 MHL。原始清单按 SHA-256 保存到审计历史，修订后仍需整卷重校验，并明确标记排除数量。
           </p>
         </div>
       </section>
@@ -5837,7 +5949,7 @@ function SettingsPage({
         <img src="./icon.png" alt="Kocpy 图标" />
         <div>
           <h3>
-            Kocpy <span>0.1.11</span>
+            Kocpy <span>0.1.12</span>
           </h3>
           <p>从现场接卡、项目归档到交付报告，为每一份创作保留可靠副本。</p>
           <small>本地优先 · 独立校验 · 项目全周期记录 · @sexyfeifan</small>

@@ -125,11 +125,21 @@ export interface ExternalManifestComparison {
   }>;
   checksumMismatches: string[];
   checkedAt: number;
-  resolution?: {
-    type: "accepted-extra";
-    resolvedAt: number;
-    note: string;
-  };
+  resolution?:
+    | {
+        type: "accepted-extra";
+        resolvedAt: number;
+        note: string;
+      }
+    | {
+        type: "revised-missing";
+        resolvedAt: number;
+        note: string;
+        excluded: string[];
+        originalManifestSha256: string;
+        revisedManifestSha256: string;
+        auditPath: string;
+      };
 }
 
 export interface BackupTask {

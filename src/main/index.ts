@@ -82,6 +82,7 @@ import {
   previewExistingBackup,
   projectCoverage,
   repairMissingManifestFiles,
+  reviseMhlMissingEntries,
 } from "./production-lifecycle";
 import { LanProjectIndex } from "./lan-index";
 import {
@@ -2178,6 +2179,11 @@ app.whenReady().then(async () => {
             },
           },
         );
+        if (
+          verified.externalManifest &&
+          previousComparison.resolution?.type === "revised-missing"
+        )
+          verified.externalManifest.resolution = previousComparison.resolution;
         if (verified.status !== "completed") {
           if (
             verified.externalManifest &&
@@ -2256,6 +2262,56 @@ app.whenReady().then(async () => {
     return task;
   });
   handle(
+    "existing:revise-manifest-missing",
+    async (taskId: string, note: string, confirmation: string) => {
+      const task = engine.getTask(taskId),
+        comparison = task?.externalManifest;
+      if (!task || !comparison || comparison.status !== "mismatch")
+        throw new Error("没有可修订的外部清单差异");
+      if (
+        !comparison.missing.length ||
+        comparison.extra.length ||
+        comparison.sizeMismatches.length ||
+        comparison.checksumMismatches.length
+      )
+        throw new Error("只有单纯缺失、没有其他清单异常时才允许修订 MHL");
+      if (confirmation.trim() !== "修改 MHL")
+        throw new Error("请输入“修改 MHL”完成重要确认");
+      note = note.trim();
+      if (note.length < 2 || note.length > 500)
+        throw new Error("请填写 2–500 个字符的素材剔除原因");
+      const targetRoot = await canonical(task.sourcePath),
+        manifestPath = await canonical(comparison.path);
+      if (!inside(manifestPath, targetRoot))
+        throw new Error("外部 MHL 不在当前素材卷目录内，拒绝修改");
+      const result = await reviseMhlMissingEntries(
+          manifestPath,
+          comparison.missing,
+          path.join(targetRoot, ".kocpy-manifest-history"),
+        ),
+        revised = await inspectExternalManifest(targetRoot);
+      if (!revised || revised.status === "mismatch" || revised.status === "unsupported")
+        throw new Error("MHL 已保存审计副本，但修订结果仍有差异，请重新完整核对");
+      revised.resolution = {
+        type: "revised-missing",
+        resolvedAt: Date.now(),
+        note,
+        excluded: result.excluded,
+        originalManifestSha256: result.originalManifestSha256,
+        revisedManifestSha256: result.revisedManifestSha256,
+        auditPath: result.auditPath,
+      };
+      task.externalManifest = revised;
+      task.errorMessage = "MHL 已按用户确认修订，等待完整重校验";
+      task.verifyLog = [
+        ...task.verifyLog,
+        `用户经重要确认从 MHL 排除 ${result.excluded.length} 个缺失记录；原因：${note}；原始清单 SHA-256 ${result.originalManifestSha256}；审计副本 ${result.auditPath}`,
+      ].slice(-120);
+      await Promise.all([persist(), catalog.upsertTask(task)]);
+      return result;
+    },
+  );
+  handle(
     "existing:reveal-manifest-item",
     async (taskId: string, relativePath?: string) => {
       const task = engine.getTask(taskId);
@@ -2273,6 +2329,15 @@ app.whenReady().then(async () => {
       return true;
     },
   );
+  handle("existing:reveal-manifest-audit", async (taskId: string) => {
+    const task = engine.getTask(taskId),
+      resolution = task?.externalManifest?.resolution;
+    if (!task || resolution?.type !== "revised-missing")
+      throw new Error("这份素材卷没有 MHL 修订审计记录");
+    await fs.access(resolution.auditPath);
+    shell.showItemInFolder(resolution.auditPath);
+    return true;
+  });
   handle("library:relink", async (taskId: string, relativePath: string) => {
     const task = engine.getTask(taskId),
       record = task?.fileRecords.find(

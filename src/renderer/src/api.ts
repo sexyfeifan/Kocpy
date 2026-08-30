@@ -231,10 +231,21 @@ export interface API {
     jobId?: string,
   ): Promise<BackupTask>;
   acceptExistingManifestExtra(taskId: string): Promise<BackupTask>;
+  reviseExistingManifestMissing(
+    taskId: string,
+    note: string,
+    confirmation: string,
+  ): Promise<{
+    excluded: string[];
+    originalManifestSha256: string;
+    revisedManifestSha256: string;
+    auditPath: string;
+  }>;
   revealExistingManifestItem(
     taskId: string,
     relativePath?: string,
   ): Promise<void>;
+  revealExistingManifestAudit(taskId: string): Promise<void>;
   relinkLibraryFile(
     taskId: string,
     relativePath: string,

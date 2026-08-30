@@ -8,7 +8,7 @@
 
 ![Kocpy 工作台](docs/screenshots/dashboard.png)
 
-当前版本：**0.1.11** · [完整使用手册](docs/USER_GUIDE.md) · [0.1.11 更新说明](docs/RELEASE_NOTES_0.1.11.md) · [下载最新版](https://github.com/sexyfeifan/Kocpy/releases/latest)
+当前版本：**0.1.12** · [完整使用手册](docs/USER_GUIDE.md) · [0.1.12 更新说明](docs/RELEASE_NOTES_0.1.12.md) · [下载最新版](https://github.com/sexyfeifan/Kocpy/releases/latest)
 
 ## 中文
 
@@ -62,6 +62,8 @@ Kocpy 将素材卡接收、多目标备份、逐目标回读校验、项目归�
 0.1.10 将素材卷明细中的清单差异改为可点击的处理入口：可以查看全部差异路径并在 Finder 中定位；缺失文件可从用户选择的同卷健康副本补回，写入前后均按原清单校验，随后自动整卷重校验；单纯的额外文件可在已有完整哈希基线后由用户明确确认。原 MHL 不会被修改，差异与处理决定会保留在审计记录中。
 
 0.1.11 修复健康副本经过目录重组后无法补回的问题。用户可选择素材卡根目录、对应素材子目录或其上级目录；Kocpy 只在找到唯一且完整的清单路径映射时继续，并在写入前校验全部源文件与剩余空间。文件会先在目标卷统一暂存并回读校验，再安全提交；歧义、内容不符或中途失败均不会留下半套修复结果。
+
+0.1.12 增加“操作人有意剔除素材”的经审计 MHL 修订流程。仅有纯缺失差异时，用户填写原因、勾选风险确认并输入指定文字后，Kocpy 才允许从生效 MHL 排除这些记录。原始清单会先按 SHA-256 备份到素材卷内隐藏的审计目录，并随素材卷迁移；修订清单自检和整卷重校验通过后，素材卷明确显示排除数量，并可随时定位原始 MHL。素材文件不会被删除，大小或哈希异常不能借此跳过。
 
 项目完成后可导出：
 
@@ -117,8 +119,8 @@ Kocpy 支持真实深色与浅色外观，任务、项目、偏好、缩略图�
 
 从 [GitHub Releases](https://github.com/sexyfeifan/Kocpy/releases) 下载对应架构：
 
-- `Kocpy-0.1.11-arm64.dmg`：Apple Silicon Mac
-- `Kocpy-0.1.11-x64.dmg`：Intel Mac
+- `Kocpy-0.1.12-arm64.dmg`：Apple Silicon Mac
+- `Kocpy-0.1.12-x64.dmg`：Intel Mac
 
 打开 DMG，将 Kocpy 拖入“应用程序”。当前公开包尚未使用 Apple Developer ID 签名和公证。若 macOS 明确提示应用“已损坏”，请先确认文件来自本仓库官方 Release，再执行：
 
@@ -136,7 +138,7 @@ Project mode organizes media by project, shooting date, camera, optional A–E c
 
 Kocpy also includes media thumbnails and metadata, H.264/ProRes proxy queues, Resolve CSV export, light/dark appearance, update checks, and architecture-specific DMGs for Apple Silicon and Intel Macs. An in-app guide documents every module with steps, safety notes, and direct links. Media and records stay on the Mac unless the user explicitly selects a report mirror folder.
 
-Version 0.1.11 can safely restore missing manifest files even when a healthy copy has been reorganized. Users may select the card root, the matching media subfolder, or an ancestor. Kocpy proceeds only when it finds one unique complete mapping, verifies every source before writing, stages and rechecks the full repair set, and then commits without overwriting existing files. Ambiguous or mismatched copies are rejected before modification.
+Version 0.1.12 adds an audited MHL revision workflow for media intentionally withheld due to privacy, rights, or delivery scope. It is available only for pure missing-file differences and requires a reason, a risk acknowledgement, and typed confirmation. Kocpy preserves the original MHL with its SHA-256 in local audit history, validates the revised manifest, fully reverifies the retained media set, and labels the result with the exclusion count. It never deletes media, and size or checksum mismatches cannot be waived.
 
 ## 日本語
 
@@ -146,7 +148,7 @@ Kocpy は、macOS 向けのローカル優先メディアバックアップ／�
 
 素材サムネイルとメタデータ、H.264／ProRes プロキシキュー、Resolve CSV、ライト／ダーク表示、更新確認、Apple Silicon／Intel 用 DMG も備えています。アプリ内ガイドでは、各機能の手順、注意事項、画面への直接リンクを確認できます。素材と記録は、ユーザーが明示的にレポート同期先を選ばない限り Mac 内に保持されます。
 
-バージョン 0.1.11 では、正常コピーのフォルダ構成が変更されていても不足ファイルを安全に復元できます。カードのルート、対応する素材サブフォルダ、またはその上位フォルダを選択できます。Kocpy は一意で完全なパスマッピングが得られた場合だけ処理を続け、全ソースを事前検証してから一括ステージング、再検証、非上書きコミットを行います。
+バージョン 0.1.12 では、プライバシー、権利、納品範囲の理由で意図的に除外した素材について、監査可能な MHL 改訂フローを追加しました。純粋な不足差異の場合のみ利用でき、理由、リスク確認、指定文字の入力が必要です。元の MHL と SHA-256 は監査履歴に保存され、改訂後のマニフェストを自己検証してから保持素材全体を再検証します。素材ファイルは削除せず、サイズやハッシュの異常を免除することはできません。
 
 ## License
 

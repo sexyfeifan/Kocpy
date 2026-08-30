@@ -2835,6 +2835,8 @@ small {
 }
 .manifest-action-card p { margin:0; color:var(--muted); font-size:10px; line-height:1.75; }
 .manifest-action-card > .btn { justify-self:start; }
-.manifest-confirm { display:flex; align-items:flex-start; gap:9px; color:var(--sub); font-size:10px; line-height:1.6; }
+.form-body label.manifest-confirm { display:flex; flex-direction:row; align-items:flex-start; gap:9px; color:var(--sub); font-size:10px; line-height:1.6; margin-bottom:0; }
 .manifest-confirm input { width:14px; height:14px; margin-top:1px; flex:0 0 auto; accent-color:var(--purple); }
+.manifest-revision-card { border-color:#dc66743d; background:#dc667408; }
+.manifest-revision-card > label:not(.manifest-confirm) { margin:0; }
 .notice.compact { margin:0; padding:9px 11px; }
