@@ -124,6 +124,12 @@ export interface ExternalManifestComparison {
     actual: number;
   }>;
   checksumMismatches: string[];
+  pathCollisionHints?: Array<{
+    missingPath: string;
+    extraPath: string;
+    expectedSize?: number;
+    actualSize: number;
+  }>;
   checkedAt: number;
   resolution?:
     | {

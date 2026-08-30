@@ -527,6 +527,36 @@ function compareManifestStructure(
   }
   for (const relativePath of actual.keys())
     if (!manifest.entries.has(relativePath)) extra.push(relativePath);
+  const collisionKey = (relativePath: string) => {
+      const parsed = path.parse(relativePath),
+        stem = parsed.name.replace(/\s*\(\d+\)$/u, "");
+      return path
+        .join(parsed.dir, `${stem}${parsed.ext}`)
+        .normalize("NFC")
+        .toLocaleLowerCase();
+    },
+    extrasByCollisionKey = new Map<string, string[]>();
+  for (const relativePath of extra) {
+    const key = collisionKey(relativePath),
+      values = extrasByCollisionKey.get(key) || [];
+    values.push(relativePath);
+    extrasByCollisionKey.set(key, values);
+  }
+  const pathCollisionHints = missing.flatMap((missingPath) => {
+    const candidates = extrasByCollisionKey.get(collisionKey(missingPath)) || [];
+    if (candidates.length !== 1 || candidates[0] === missingPath) return [];
+    const extraPath = candidates[0],
+      current = actual.get(extraPath),
+      expected = manifest.entries.get(missingPath);
+    return current
+      ? [{
+          missingPath,
+          extraPath,
+          expectedSize: expected?.size,
+          actualSize: current.size,
+        }]
+      : [];
+  });
   const mismatch = Boolean(missing.length || extra.length || sizeMismatches.length);
   return {
     path: manifest.file,
@@ -542,6 +572,7 @@ function compareManifestStructure(
     extra,
     sizeMismatches,
     checksumMismatches: [],
+    pathCollisionHints,
     checkedAt: Date.now(),
   };
 }

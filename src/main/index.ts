@@ -2191,11 +2191,36 @@ app.whenReady().then(async () => {
             sameManifestDifferences(previousComparison, verified.externalManifest)
           )
             verified.externalManifest.resolution = previousComparison.resolution;
-          task.externalManifest = verified.externalManifest;
-          task.errorMessage = verified.errorMessage;
-          task.verifyLog = [...task.verifyLog, ...verified.verifyLog].slice(-120);
+          const originalDestination = task.destinations[0],
+            verifiedDestination = verified.destinations[0];
+          verified.destinations[0] = {
+            ...originalDestination,
+            ...verifiedDestination,
+            id: originalDestination?.id || verifiedDestination.id,
+            volumeId: originalDestination?.volumeId,
+            volumeUuid: originalDestination?.volumeUuid,
+            volumeName: originalDestination?.volumeName,
+          };
+          const originalId = task.id,
+            originalCreatedAt = task.createdAt,
+            log = task.verifyLog;
+          Object.assign(task, verified, {
+            id: originalId,
+            createdAt: originalCreatedAt,
+            verifyLog: [...log, ...verified.verifyLog].slice(-120),
+          });
           await Promise.all([persist(), catalog.upsertTask(task)]);
-          throw new Error(verified.errorMessage || "外部清单仍不匹配");
+          completedBytes = totalBytes;
+          completedFiles = totalFiles;
+          emit(
+            "completed",
+            verified.errorMessage
+              ? `完整核对完成，${verified.errorMessage}`
+              : "完整核对完成，外部清单仍有差异",
+            undefined,
+            true,
+          );
+          return task;
         }
         const originalDestination = task.destinations[0],
           verifiedDestination = verified.destinations[0];

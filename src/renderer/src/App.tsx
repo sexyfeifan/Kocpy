@@ -688,7 +688,7 @@ export function App() {
           <img src="./icon.png" alt="Kocpy 图标" />
           <div>
             <strong>
-              Kocpy<span>0.1.12</span>
+              Kocpy<span>0.1.13</span>
             </strong>
             <small>素材工作台</small>
           </div>
@@ -745,7 +745,7 @@ export function App() {
                   ? `可升级 ${updateInfo.latest}`
                   : "检查更新"}
               </span>
-              <b>v0.1.12</b>
+              <b>v0.1.13</b>
             </button>
             <div className="sidebar-author-links">
               <span>
@@ -2363,6 +2363,10 @@ export function App() {
               await refresh();
               notify(message);
             }}
+            onUpdated={async (message) => {
+              await refresh();
+              notify(message);
+            }}
           />
         )}
       </div>
@@ -3467,24 +3471,29 @@ function ExistingImportModal({
 }
 
 function ManifestIssueModal({
-  task,
+  task: initialTask,
   onClose,
   onCompleted,
+  onUpdated,
 }: {
   task: BackupTask;
   onClose: () => void;
   onCompleted: (message: string) => Promise<void>;
+  onUpdated: (message: string) => Promise<void>;
 }) {
-  const comparison = task.externalManifest;
-  const [busy, setBusy] = useState(false),
+  const [task, setTask] = useState(initialTask),
+    [busy, setBusy] = useState(false),
     [progress, setProgress] = useState<ExistingImportProgress | null>(null),
     [error, setError] = useState(""),
+    [success, setSuccess] = useState(""),
     [repairConfirmed, setRepairConfirmed] = useState(false),
     [extraConfirmed, setExtraConfirmed] = useState(false),
     [revisionConfirmed, setRevisionConfirmed] = useState(false),
     [revisionNote, setRevisionNote] = useState(""),
     [revisionPhrase, setRevisionPhrase] = useState("");
+  const comparison = task.externalManifest;
   const jobIdRef = useRef("");
+  useEffect(() => setTask(initialTask), [initialTask]);
   useEffect(
     () =>
       api.onExistingImportProgress((payload) => {
@@ -3496,6 +3505,21 @@ function ManifestIssueModal({
   const percent = progress?.totalBytes
       ? Math.min(100, (progress.completedBytes / progress.totalBytes) * 100)
       : 0,
+    mixedDifference =
+      comparison.missing.length > 0 &&
+      (comparison.extra.length > 0 ||
+        comparison.sizeMismatches.length > 0 ||
+        comparison.checksumMismatches.length > 0),
+    actualSizes = new Map(
+      task.fileRecords.map((record) => [
+        record.relativePath.replace(/[\\/]+/g, "/").normalize("NFC"),
+        record.size,
+      ]),
+    ),
+    zeroByteExtras = comparison.extra.filter(
+      (relativePath) =>
+        actualSizes.get(relativePath.replace(/[\\/]+/g, "/").normalize("NFC")) === 0,
+    ),
     extraOnly =
       comparison.extra.length > 0 &&
       !comparison.missing.length &&
@@ -3512,14 +3536,53 @@ function ManifestIssueModal({
       !comparison.sizeMismatches.length &&
       !comparison.checksumMismatches.length &&
       /\.mhl$/i.test(comparison.path);
+  const remainingDifference = (value: BackupTask) => {
+    const manifest = value.externalManifest;
+    if (!manifest || manifest.status !== "mismatch") return "";
+    return [
+      manifest.missing.length && `缺少 ${manifest.missing.length}`,
+      manifest.extra.length && `额外 ${manifest.extra.length}`,
+      manifest.sizeMismatches.length && `大小不同 ${manifest.sizeMismatches.length}`,
+      manifest.checksumMismatches.length && `校验不同 ${manifest.checksumMismatches.length}`,
+    ]
+      .filter(Boolean)
+      .join("、");
+  };
+  const applyVerificationResult = async (
+    verified: BackupTask,
+    completedMessage: string,
+    partialPrefix = "完整核对已完成",
+  ) => {
+    const remaining = remainingDifference(verified);
+    if (
+      remaining &&
+      verified.externalManifest?.resolution?.type !== "accepted-extra"
+    ) {
+      setTask(verified);
+      setRepairConfirmed(false);
+      setExtraConfirmed(false);
+      setRevisionConfirmed(false);
+      const message = `${partialPrefix}；仍需处理：${remaining}`;
+      setSuccess(message);
+      await onUpdated(message);
+      return;
+    }
+    await onCompleted(completedMessage);
+  };
   const reverify = async (jobId = crypto.randomUUID()) => {
     jobIdRef.current = jobId;
     setProgress(null);
     setError("");
+    setSuccess("");
     setBusy(true);
     try {
-      await api.reverifyExistingManifest(task.id, jobId);
-      await onCompleted("外部清单完整校验通过，项目收工状态已刷新");
+      const verified = await api.reverifyExistingManifest(task.id, jobId);
+      await applyVerificationResult(
+        verified,
+        verified.externalManifest?.resolution?.type === "accepted-extra"
+          ? "完整核对完成，已确认的额外文件集合没有变化"
+          : "外部清单完整校验通过，项目收工状态已刷新",
+      );
     } catch (reason) {
       setError(readableError(reason));
     } finally {
@@ -3584,6 +3647,47 @@ function ManifestIssueModal({
               这是当前素材卷与外部清单的真实逐路径对比。红色状态不会自动算作安全副本；修复或确认后会保留审计记录。
             </span>
           </div>
+          {mixedDifference && (
+            <div className="manifest-workflow-notice">
+              <strong>这是混合差异，请按顺序处理</strong>
+              <ol>
+                <li>先从健康副本补回清单缺少的文件。</li>
+                <li>Kocpy 自动重新完整核对，并保留已经成功的修复。</li>
+                <li>再检查剩余的额外文件：误放或空文件应移出素材卷；有效文件应建立当前哈希基线后确认。</li>
+              </ol>
+            </div>
+          )}
+          {!!comparison.pathCollisionHints?.length && (
+            <div className="notice amber manifest-collision-notice">
+              <Info size={17} />
+              <div>
+                <strong>
+                  发现 {comparison.pathCollisionHints.length} 组疑似同名冲突
+                </strong>
+                <p>
+                  文件名相似不代表内容相同，Kocpy 不会把带“(1)”的清单文件与另一个文件自动视为同一文件。
+                </p>
+                {comparison.pathCollisionHints.map((hint) => (
+                  <small
+                    className="mono"
+                    key={`${hint.missingPath}-${hint.extraPath}`}
+                  >
+                    清单：{hint.missingPath} · {hint.expectedSize === undefined ? "大小未记录" : bytes(hint.expectedSize)}
+                    <br />
+                    当前：{hint.extraPath} · {bytes(hint.actualSize)}
+                  </small>
+                ))}
+              </div>
+            </div>
+          )}
+          {!!zeroByteExtras.length && (
+            <div className="notice amber compact">
+              <AlertTriangle size={16} />
+              <span>
+                发现 {zeroByteExtras.length} 个 0 字节额外文件。空文件不能替代清单中的有效素材；建议先在 Finder 中确认并移出素材卷，不建议直接采用为可信基线。
+              </span>
+            </div>
+          )}
           <div className="import-preview">
             <strong>
               {task.shootingDate?.replace(/-/g, "")} · {task.devices.join("/")} · {task.name}
@@ -3622,7 +3726,7 @@ function ManifestIssueModal({
           {list("文件校验值不同", comparison.checksumMismatches, "different")}
           {comparison.missing.length > 0 && (
             <div className="manifest-action-card">
-              <strong>补回缺失文件</strong>
+              <strong>{mixedDifference ? "第 1 步：先补回缺失文件" : "补回缺失文件"}</strong>
               <p>
                 可选择同一张素材卡、对应素材子目录或其上级目录。Kocpy
                 只接受唯一一致的目录映射，并会在写入前按清单预检全部缺失文件；全部通过后才暂存、提交并自动完整重校验。
@@ -3644,15 +3748,21 @@ function ManifestIssueModal({
                   jobIdRef.current = jobId;
                   setProgress(null);
                   setError("");
+                  setSuccess("");
                   setBusy(true);
                   void api
                     .repairExistingManifest(task.id, jobId)
                     .then(async (result) => {
                       if (!result) return;
                       setProgress(null);
-                      await api.reverifyExistingManifest(task.id, jobId);
-                      await onCompleted(
+                      const verified = await api.reverifyExistingManifest(
+                        task.id,
+                        jobId,
+                      );
+                      await applyVerificationResult(
+                        verified,
                         `已从 ${leaf(result.sourceRoot)} 映射到 ${result.manifestRoot}，安全补回 ${result.files} 个文件并通过完整清单校验`,
+                        `已安全补回 ${result.files} 个缺失文件`,
                       );
                     })
                     .catch((reason) => setError(readableError(reason)))
@@ -3664,7 +3774,9 @@ function ManifestIssueModal({
                 ) : (
                   <ShieldCheck size={15} />
                 )}
-                选择健康副本并修复、校验
+                {mixedDifference
+                  ? "选择健康副本，补回后继续检查"
+                  : "选择健康副本并修复、校验"}
               </Button>
             </div>
           )}
@@ -3748,15 +3860,49 @@ function ManifestIssueModal({
           )}
           {extraOnly && (
             <div className="manifest-action-card">
-              <strong>确认额外文件</strong>
+              <strong>下一步：处理额外文件</strong>
               <p>
-                如果上方文件确属有效素材，可保留外部清单的差异记录，并以 Kocpy 已建立的完整哈希基线作为当前可信状态。此操作不会修改原 MHL。
+                如果它是误放文件或 0 字节空文件，请先在 Finder 中将其移出素材卷，再点击“重新完整核对”。如果它确属有效素材，可建立当前完整哈希基线后确认保留。此操作不会修改原 MHL。
               </p>
               {!canAcceptExtra && !comparison.resolution && (
                 <div className="notice amber compact">
                   <Info size={15} />
-                  <span>请先返回并为这份素材卷建立首次哈希基线。</span>
+                  <span>
+                    确认保留前必须逐文件读取当前素材卷并建立完整哈希基线，可直接在这里完成。
+                  </span>
                 </div>
+              )}
+              {!canAcceptExtra && !comparison.resolution && (
+                <Button
+                  kind="subtle"
+                  disabled={busy}
+                  onClick={() => {
+                    const jobId = crypto.randomUUID();
+                    jobIdRef.current = jobId;
+                    setProgress(null);
+                    setError("");
+                    setSuccess("");
+                    setBusy(true);
+                    void api
+                      .establishExistingBaseline(task.id, jobId)
+                      .then(async (baselined) => {
+                        setTask(baselined);
+                        const message =
+                          "当前素材卷已逐文件读取并建立完整哈希基线；请检查额外文件后再确认是否保留";
+                        setSuccess(message);
+                        await onUpdated(message);
+                      })
+                      .catch((reason) => setError(readableError(reason)))
+                      .finally(() => setBusy(false));
+                  }}
+                >
+                  {busy ? (
+                    <LoaderCircle size={15} className="spin" />
+                  ) : (
+                    <ShieldCheck size={15} />
+                  )}
+                  建立当前完整哈希基线
+                </Button>
               )}
               <label className="manifest-confirm">
                 <input
@@ -3773,6 +3919,7 @@ function ManifestIssueModal({
                 onClick={() => {
                   setBusy(true);
                   setError("");
+                  setSuccess("");
                   void api
                     .acceptExistingManifestExtra(task.id)
                     .then(() =>
@@ -3811,6 +3958,12 @@ function ManifestIssueModal({
               {progress.currentFile && (
                 <small className="mono">{progress.currentFile}</small>
               )}
+            </div>
+          )}
+          {success && (
+            <div className="success-box">
+              <CheckCircle2 size={17} />
+              {success}
             </div>
           )}
           {error && <div className="error-box">{error}</div>}
@@ -4214,15 +4367,17 @@ function HelpPage({
     {
       id: "manifest-differences",
       icon: AlertTriangle,
-      title: "处理外部清单差异（0.1.12）",
+      title: "处理外部清单差异（0.1.13）",
       purpose: "查看缺少、额外、大小或校验值不同的完整文件列表，并安全完成处理。",
       steps: [
         "在拍摄项目的素材卷明细中点击红色“清单差异”状态。",
         "使用 Finder 按钮打开素材卷、外部清单或具体差异文件的位置。",
+        "同时出现缺少和额外文件时，先按弹窗顺序补回缺失文件；成功修复会保留，剩余额外文件会原地刷新显示。",
+        "带“(1)”的缺失路径与相似额外路径会显示为疑似同名冲突，并分别列出清单大小与当前大小；名称相似不会自动视为同一文件。",
         "出现“缺少”时，可选择同一素材卡根目录、对应素材子目录或其上级目录；Kocpy 只接受唯一完整的路径映射。",
         "映射确定后先检查容量并验证全部源文件，再统一暂存、校验、提交，最后执行整卷重校验。",
         "若缺失文件确实由操作人主动剔除，可填写原因、勾选风险确认并输入“修改 MHL”，经审计修订生效清单。",
-        "只出现“额外”时，先检查文件内容；若确属有效素材且已有完整首次基线，可明确确认并采用当前基线。",
+        "只出现“额外”时，先检查文件内容；0 字节文件建议移出素材卷。有效文件可直接在弹窗建立当前完整哈希基线，再明确确认保留。",
         "手工处理文件后也可以点击“重新完整核对”，只有整卷清单通过后才会恢复绿色状态。",
       ],
       tips: [
@@ -4301,7 +4456,7 @@ function HelpPage({
       <section className="panel help-start">
         <div>
           <span className="mini-label">
-            <BookOpen size={13} /> KOCPY 0.1.12 · QUICK START
+            <BookOpen size={13} /> KOCPY 0.1.13 · QUICK START
           </span>
           <h2>软件使用说明</h2>
           <p>
@@ -4326,9 +4481,9 @@ function HelpPage({
       <section className="help-release-note">
         <RefreshCw size={20} />
         <div>
-          <strong>0.1.12：有意剔除素材可经审计修订 MHL</strong>
+          <strong>0.1.13：混合清单差异按步骤处理</strong>
           <p>
-            对于因隐私、授权或交付范围而主动剔除的素材，可在强确认后修订生效 MHL。原始清单按 SHA-256 保存到审计历史，修订后仍需整卷重校验，并明确标记排除数量。
+            缺失与额外文件同时出现时，Kocpy 会识别疑似同名冲突和 0 字节文件，先安全补回缺失内容，再原地显示剩余差异；有效额外文件可在同一弹窗建立哈希基线后确认。
           </p>
         </div>
       </section>
@@ -5949,7 +6104,7 @@ function SettingsPage({
         <img src="./icon.png" alt="Kocpy 图标" />
         <div>
           <h3>
-            Kocpy <span>0.1.12</span>
+            Kocpy <span>0.1.13</span>
           </h3>
           <p>从现场接卡、项目归档到交付报告，为每一份创作保留可靠副本。</p>
           <small>本地优先 · 独立校验 · 项目全周期记录 · @sexyfeifan</small>

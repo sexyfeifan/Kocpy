@@ -2788,6 +2788,24 @@ small {
 }
 .manifest-issue-modal { width: min(820px, calc(100vw - 48px)); }
 .manifest-path-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; }
+.manifest-workflow-notice {
+  display:grid;
+  gap:7px;
+  margin-top:12px;
+  padding:12px 14px;
+  border:1px solid #a99aff38;
+  border-radius:10px;
+  background:#a99aff09;
+  color:var(--sub);
+  font-size:10px;
+  line-height:1.65;
+}
+.manifest-workflow-notice strong { color:var(--text); }
+.manifest-workflow-notice ol { margin:0; padding-left:18px; }
+.manifest-collision-notice { align-items:flex-start; }
+.manifest-collision-notice > div { display:grid; gap:6px; min-width:0; }
+.manifest-collision-notice p { margin:0; line-height:1.6; }
+.manifest-collision-notice small { overflow-wrap:anywhere; line-height:1.7; }
 .manifest-difference-group {
   display:grid;
   gap:9px;

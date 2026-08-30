@@ -8,7 +8,7 @@
 
 ![Kocpy 工作台](docs/screenshots/dashboard.png)
 
-当前版本：**0.1.12** · [完整使用手册](docs/USER_GUIDE.md) · [0.1.12 更新说明](docs/RELEASE_NOTES_0.1.12.md) · [下载最新版](https://github.com/sexyfeifan/Kocpy/releases/latest)
+当前版本：**0.1.13** · [完整使用手册](docs/USER_GUIDE.md) · [0.1.13 更新说明](docs/RELEASE_NOTES_0.1.13.md) · [下载最新版](https://github.com/sexyfeifan/Kocpy/releases/latest)
 
 ## 中文
 
@@ -65,6 +65,8 @@ Kocpy 将素材卡接收、多目标备份、逐目标回读校验、项目归�
 
 0.1.12 增加“操作人有意剔除素材”的经审计 MHL 修订流程。仅有纯缺失差异时，用户填写原因、勾选风险确认并输入指定文字后，Kocpy 才允许从生效 MHL 排除这些记录。原始清单会先按 SHA-256 备份到素材卷内隐藏的审计目录，并随素材卷迁移；修订清单自检和整卷重校验通过后，素材卷明确显示排除数量，并可随时定位原始 MHL。素材文件不会被删除，大小或哈希异常不能借此跳过。
 
+0.1.13 优化“缺失 + 额外”混合清单差异：弹窗明确给出先补回、再核对、最后处理额外文件的顺序；修复成功后即使仍有差异，也会保留修复结果并原地刷新，不再显示成远程调用错误。带 `(1)` 的缺失路径与相似额外路径会作为疑似同名冲突列出双方大小，0 字节额外文件会单独警告。有效额外文件可直接在同一弹窗建立完整当前哈希基线后确认，无需退出重进。
+
 项目完成后可导出：
 
 - 项目完整 PDF：项目总览、日期与设备矩阵、全部素材卷、目的地、校验结论和完整文件明细。
@@ -119,8 +121,8 @@ Kocpy 支持真实深色与浅色外观，任务、项目、偏好、缩略图�
 
 从 [GitHub Releases](https://github.com/sexyfeifan/Kocpy/releases) 下载对应架构：
 
-- `Kocpy-0.1.12-arm64.dmg`：Apple Silicon Mac
-- `Kocpy-0.1.12-x64.dmg`：Intel Mac
+- `Kocpy-0.1.13-arm64.dmg`：Apple Silicon Mac
+- `Kocpy-0.1.13-x64.dmg`：Intel Mac
 
 打开 DMG，将 Kocpy 拖入“应用程序”。当前公开包尚未使用 Apple Developer ID 签名和公证。若 macOS 明确提示应用“已损坏”，请先确认文件来自本仓库官方 Release，再执行：
 
@@ -140,6 +142,8 @@ Kocpy also includes media thumbnails and metadata, H.264/ProRes proxy queues, Re
 
 Version 0.1.12 adds an audited MHL revision workflow for media intentionally withheld due to privacy, rights, or delivery scope. It is available only for pure missing-file differences and requires a reason, a risk acknowledgement, and typed confirmation. Kocpy preserves the original MHL with its SHA-256 in local audit history, validates the revised manifest, fully reverifies the retained media set, and labels the result with the exclusion count. It never deletes media, and size or checksum mismatches cannot be waived.
 
+Version 0.1.13 makes mixed manifest differences actionable in place. Missing files are repaired first, successful repairs remain committed when unrelated extras still need review, likely numbered-name collisions show both expected and actual sizes, and zero-byte extras receive a dedicated warning. A complete current hash baseline can be established from the same dialog before intentionally accepting valid extra files.
+
 ## 日本語
 
 Kocpy は、macOS 向けのローカル優先メディアバックアップ／プロジェクト管理アプリです。1つの素材ソースを最大4つの保存先へコピーし、各コピーを独立して読み戻してチェックサム検証します。大容量ファイルの再開、物理ボリューム識別、容量事前確認に加え、成功済みコピーを保持したまま失敗した保存先だけを再試行できます。
@@ -149,6 +153,8 @@ Kocpy は、macOS 向けのローカル優先メディアバックアップ／�
 素材サムネイルとメタデータ、H.264／ProRes プロキシキュー、Resolve CSV、ライト／ダーク表示、更新確認、Apple Silicon／Intel 用 DMG も備えています。アプリ内ガイドでは、各機能の手順、注意事項、画面への直接リンクを確認できます。素材と記録は、ユーザーが明示的にレポート同期先を選ばない限り Mac 内に保持されます。
 
 バージョン 0.1.12 では、プライバシー、権利、納品範囲の理由で意図的に除外した素材について、監査可能な MHL 改訂フローを追加しました。純粋な不足差異の場合のみ利用でき、理由、リスク確認、指定文字の入力が必要です。元の MHL と SHA-256 は監査履歴に保存され、改訂後のマニフェストを自己検証してから保持素材全体を再検証します。素材ファイルは削除せず、サイズやハッシュの異常を免除することはできません。
+
+バージョン 0.1.13 では、不足と余分なファイルが同時にあるマニフェスト差異を段階的に処理できます。不足ファイルの修復成功は保持され、残る差異は同じ画面で更新されます。番号付き同名候補は双方のサイズを表示し、0 バイトの余分なファイルは個別に警告します。有効な余分ファイルを保持する場合は、同じ画面で現在の完全なハッシュ基準を作成できます。
 
 ## License
 

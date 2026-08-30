@@ -294,6 +294,35 @@ describe("0.1.0 production lifecycle", () => {
       await fs.rm(root, { recursive: true, force: true });
     }
   });
+  it("explains a numbered-name collision without treating files as equivalent", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "kocpy-mhl-collision-"));
+    try {
+      await fs.mkdir(path.join(root, "DCIM", "DJI_001"), { recursive: true });
+      await fs.writeFile(
+        path.join(root, "DCIM", "DJI_001", "DJI_CLIP_D.LRF"),
+        "",
+      );
+      await fs.writeFile(
+        path.join(root, "CARD.mhl"),
+        `<hashlist version="1.1"><hash><file>/DCIM/DJI_001/DJI_CLIP_D(1).LRF</file><size>83918050</size><xxhash>1539034001</xxhash></hash></hashlist>`,
+      );
+      const comparison = await inspectExternalManifest(root);
+      expect(comparison).toMatchObject({
+        missing: ["DCIM/DJI_001/DJI_CLIP_D(1).LRF"],
+        extra: ["DCIM/DJI_001/DJI_CLIP_D.LRF"],
+        pathCollisionHints: [
+          {
+            missingPath: "DCIM/DJI_001/DJI_CLIP_D(1).LRF",
+            extraPath: "DCIM/DJI_001/DJI_CLIP_D.LRF",
+            expectedSize: 83918050,
+            actualSize: 0,
+          },
+        ],
+      });
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
   it("audits the original MHL before excluding intentionally removed files", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "kocpy-mhl-revision-")),
       media = path.join(root, "media"),
