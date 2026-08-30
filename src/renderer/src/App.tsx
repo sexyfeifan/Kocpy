@@ -122,6 +122,11 @@ const navigation: [Page, string, typeof LayoutDashboard][] = [
   ["diagnostics", "诊断中心", Gauge],
   ["help", "使用说明", CircleHelp],
 ];
+const readableError = (reason: unknown) =>
+  String(reason)
+    .replace(/^Error:\s*/i, "")
+    .replace(/^Error invoking remote method ['"][^'"]+['"]:\s*/i, "")
+    .replace(/^Error:\s*/i, "");
 const projectDates = (project: ProjectConfig, tasks: BackupTask[]) => {
   const result: string[] = [],
     start = project.shootingDateStart,
@@ -675,7 +680,7 @@ export function App() {
           <img src="./icon.png" alt="Kocpy 图标" />
           <div>
             <strong>
-              Kocpy<span>0.1.10</span>
+              Kocpy<span>0.1.11</span>
             </strong>
             <small>素材工作台</small>
           </div>
@@ -732,7 +737,7 @@ export function App() {
                   ? `可升级 ${updateInfo.latest}`
                   : "检查更新"}
               </span>
-              <b>v0.1.10</b>
+              <b>v0.1.11</b>
             </button>
             <div className="sidebar-author-links">
               <span>
@@ -3484,7 +3489,7 @@ function ManifestIssueModal({
       await api.reverifyExistingManifest(task.id, jobId);
       await onCompleted("外部清单完整校验通过，项目收工状态已刷新");
     } catch (reason) {
-      setError(String(reason).replace(/^Error: /, ""));
+      setError(readableError(reason));
     } finally {
       setBusy(false);
     }
@@ -3587,7 +3592,8 @@ function ManifestIssueModal({
             <div className="manifest-action-card">
               <strong>补回缺失文件</strong>
               <p>
-                选择同一张素材卡或另一份健康副本的根目录。Kocpy 会先按这份外部清单预检全部缺失文件，全部通过后才写入当前备份；随后自动完整重校验。
+                可选择同一张素材卡、对应素材子目录或其上级目录。Kocpy
+                只接受唯一一致的目录映射，并会在写入前按清单预检全部缺失文件；全部通过后才暂存、提交并自动完整重校验。
               </p>
               <label className="manifest-confirm">
                 <input
@@ -3614,12 +3620,10 @@ function ManifestIssueModal({
                       setProgress(null);
                       await api.reverifyExistingManifest(task.id, jobId);
                       await onCompleted(
-                        `已安全补回 ${result.files} 个文件并通过完整清单校验`,
+                        `已从 ${leaf(result.sourceRoot)} 映射到 ${result.manifestRoot}，安全补回 ${result.files} 个文件并通过完整清单校验`,
                       );
                     })
-                    .catch((reason) =>
-                      setError(String(reason).replace(/^Error: /, "")),
-                    )
+                    .catch((reason) => setError(readableError(reason)))
                     .finally(() => setBusy(false));
                 }}
               >
@@ -3664,9 +3668,7 @@ function ManifestIssueModal({
                     .then(() =>
                       onCompleted("额外文件已确认；外部清单差异已保留在审计记录中"),
                     )
-                    .catch((reason) =>
-                      setError(String(reason).replace(/^Error: /, "")),
-                    )
+                    .catch((reason) => setError(readableError(reason)))
                     .finally(() => setBusy(false));
                 }}
               >
@@ -4102,17 +4104,18 @@ function HelpPage({
     {
       id: "manifest-differences",
       icon: AlertTriangle,
-      title: "处理外部清单差异（0.1.10）",
+      title: "处理外部清单差异（0.1.11）",
       purpose: "查看缺少、额外、大小或校验值不同的完整文件列表，并安全完成处理。",
       steps: [
         "在拍摄项目的素材卷明细中点击红色“清单差异”状态。",
         "使用 Finder 按钮打开素材卷、外部清单或具体差异文件的位置。",
-        "出现“缺少”时，勾选确认并选择同一素材卷的健康副本根目录；Kocpy 会先验证所有候选文件，全部通过后才补回并完整重校验。",
+        "出现“缺少”时，可选择同一素材卡根目录、对应素材子目录或其上级目录；Kocpy 只接受唯一完整的路径映射。",
+        "映射确定后先检查容量并验证全部源文件，再统一暂存、校验、提交，最后执行整卷重校验。",
         "只出现“额外”时，先检查文件内容；若确属有效素材且已有完整首次基线，可明确确认并采用当前基线。",
         "手工处理文件后也可以点击“重新完整核对”，只有整卷清单通过后才会恢复绿色状态。",
       ],
       tips: [
-        "健康副本有任一文件大小或校验值不符时，修复会在写入前停止。",
+        "存在多种完整映射，或健康副本有任一文件大小、校验值不符时，修复会在写入前停止。",
         "确认额外文件不会修改原 MHL；原始差异和确认时间都会保留在审计记录中。",
         "缺失、大小不同或校验值不同不能通过人工确认跳过。",
       ],
@@ -4186,7 +4189,7 @@ function HelpPage({
       <section className="panel help-start">
         <div>
           <span className="mini-label">
-            <BookOpen size={13} /> KOCPY 0.1.10 · QUICK START
+            <BookOpen size={13} /> KOCPY 0.1.11 · QUICK START
           </span>
           <h2>软件使用说明</h2>
           <p>
@@ -4211,15 +4214,15 @@ function HelpPage({
       <section className="help-release-note">
         <RefreshCw size={20} />
         <div>
-          <strong>0.1.10：外部清单差异可以直接定位和处理</strong>
+          <strong>0.1.11：重组目录中的健康副本也可安全修复</strong>
           <p>
-            点击素材卷明细中的红色状态可查看全部差异：缺失文件可从同卷健康副本安全补回并自动完整重校验；单纯额外文件可在已有哈希基线后明确确认。左侧模块也已按实际工作流重新排序。
+            健康副本不再要求复制 MHL 的完整上层目录。Kocpy 会寻找唯一且完整的路径映射，预检全部文件后统一暂存、校验并提交；映射歧义或内容不符时不会写入。
           </p>
         </div>
       </section>
       <div className="help-grid">
         {guides.map(({ id, icon: Icon, title, purpose, steps, tips, page }) => (
-          <details className="help-module" key={id} open={id === "backup"}>
+          <details className="help-module" key={id}>
             <summary>
               <span>
                 <Icon size={19} />
@@ -5834,7 +5837,7 @@ function SettingsPage({
         <img src="./icon.png" alt="Kocpy 图标" />
         <div>
           <h3>
-            Kocpy <span>0.1.10</span>
+            Kocpy <span>0.1.11</span>
           </h3>
           <p>从现场接卡、项目归档到交付报告，为每一份创作保留可靠副本。</p>
           <small>本地优先 · 独立校验 · 项目全周期记录 · @sexyfeifan</small>

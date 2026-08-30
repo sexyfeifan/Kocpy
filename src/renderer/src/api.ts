@@ -217,7 +217,15 @@ export interface API {
   repairExistingManifest(
     taskId: string,
     jobId?: string,
-  ): Promise<{ files: number; bytes: number } | null>;
+  ): Promise<
+    | {
+        files: number;
+        bytes: number;
+        sourceRoot: string;
+        manifestRoot: string;
+      }
+    | null
+  >;
   reverifyExistingManifest(
     taskId: string,
     jobId?: string,

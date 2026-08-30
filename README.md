@@ -8,7 +8,7 @@
 
 ![Kocpy 工作台](docs/screenshots/dashboard.png)
 
-当前版本：**0.1.10** · [完整使用手册](docs/USER_GUIDE.md) · [0.1.10 更新说明](docs/RELEASE_NOTES_0.1.10.md) · [下载最新版](https://github.com/sexyfeifan/Kocpy/releases/latest)
+当前版本：**0.1.11** · [完整使用手册](docs/USER_GUIDE.md) · [0.1.11 更新说明](docs/RELEASE_NOTES_0.1.11.md) · [下载最新版](https://github.com/sexyfeifan/Kocpy/releases/latest)
 
 ## 中文
 
@@ -61,6 +61,8 @@ Kocpy 将素材卡接收、多目标备份、逐目标回读校验、项目归�
 
 0.1.10 将素材卷明细中的清单差异改为可点击的处理入口：可以查看全部差异路径并在 Finder 中定位；缺失文件可从用户选择的同卷健康副本补回，写入前后均按原清单校验，随后自动整卷重校验；单纯的额外文件可在已有完整哈希基线后由用户明确确认。原 MHL 不会被修改，差异与处理决定会保留在审计记录中。
 
+0.1.11 修复健康副本经过目录重组后无法补回的问题。用户可选择素材卡根目录、对应素材子目录或其上级目录；Kocpy 只在找到唯一且完整的清单路径映射时继续，并在写入前校验全部源文件与剩余空间。文件会先在目标卷统一暂存并回读校验，再安全提交；歧义、内容不符或中途失败均不会留下半套修复结果。
+
 项目完成后可导出：
 
 - 项目完整 PDF：项目总览、日期与设备矩阵、全部素材卷、目的地、校验结论和完整文件明细。
@@ -93,7 +95,7 @@ Kocpy 将素材卡接收、多目标备份、逐目标回读校验、项目归�
 - 存储设备页可批量安全推出所有已完成设备；仍被备份或代理任务使用、存在未被后续成功任务覆盖的失败记录时，磁盘会被保留并说明原因。
 - 诊断中心可对选定磁盘执行受控的 64 MiB 写入与回读性能预检，自动清理临时文件，并导出不含素材内容、完整私人路径或账号信息的脱敏诊断包。
 - 任务记录保留最近的暂停、继续、预检异常和完成事件，帮助判断素材源失联、目的地离线、断点可恢复及副本未校验等状态。
-- 软件内“使用说明”按模块提供操作步骤、注意事项与直达入口，覆盖从第一次备份到长期归档的完整工作流。
+- 软件内“使用说明”按模块提供操作步骤、注意事项与直达入口，覆盖从第一次备份到长期归档的完整工作流；模块默认全部折叠，仅在用户点击后展开。
 
 ![软件内使用说明](docs/screenshots/help.png)
 
@@ -115,8 +117,8 @@ Kocpy 支持真实深色与浅色外观，任务、项目、偏好、缩略图�
 
 从 [GitHub Releases](https://github.com/sexyfeifan/Kocpy/releases) 下载对应架构：
 
-- `Kocpy-0.1.10-arm64.dmg`：Apple Silicon Mac
-- `Kocpy-0.1.10-x64.dmg`：Intel Mac
+- `Kocpy-0.1.11-arm64.dmg`：Apple Silicon Mac
+- `Kocpy-0.1.11-x64.dmg`：Intel Mac
 
 打开 DMG，将 Kocpy 拖入“应用程序”。当前公开包尚未使用 Apple Developer ID 签名和公证。若 macOS 明确提示应用“已损坏”，请先确认文件来自本仓库官方 Release，再执行：
 
@@ -134,7 +136,7 @@ Project mode organizes media by project, shooting date, camera, optional A–E c
 
 Kocpy also includes media thumbnails and metadata, H.264/ProRes proxy queues, Resolve CSV export, light/dark appearance, update checks, and architecture-specific DMGs for Apple Silicon and Intel Macs. An in-app guide documents every module with steps, safety notes, and direct links. Media and records stay on the Mac unless the user explicitly selects a report mirror folder.
 
-Version 0.1.10 turns external-manifest differences into an actionable workflow. Users can inspect every path, reveal it in Finder, restore missing files only from a copy that passes the original manifest, fully reverify the roll, or explicitly accept valid extra files after a complete local hash baseline. The sidebar now follows the production workflow from project setup and receiving through delivery, archive maintenance, diagnostics, and help.
+Version 0.1.11 can safely restore missing manifest files even when a healthy copy has been reorganized. Users may select the card root, the matching media subfolder, or an ancestor. Kocpy proceeds only when it finds one unique complete mapping, verifies every source before writing, stages and rechecks the full repair set, and then commits without overwriting existing files. Ambiguous or mismatched copies are rejected before modification.
 
 ## 日本語
 
@@ -144,7 +146,7 @@ Kocpy は、macOS 向けのローカル優先メディアバックアップ／�
 
 素材サムネイルとメタデータ、H.264／ProRes プロキシキュー、Resolve CSV、ライト／ダーク表示、更新確認、Apple Silicon／Intel 用 DMG も備えています。アプリ内ガイドでは、各機能の手順、注意事項、画面への直接リンクを確認できます。素材と記録は、ユーザーが明示的にレポート同期先を選ばない限り Mac 内に保持されます。
 
-バージョン 0.1.10 では、外部マニフェストとの差異をクリックして全パスを確認できます。不足ファイルは元のマニフェストを通過した同一素材巻の正常コピーからのみ補完し、その後に巻全体を再検証します。有効な追加ファイルは完全なローカルハッシュ基準がある場合だけ明示的に承認できます。サイドバーも制作ワークフロー順に並べ替えました。
+バージョン 0.1.11 では、正常コピーのフォルダ構成が変更されていても不足ファイルを安全に復元できます。カードのルート、対応する素材サブフォルダ、またはその上位フォルダを選択できます。Kocpy は一意で完全なパスマッピングが得られた場合だけ処理を続け、全ソースを事前検証してから一括ステージング、再検証、非上書きコミットを行います。
 
 ## License
 

@@ -1,7 +1,7 @@
 import { constants, promises as fs } from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { canonical, safeChild, scan } from "./backup/safety";
+import { canonical, inside, safeChild, scan } from "./backup/safety";
 import { hashFile } from "./backup/BackupEngine";
 import { manifestRequirementMet } from "./project-closeout";
 import type {
@@ -47,6 +47,8 @@ interface ParsedManifest {
 export interface ManifestRepairResult {
   files: number;
   bytes: number;
+  sourceRoot: string;
+  manifestRoot: string;
 }
 
 const datePattern =
@@ -551,61 +553,233 @@ export async function inspectExternalManifest(
   );
 }
 
+interface ManifestRepairCandidate {
+  sourceRoot: string;
+  manifestRoot: string;
+}
+
+interface PlannedManifestRepair {
+  relativePath: string;
+  source: string;
+  target: string;
+  size: number;
+  checksum: string;
+  atimeMs: number;
+  mtimeMs: number;
+}
+
+const repairPathKey = (value: string) => value.normalize("NFC").toLowerCase();
+
+function commonManifestDirectory(relativePaths: string[]) {
+  const directories = relativePaths.map((relativePath) =>
+    normalizeManifestPath(relativePath).split(path.sep).filter(Boolean).slice(0, -1),
+  );
+  if (!directories.length) return "";
+  const common = [...directories[0]];
+  for (const directory of directories.slice(1)) {
+    let index = 0;
+    while (
+      index < common.length &&
+      index < directory.length &&
+      repairPathKey(common[index]) === repairPathKey(directory[index])
+    )
+      index++;
+    common.length = index;
+  }
+  return common.join(path.sep);
+}
+
+function endsWithPath(value: string, suffix: string[]) {
+  const components = path.resolve(value).split(path.sep).filter(Boolean);
+  if (suffix.length > components.length) return false;
+  return suffix.every(
+    (component, index) =>
+      repairPathKey(component) ===
+      repairPathKey(components[components.length - suffix.length + index]),
+  );
+}
+
+async function manifestRepairCandidates(
+  healthyRoot: string,
+  missing: string[],
+): Promise<ManifestRepairCandidate[]> {
+  const commonRoot = commonManifestDirectory(missing),
+    candidates = new Map<string, ManifestRepairCandidate>();
+  const add = async (sourceRoot: string, manifestRoot: string) => {
+    const canonicalRoot = await canonical(sourceRoot),
+      key = `${canonicalRoot.normalize("NFC")}\0${manifestRoot.normalize("NFC")}`;
+    candidates.set(key, { sourceRoot: canonicalRoot, manifestRoot });
+  };
+  await add(healthyRoot, "");
+  if (!commonRoot) return [...candidates.values()];
+
+  const commonComponents = commonRoot.split(path.sep).filter(Boolean),
+    suffixes = commonComponents.map((_, index) => commonComponents.slice(index)),
+    queue: Array<{ directory: string; depth: number }> = [
+      { directory: healthyRoot, depth: 0 },
+    ];
+  while (queue.length) {
+    const current = queue.shift()!;
+    if (suffixes.some((suffix) => endsWithPath(current.directory, suffix)))
+      await add(current.directory, commonRoot);
+    if (current.depth >= 4) continue;
+    const entries = await fs
+      .readdir(current.directory, { withFileTypes: true })
+      .catch((error) => {
+        if (current.depth === 0) throw error;
+        return [];
+      });
+    for (const entry of entries) {
+      if (
+        !entry.isDirectory() ||
+        entry.isSymbolicLink() ||
+        entry.name.startsWith(".") ||
+        [".Spotlight-V100", ".Trashes", ".fseventsd"].includes(entry.name)
+      )
+        continue;
+      queue.push({
+        directory: path.join(current.directory, entry.name),
+        depth: current.depth + 1,
+      });
+    }
+  }
+  return [...candidates.values()];
+}
+
+async function ensureRepairSpace(targetRoot: string, files: PlannedManifestRepair[]) {
+  const statfs = await fs
+    .statfs(targetRoot, { bigint: true })
+    .catch(() => undefined);
+  if (!statfs) return;
+  const bytes = files.reduce((sum, file) => sum + BigInt(file.size), 0n),
+    largest = files.reduce(
+      (result, file) => (BigInt(file.size) > result ? BigInt(file.size) : result),
+      0n,
+    ),
+    reserve = 64n * 1024n * 1024n,
+    required = bytes + largest + reserve,
+    available = statfs.bavail * statfs.bsize;
+  if (available < required)
+    throw new Error(
+      `目标空间不足：安全修复至少需要 ${required} 字节，当前可用 ${available} 字节`,
+    );
+}
+
 export async function repairMissingManifestFiles(
   targetRoot: string,
   healthyRoot: string,
   manifestPath: string,
   missing: string[],
   progress?: {
-    onPlan?: (files: number, bytes: number) => void;
+    onPlan?: (
+      files: number,
+      bytes: number,
+      mapping: { sourceRoot: string; manifestRoot: string },
+    ) => void;
     onBytes?: (bytes: number, file: string) => void;
     onFile?: (file: string) => void;
   },
 ): Promise<ManifestRepairResult> {
   targetRoot = await canonical(targetRoot);
   healthyRoot = await canonical(healthyRoot);
+  if (inside(healthyRoot, targetRoot) || inside(targetRoot, healthyRoot))
+    throw new Error("健康副本与待修复目录不能相同或互相包含");
   const manifest = await readManifest(manifestPath);
   if (!manifest.algorithm || !manifest.entries.size)
     throw new Error("外部清单不含可用于修复的校验值");
   if (!missing.length) throw new Error("这份素材卷没有待补回的缺失文件");
 
-  const planned: Array<{
-    relativePath: string;
-    source: string;
-    target: string;
-    size: number;
-    checksum: string;
-  }> = [];
-  for (const relativePath of [...new Set(missing)]) {
-    const normalized = normalizeManifestPath(relativePath),
-      expected = manifest.entries.get(normalized);
-    if (!expected)
-      throw new Error(`清单中找不到待修复条目：${relativePath}`);
-    const source = await safeChild(healthyRoot, normalized),
-      target = await safeChild(targetRoot, normalized),
-      stat = await fs.stat(source).catch(() => undefined);
-    if (!stat?.isFile())
-      throw new Error(`健康副本缺少文件：${relativePath}`);
-    if (expected.size !== undefined && expected.size !== stat.size)
-      throw new Error(`健康副本文件大小不符：${relativePath}`);
+  const normalizedMissing = [
+    ...new Set(missing.map((relativePath) => normalizeManifestPath(relativePath))),
+  ];
+  for (const relativePath of normalizedMissing) {
+    const target = await safeChild(targetRoot, relativePath);
     if (
       await fs
         .access(target)
         .then(() => true, () => false)
     )
-      throw new Error(`目标中已出现文件，请先重新核对：${relativePath}`);
-    planned.push({
-      relativePath: normalized,
-      source,
-      target,
-      size: stat.size,
-      checksum: expected.checksum,
-    });
+      throw new Error(`目标中已出现文件，请先重新完整核对：${relativePath}`);
   }
+
+  const candidates = await manifestRepairCandidates(healthyRoot, normalizedMissing),
+    evaluated: Array<{
+      candidate: ManifestRepairCandidate;
+      planned: PlannedManifestRepair[];
+      found: number;
+      wrongSize: number;
+    }> = [];
+  for (const candidate of candidates) {
+    const planned: PlannedManifestRepair[] = [];
+    let found = 0,
+      wrongSize = 0;
+    for (const relativePath of normalizedMissing) {
+      const sourceRelative = candidate.manifestRoot
+          ? path.relative(candidate.manifestRoot, relativePath)
+          : relativePath,
+        expected = manifest.entries.get(relativePath);
+      if (!expected || sourceRelative.startsWith(`..${path.sep}`) || sourceRelative === "..")
+        continue;
+      const source = await safeChild(candidate.sourceRoot, sourceRelative),
+        target = await safeChild(targetRoot, relativePath),
+        stat = await fs.stat(source).catch(() => undefined),
+        sourceInfo = stat ? await fs.lstat(source).catch(() => undefined) : undefined;
+      if (!stat?.isFile() || sourceInfo?.isSymbolicLink()) continue;
+      found++;
+      if (expected.size !== undefined && expected.size !== stat.size) {
+        wrongSize++;
+        continue;
+      }
+      planned.push({
+        relativePath,
+        source,
+        target,
+        size: stat.size,
+        checksum: expected.checksum,
+        atimeMs: stat.atimeMs,
+        mtimeMs: stat.mtimeMs,
+      });
+    }
+    evaluated.push({ candidate, planned, found, wrongSize });
+  }
+  const complete = evaluated.filter(
+      (item) => item.planned.length === normalizedMissing.length,
+    ),
+    unique = new Map<
+      string,
+      (typeof complete)[number]
+    >();
+  for (const item of complete) {
+    const signature = item.planned
+      .map((file) => file.source.normalize("NFC"))
+      .sort()
+      .join("\0");
+    if (!unique.has(signature)) unique.set(signature, item);
+  }
+  if (!unique.size) {
+    const best = evaluated.sort(
+      (left, right) =>
+        right.planned.length - left.planned.length || right.found - left.found,
+    )[0];
+    const expectedRoot = commonManifestDirectory(normalizedMissing) || "素材卷根目录";
+    throw new Error(
+      `所选健康副本无法唯一对应清单路径：最多找到 ${best?.found || 0}/${normalizedMissing.length} 个文件${best?.wrongSize ? `，其中 ${best.wrongSize} 个大小不符` : ""}。请选择包含「${expectedRoot}」或其末级目录的上级文件夹`,
+    );
+  }
+  if (unique.size > 1)
+    throw new Error(
+      `所选目录中发现 ${unique.size} 套均可匹配的健康副本，无法安全判断。请改为选择其中一套素材卷或末级素材目录`,
+    );
+  const selected = [...unique.values()][0],
+    planned = selected.planned,
+    mapping = selected.candidate;
+  await ensureRepairSpace(targetRoot, planned);
   progress?.onPlan?.(
     planned.length,
     planned.reduce((sum, file) => sum + file.size, 0),
+    mapping,
   );
+
   for (const file of planned) {
     const checksum = await hashFile(
       file.source,
@@ -618,28 +792,57 @@ export async function repairMissingManifestFiles(
     progress?.onFile?.(file.relativePath);
   }
 
+  for (const file of planned)
+    if (
+      await fs
+        .access(file.target)
+        .then(() => true, () => false)
+    )
+      throw new Error(`目标中已出现文件，请先重新完整核对：${file.relativePath}`);
+
+  const stagingRoot = path.join(
+      targetRoot,
+      `.kocpy-repair-${randomUUID()}.partial`,
+    ),
+    staged: Array<PlannedManifestRepair & { stagedPath: string }> = [],
+    committed: string[] = [];
   let copiedBytes = 0;
-  for (const file of planned) {
-    await fs.mkdir(path.dirname(file.target), { recursive: true });
-    const temporary = `${file.target}.kocpy-repair-${randomUUID()}.partial`;
-    try {
-      await fs.copyFile(file.source, temporary, constants.COPYFILE_EXCL);
-      const handle = await fs.open(temporary, "r");
+  await fs.mkdir(stagingRoot, { recursive: false });
+  try {
+    for (const file of planned) {
+      const stagedPath = await safeChild(stagingRoot, file.relativePath);
+      await fs.mkdir(path.dirname(stagedPath), { recursive: true });
+      await fs.copyFile(file.source, stagedPath, constants.COPYFILE_EXCL);
+      const handle = await fs.open(stagedPath, "r");
       try {
         await handle.sync();
       } finally {
         await handle.close();
       }
       const checksum = await hashFile(
-        temporary,
+        stagedPath,
         manifest.algorithm,
         undefined,
         (count) => progress?.onBytes?.(count, file.relativePath),
       );
       if (normalizeChecksum(checksum, manifest.algorithm) !== file.checksum)
-        throw new Error(`补回文件写入后校验失败：${file.relativePath}`);
+        throw new Error(`补回文件写入暂存区后校验失败：${file.relativePath}`);
+      staged.push({ ...file, stagedPath });
+      progress?.onFile?.(file.relativePath);
+    }
+
+    for (const file of staged)
+      if (
+        await fs
+          .access(file.target)
+          .then(() => true, () => false)
+      )
+        throw new Error(`提交前目标中出现同名文件：${file.relativePath}`);
+
+    for (const file of staged) {
+      await fs.mkdir(path.dirname(file.target), { recursive: true });
       try {
-        await fs.link(temporary, file.target);
+        await fs.link(file.stagedPath, file.target);
       } catch (error) {
         const code = (error as NodeJS.ErrnoException).code;
         if (
@@ -653,15 +856,33 @@ export async function repairMissingManifestFiles(
           ].includes(code || "")
         )
           throw error;
-        await fs.copyFile(temporary, file.target, constants.COPYFILE_EXCL);
+        await fs.copyFile(file.stagedPath, file.target, constants.COPYFILE_EXCL);
       }
+      committed.push(file.target);
+      await fs.utimes(file.target, new Date(file.atimeMs), new Date(file.mtimeMs));
       copiedBytes += file.size;
-      progress?.onFile?.(file.relativePath);
-    } finally {
-      await fs.unlink(temporary).catch(() => undefined);
     }
+  } catch (error) {
+    let rollbackFailed = false;
+    for (const target of committed.reverse())
+      await fs.unlink(target).catch(() => {
+        rollbackFailed = true;
+      });
+    if (rollbackFailed)
+      throw new Error(
+        `${String(error).replace(/^Error: /, "")}；部分新文件无法自动回滚，请先重新完整核对目标目录`,
+      );
+    throw error;
+  } finally {
+    await fs.rm(stagingRoot, { recursive: true, force: true }).catch(() => undefined);
   }
-  return { files: planned.length, bytes: copiedBytes };
+
+  return {
+    files: planned.length,
+    bytes: copiedBytes,
+    sourceRoot: mapping.sourceRoot,
+    manifestRoot: mapping.manifestRoot || ".",
+  };
 }
 
 export async function importExistingBackup(

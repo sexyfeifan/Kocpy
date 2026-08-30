@@ -312,13 +312,81 @@ describe("0.1.0 production lifecycle", () => {
         manifest,
         ["DCIM/clip.mov"],
       );
-      expect(repaired).toEqual({ files: 1, bytes: 3 });
+      expect(repaired).toMatchObject({ files: 1, bytes: 3, manifestRoot: "." });
       expect(await fs.readFile(path.join(target, "DCIM", "clip.mov"), "utf8")).toBe(
         "abc",
       );
       const imported = await importExistingBackup(project, target, "manifest-import");
       expect(imported.externalManifest?.status).toBe("verified");
       expect(imported.status).toBe("completed");
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+  it("maps a reorganized healthy media subdirectory to one manifest subtree", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "kocpy-mhl-mapped-repair-")),
+      target = path.join(root, "target"),
+      healthy = path.join(root, "healthy"),
+      mediaDirectory = path.join(healthy, "111", "100MSDCF");
+    try {
+      await fs.mkdir(mediaDirectory, { recursive: true });
+      await fs.mkdir(target, { recursive: true });
+      await fs.writeFile(path.join(mediaDirectory, "clip.mov"), "abc");
+      const manifest = path.join(target, "CARD.mhl");
+      await fs.writeFile(
+        manifest,
+        `<hashlist version="1.1"><hash><file>/DCIM/100MSDCF/clip.mov</file><size>3</size><xxhash>852579327</xxhash></hash></hashlist>`,
+      );
+      const repaired = await repairMissingManifestFiles(
+        target,
+        healthy,
+        manifest,
+        ["DCIM/100MSDCF/clip.mov"],
+      );
+      expect(repaired).toEqual({
+        files: 1,
+        bytes: 3,
+        sourceRoot: await fs.realpath(mediaDirectory),
+        manifestRoot: path.join("DCIM", "100MSDCF"),
+      });
+      expect(
+        await fs.readFile(
+          path.join(target, "DCIM", "100MSDCF", "clip.mov"),
+          "utf8",
+        ),
+      ).toBe("abc");
+      const imported = await importExistingBackup(project, target, "manifest-import");
+      expect(imported.externalManifest?.status).toBe("verified");
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+  it("rejects ambiguous healthy-directory mappings before writing", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "kocpy-mhl-ambiguous-repair-")),
+      target = path.join(root, "target"),
+      healthy = path.join(root, "healthy");
+    try {
+      await fs.mkdir(path.join(healthy, "A", "100MSDCF"), { recursive: true });
+      await fs.mkdir(path.join(healthy, "B", "100MSDCF"), { recursive: true });
+      await fs.mkdir(target, { recursive: true });
+      await fs.writeFile(path.join(healthy, "A", "100MSDCF", "clip.mov"), "abc");
+      await fs.writeFile(path.join(healthy, "B", "100MSDCF", "clip.mov"), "abc");
+      const manifest = path.join(target, "CARD.mhl");
+      await fs.writeFile(
+        manifest,
+        `<hashlist version="1.1"><hash><file>/DCIM/100MSDCF/clip.mov</file><size>3</size><xxhash>852579327</xxhash></hash></hashlist>`,
+      );
+      await expect(
+        repairMissingManifestFiles(
+          target,
+          healthy,
+          manifest,
+          ["DCIM/100MSDCF/clip.mov"],
+        ),
+      ).rejects.toThrow("发现 2 套均可匹配的健康副本");
+      await expect(
+        fs.access(path.join(target, "DCIM", "100MSDCF", "clip.mov")),
+      ).rejects.toThrow();
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }

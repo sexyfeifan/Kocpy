@@ -2013,7 +2013,8 @@ app.whenReady().then(async () => {
         title: "选择同一素材卷的健康副本根目录",
         defaultPath: path.dirname(task.sourcePath),
         properties: ["openDirectory"],
-        message: "所选目录必须包含清单列出的同路径文件",
+        message:
+          "可选择素材卷根目录、对应素材子目录或它们的上级目录；Kocpy 只采用唯一且全量通过清单校验的路径映射",
       });
       if (chosen.canceled) return null;
       const healthyRoot = await canonical(chosen.filePaths[0]),
@@ -2066,12 +2067,12 @@ app.whenReady().then(async () => {
           comparison.path,
           comparison.missing,
           {
-            onPlan: (files, bytes) => {
+            onPlan: (files, bytes, mapping) => {
               totalFiles = Math.max(1, files * 2);
               totalBytes = Math.max(1, bytes * 2);
               emit(
                 "hashing",
-                `已找到 ${files} 个候选文件，开始逐文件校验`,
+                `已识别唯一映射：${mapping.sourceRoot} → ${mapping.manifestRoot || "."}；找到 ${files} 个文件，开始逐文件校验`,
                 undefined,
                 true,
               );
@@ -2088,7 +2089,7 @@ app.whenReady().then(async () => {
         );
         task.verifyLog = [
           ...task.verifyLog,
-          `已从用户选择的健康副本补回 ${result.files} 个文件（${result.bytes} 字节）；随后必须完整重校验外部清单`,
+          `已从健康副本映射 ${result.sourceRoot} → ${result.manifestRoot} 补回 ${result.files} 个文件（${result.bytes} 字节）；随后必须完整重校验外部清单`,
         ].slice(-120);
         await Promise.all([persist(), catalog.upsertTask(task)]);
         emit("completed", `已补回 ${result.files} 个文件，准备完整重校验`, undefined, true);
