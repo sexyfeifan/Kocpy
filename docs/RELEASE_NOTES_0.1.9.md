@@ -19,7 +19,9 @@
 
 ## 下载校验
 
-- `Kocpy-0.1.9-arm64.dmg`：发布后填写
-- `Kocpy-0.1.9-x64.dmg`：发布后填写
+- `Kocpy-0.1.9-arm64.dmg`：`15ec0cc6af2e2afec8230c952290aa8660a04a2a771ad0af110ecb74236dc56a`
+- `Kocpy-0.1.9-x64.dmg`：`c6a345196ce7fa105480595dee7016b301dcc37ec2f137b2f017392bdccf6c52`
+
+以上 SHA-256 来自 GitHub Release 实际回下载文件。两套远端 DMG 均通过 `hdiutil verify`；挂载后版本为 0.1.9，主程序架构分别为 arm64 与 x86_64。
 
 完整说明请参阅 [Kocpy 0.1.9 使用手册](https://github.com/sexyfeifan/Kocpy/blob/main/docs/USER_GUIDE.md)。
