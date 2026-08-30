@@ -144,6 +144,90 @@ describe("existing backup record consolidation", () => {
       .toHaveLength(2);
   });
 
+  it("removes a device parent that is exactly the union of its card folders", () => {
+    const root = "/Volumes/Disk/20260825/FX3",
+      first = importedTask("card-1", {
+        sourcePath: `${root}/CARD01`,
+        status: "completed",
+        confidence: "baseline",
+      }),
+      second = importedTask("card-2", {
+        sourcePath: `${root}/CARD02`,
+        status: "completed",
+        confidence: "baseline",
+      }),
+      parent = importedTask("device-parent", { sourcePath: root });
+    second.fileRecords[0].relativePath = "PRIVATE/clip2.mov";
+    second.fileRecords[0].name = "clip2.mov";
+    parent.fileRecords = [
+      {
+        ...structuredClone(first.fileRecords[0]),
+        relativePath: "CARD01/M4ROOT/CLIP/clip.mov",
+      },
+      {
+        ...structuredClone(second.fileRecords[0]),
+        relativePath: "CARD02/PRIVATE/clip2.mov",
+      },
+      {
+        name: "CARD01.mhl",
+        relativePath: "CARD01/CARD01.mhl",
+        size: 200,
+        srcChecksum: "",
+        destinations: [],
+      },
+    ];
+    parent.totalFiles = 3;
+
+    const result = consolidateExistingRecords([parent, first, second]);
+    expect(result.aggregateIds).toEqual(["device-parent"]);
+    expect(result.records.map((task) => task.id).sort()).toEqual([
+      "card-1",
+      "card-2",
+    ]);
+  });
+
+  it("retains a flat device folder when it has no descendant card records", () => {
+    const flat = importedTask("flat", {
+      sourcePath: "/Volumes/Disk/20260826/POCKET",
+    });
+    const result = consolidateExistingRecords([flat]);
+    expect(result.aggregateIds).toEqual([]);
+    expect(result.records).toEqual([flat]);
+  });
+
+  it("does not mark a baseline with a real manifest difference as safe", () => {
+    const task = importedTask("mismatch", {
+      status: "completed",
+      confidence: "baseline",
+    });
+    task.externalManifest = {
+      path: "/Volumes/Disk/CARD01/CARD01.mhl",
+      algorithm: "xxhash32",
+      status: "mismatch",
+      entries: 1,
+      matched: 0,
+      missing: ["clip.mov"],
+      extra: [],
+      sizeMismatches: [],
+      checksumMismatches: [],
+      checkedAt: Date.now(),
+    };
+    expect(
+      projectCellStatus(
+        {
+          id: "project",
+          name: "project",
+          devices: ["FX3"],
+          volumePrefix: "CARD",
+          requiredCopies: 1,
+        },
+        [task],
+        "2026-08-25",
+        "FX3",
+      ).complete,
+    ).toBe(false);
+  });
+
   it("keeps only the latest binding for the same adopted root", () => {
     const roots = deduplicateBoundRoots([
       { id: "old", path: "/Volumes/Disk/Project", boundAt: 1, provenance: "unverified-import" },

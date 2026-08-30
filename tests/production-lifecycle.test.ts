@@ -5,6 +5,7 @@ import path from "node:path";
 import {
   builtInProductionTemplates,
   importExistingBackup,
+  inspectExternalManifest,
   previewExistingBackup,
   projectCoverage,
 } from "../src/main/production-lifecycle";
@@ -236,6 +237,57 @@ describe("0.1.0 production lifecycle", () => {
       );
       expect(imported.status).toBe("completed");
       expect(imported.fileRecords[0].destinations[0].verified).toBe(true);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+  it("imports Kocard MHL files with leading paths and decimal xxHash32", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "kocpy-kocard-mhl-"));
+    try {
+      await fs.mkdir(path.join(root, "DCIM"), { recursive: true });
+      await fs.writeFile(path.join(root, "DCIM", "clip.mov"), "abc");
+      await fs.writeFile(
+        path.join(root, "CARD.mhl"),
+        `<hashlist version="1.1"><hash><file>/DCIM/clip.mov</file><size>3</size><xxhash>852579327</xxhash></hash></hashlist>`,
+      );
+      const imported = await importExistingBackup(
+        project,
+        root,
+        "manifest-import",
+      );
+      expect(imported).toMatchObject({
+        status: "completed",
+        confidence: "verified",
+        hashAlgorithm: "xxhash32",
+        externalManifest: {
+          algorithm: "xxhash32",
+          status: "verified",
+          entries: 1,
+          matched: 1,
+        },
+      });
+      expect(imported.totalFiles).toBe(1);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("reports real missing and extra files from external manifest metadata", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "kocpy-mhl-diff-"));
+    try {
+      await fs.writeFile(path.join(root, "extra.mov"), "extra");
+      await fs.writeFile(
+        path.join(root, "CARD.mhl"),
+        `<hashlist version="1.1"><hash><file>/missing.mov</file><size>7</size><xxhash>1</xxhash></hash></hashlist>`,
+      );
+      const comparison = await inspectExternalManifest(root);
+      expect(comparison).toMatchObject({
+        status: "mismatch",
+        entries: 1,
+        matched: 0,
+        missing: ["missing.mov"],
+        extra: ["extra.mov"],
+      });
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }

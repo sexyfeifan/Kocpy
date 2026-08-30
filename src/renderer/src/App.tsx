@@ -253,6 +253,28 @@ const performanceText = (performance?: TransferPerformance) =>
 const taskTrustState = (task: BackupTask) => {
   if (!task.provenance || task.provenance === "kocpy-transfer")
     return { status: task.status, label: statusText[task.status] };
+  if (task.externalManifest?.status === "mismatch") {
+    const manifest = task.externalManifest,
+      detail = [
+        manifest.missing.length && `缺少 ${manifest.missing.length}`,
+        manifest.extra.length && `额外 ${manifest.extra.length}`,
+        manifest.sizeMismatches.length &&
+          `大小不同 ${manifest.sizeMismatches.length}`,
+        manifest.checksumMismatches.length &&
+          `校验不同 ${manifest.checksumMismatches.length}`,
+      ]
+        .filter(Boolean)
+        .join(" · ");
+    return { status: "failed", label: `清单差异 · ${detail}` };
+  }
+  if (task.externalManifest?.status === "unsupported")
+    return { status: "unverified", label: "外部清单格式不支持" };
+  if (
+    task.externalManifest?.status === "structure-match" &&
+    task.provenance === "manifest-import" &&
+    task.status !== "completed"
+  )
+    return { status: "unverified", label: "清单结构一致 · 待完整校验" };
   if (task.confidence === "verified")
     return { status: "completed", label: "外部清单校验通过" };
   if (task.confidence === "baseline" && task.status === "completed")
@@ -650,7 +672,7 @@ export function App() {
           <img src="./icon.png" alt="Kocpy 图标" />
           <div>
             <strong>
-              Kocpy<span>0.1.7</span>
+              Kocpy<span>0.1.8</span>
             </strong>
             <small>素材工作台</small>
           </div>
@@ -707,7 +729,7 @@ export function App() {
                   ? `可升级 ${updateInfo.latest}`
                   : "检查更新"}
               </span>
-              <b>v0.1.7</b>
+              <b>v0.1.8</b>
             </button>
             <div className="sidebar-author-links">
               <span>
@@ -1871,7 +1893,7 @@ export function App() {
                                   false,
                                 );
                               setConfirm({
-                                text: `检测到 ${analysis.importedTasks} 条接管记录；可修正 ${analysis.metadataUpdated} 条目录元数据、合并 ${analysis.duplicatesFound} 条重复素材卷记录、清理 ${analysis.rootsDeduplicated} 条重复绑定路径。另有 ${analysis.baselinesNeeded} 条记录仍需建立基线${analysis.unavailableSources ? `，${analysis.unavailableSources} 个来源当前离线，将保留原记录` : ""}。刷新只整理 Kocpy 记录并重新计算项目详情，不重新哈希、不移动或删除素材文件。`,
+                                text: `检测到 ${analysis.importedTasks} 条接管记录；将修正 ${analysis.metadataUpdated} 条目录元数据、合并 ${analysis.duplicatesFound} 条重复素材卷记录，并移除 ${analysis.aggregateRecordsFound} 条误生成的日期/设备父级汇总记录。已读取 ${analysis.manifestsInspected} 份卡卷清单，其中 ${analysis.manifestDifferences} 份存在真实的路径或大小差异；另有 ${analysis.baselinesNeeded} 条记录仍需建立基线${analysis.unavailableSources ? `，${analysis.unavailableSources} 个来源当前离线，将保留原记录` : ""}。刷新只整理 Kocpy 记录并按清单元数据核对，不重新计算文件哈希、不移动或删除素材文件。`,
                                 run: async () => {
                                   const result =
                                     await api.reanalyzeExistingProject(
@@ -1880,7 +1902,7 @@ export function App() {
                                     );
                                   await refresh();
                                   notify(
-                                    `刷新完成：修正 ${result.metadataUpdated} 条，合并 ${result.duplicatesMerged} 条重复素材卷`,
+                                    `刷新完成：保留真实素材卷，移除 ${result.aggregateRecordsRemoved} 条父级汇总记录；${result.manifestDifferences} 份清单需要检查`,
                                   );
                                 },
                               });
@@ -3721,11 +3743,11 @@ function HelpPage({
     {
       id: "refresh-adopted",
       icon: RefreshCw,
-      title: "刷新既有项目（0.1.7）",
-      purpose: "不重新哈希或搬动素材，修正历史接管元数据与重复素材卷统计。",
+      title: "刷新既有项目（0.1.8）",
+      purpose: "清理误识别的父级汇总记录，并按卡卷清单重新判断真实差异。",
       steps: [
         "打开拍摄项目并进入项目详情。",
-        "点击“刷新接管信息”，先查看待修正元数据、重复素材卷、重复绑定路径和离线来源数量。",
+        "点击“刷新接管信息”，先查看待修正元数据、重复素材卷、误识别父级汇总、清单差异和离线来源数量。",
         "确认后等待项目卡片、日期设备矩阵和素材卷明细重新计算。",
         "若来源当前离线，原记录会保留；重新连接磁盘后可以再次刷新。",
         "若目录是后来新增且从未接管，请使用“接管既有备份”，刷新不会自动导入新目录。",
@@ -3733,7 +3755,8 @@ function HelpPage({
       tips: [
         "同一绝对路径始终按一个逻辑素材卷统计。",
         "不同路径只有完整文件哈希一致时才会合并为同一素材卷的多个副本。",
-        "刷新不重新计算哈希，不复制、移动、改名或删除素材文件。",
+        "刷新读取卡卷根目录中的 MHL/SHA 清单路径与文件大小，不重新计算素材哈希，不复制、移动、改名或删除素材文件。",
+        "“缺少”表示清单有记录但磁盘没有；“额外”表示磁盘有文件但清单没有；两者都需要人工核对。",
         "刷新只整理外部接管记录，不修改 Kocpy 正常复制产生的任务。",
       ],
       page: "projects",
@@ -3824,7 +3847,7 @@ function HelpPage({
       <section className="panel help-start">
         <div>
           <span className="mini-label">
-            <BookOpen size={13} /> KOCPY 0.1.7 · QUICK START
+            <BookOpen size={13} /> KOCPY 0.1.8 · QUICK START
           </span>
           <h2>软件使用说明</h2>
           <p>
@@ -3849,9 +3872,9 @@ function HelpPage({
       <section className="help-release-note">
         <RefreshCw size={20} />
         <div>
-          <strong>0.1.7：旧项目可直接刷新，不必重新接管</strong>
+          <strong>0.1.8：父级误识别自动清理，真实清单差异明确显示</strong>
           <p>
-            在项目详情点击“刷新接管信息”，可合并同一路径的历史重复素材卷并重新计算项目进度；不会重新哈希、复制、移动或删除素材。
+            在项目详情点击“刷新接管信息”，会保留真实卡卷、移除日期/设备父级汇总，并区分缺少、额外和大小不同；不会重新哈希、复制、移动或删除素材。
           </p>
         </div>
       </section>
@@ -5472,7 +5495,7 @@ function SettingsPage({
         <img src="./icon.png" alt="Kocpy 图标" />
         <div>
           <h3>
-            Kocpy <span>0.1.7</span>
+            Kocpy <span>0.1.8</span>
           </h3>
           <p>从现场接卡、项目归档到交付报告，为每一份创作保留可靠副本。</p>
           <small>本地优先 · 独立校验 · 项目全周期记录 · @sexyfeifan</small>

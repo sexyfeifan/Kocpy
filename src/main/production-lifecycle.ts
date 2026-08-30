@@ -5,11 +5,43 @@ import { scan } from "./backup/safety";
 import { hashFile } from "./backup/BackupEngine";
 import type {
   BackupTask,
+  ExternalManifestComparison,
   ExistingImportPreview,
+  HashAlgorithm,
   ProjectConfig,
   ProjectCoverage,
   ProjectTemplate,
 } from "./types";
+
+const isManifestName = (name: string) =>
+  /(?:\.mhl|sha(?:1|256)sums\.txt|manifest.*\.json)$/i.test(name);
+
+const normalizeManifestPath = (value: string) =>
+  value
+    .trim()
+    .replace(/^file:\/\//i, "")
+    .replace(/^[\\/]+/, "")
+    .replace(/[\\/]+/g, path.sep)
+    .normalize("NFC");
+
+const decodeXml = (value: string) =>
+  value
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, "&");
+
+interface ManifestEntry {
+  checksum: string;
+  size?: number;
+}
+
+interface ParsedManifest {
+  file?: string;
+  algorithm?: HashAlgorithm;
+  entries: Map<string, ManifestEntry>;
+}
 
 const datePattern =
   /(?:19|20)\d{2}[-_.]?(?:0[1-9]|1[0-2])[-_.]?(?:0[1-9]|[12]\d|3[01])/;
@@ -276,8 +308,11 @@ export async function previewExistingBackup(
     current.suggestedCard ||= sample.match(cardPattern)?.[0];
     groupMap.set(relativeRoot, current);
   }
-  const manifestFile = result.files.find((file) =>
-    /(?:\.mhl|sha256sums\.txt|manifest.*\.json)$/i.test(file.name),
+  // A card-level manifest must live at the selected card root. Picking a
+  // nested manifest made a date/device parent look like a single media roll.
+  const manifestFile = result.files.find(
+    (file) =>
+      isManifestName(file.name) && path.dirname(file.relativePath) === ".",
   );
   const sample = result.files
     .slice(0, 200)
@@ -287,9 +322,7 @@ export async function previewExistingBackup(
       string,
       ExistingImportPreview["candidates"][number]
     >(),
-    mediaFiles = result.files.filter(
-      (file) => !/(?:\.mhl|sha256sums\.txt|manifest.*\.json)$/i.test(file.name),
-    );
+    mediaFiles = result.files.filter((file) => !isManifestName(file.name));
   const detectedStructure = detectScope(
     root,
     mediaFiles.map((file) => file.relativePath),
@@ -375,24 +408,67 @@ export async function previewExistingBackup(
   };
 }
 
-async function readManifest(file?: string) {
-  const values = new Map<string, string>();
-  if (!file) return values;
+function checksumAlgorithm(
+  tag: string | undefined,
+  checksum: string,
+): HashAlgorithm | undefined {
+  const normalized = tag?.toLowerCase();
+  if (normalized === "xxhash" || normalized === "xxhash32") return "xxhash32";
+  if (normalized === "md5" || normalized === "sha1" || normalized === "sha256")
+    return normalized;
+  if (/^\d{1,10}$/.test(checksum)) return "xxhash32";
+  if (/^[a-f0-9]{32}$/i.test(checksum)) return "md5";
+  if (/^[a-f0-9]{40}$/i.test(checksum)) return "sha1";
+  if (/^[a-f0-9]{64}$/i.test(checksum)) return "sha256";
+  return undefined;
+}
+
+function normalizeChecksum(value: string, algorithm?: HashAlgorithm) {
+  const trimmed = value.trim();
+  return algorithm === "xxhash32"
+    ? String(Number(trimmed) >>> 0)
+    : trimmed.toLowerCase();
+}
+
+async function readManifest(file?: string): Promise<ParsedManifest> {
+  const result: ParsedManifest = { file, entries: new Map() };
+  if (!file) return result;
   const text = await fs.readFile(file, "utf8");
-  for (const block of text.matchAll(/<hash(?:\s[^>]*)?>([\s\S]*?)<\/hash>/gi)) {
-    const name = block[1].match(
-      /<(?:path|file)(?:\s[^>]*)?>([^<]+)<\/(?:path|file)>/i,
-    )?.[1];
-    const checksum = block[1].match(
-      /<(?:md5|sha1|sha256)(?:\s[^>]*)?>([a-f0-9]{32,64})<\/(?:md5|sha1|sha256)>/i,
-    )?.[1];
-    if (name && checksum)
-      values.set(name.replaceAll("/", path.sep), checksum.toLowerCase());
+  const add = (
+    name: unknown,
+    checksum: unknown,
+    tag?: string,
+    size?: unknown,
+  ) => {
+    if (typeof name !== "string" || typeof checksum !== "string") return;
+    const algorithm = checksumAlgorithm(tag, checksum);
+    if (!algorithm || (result.algorithm && result.algorithm !== algorithm))
+      return;
+    const relativePath = normalizeManifestPath(decodeXml(name));
+    if (!relativePath) return;
+    result.algorithm = algorithm;
+    const parsedSize = Number(size);
+    result.entries.set(relativePath, {
+      checksum: normalizeChecksum(checksum, algorithm),
+      size: Number.isFinite(parsedSize) && parsedSize >= 0 ? parsedSize : undefined,
+    });
+  };
+  for (const match of text.matchAll(/<hash(?:\s[^>]*)?>([\s\S]*?)<\/hash>/gi)) {
+    const block = match[1];
+    const nameMatch = block.match(
+      /<(path|file)(?:\s[^>]*)?>([^<]+)<\/\1>/i,
+    );
+    const checksumMatch = block.match(
+      /<(md5|sha1|sha256|xxhash(?:32)?)(?:\s[^>]*)?>([a-f0-9]+)<\/\1>/i,
+    );
+    const sizeText =
+      block.match(/<size(?:\s[^>]*)?>(\d+)<\/size>/i)?.[1] ||
+      nameMatch?.[0].match(/\bsize=["'](\d+)["']/i)?.[1];
+    add(nameMatch?.[2], checksumMatch?.[2], checksumMatch?.[1], sizeText);
   }
   for (const line of text.split(/\r?\n/)) {
-    const match = line.match(/^([a-f0-9]{32,64})\s+\*?(.+)$/i);
-    if (match)
-      values.set(match[2].replaceAll("/", path.sep), match[1].toLowerCase());
+    const match = line.match(/^([a-f0-9]{32,64}|\d{1,10})\s+\*?(.+)$/i);
+    if (match) add(match[2], match[1]);
   }
   if (/\.json$/i.test(file))
     try {
@@ -401,19 +477,72 @@ async function readManifest(file?: string) {
           ? parsed
           : parsed.files || parsed.entries || [];
       for (const row of rows) {
-        const name = row.path || row.file || row.relativePath,
-          checksum = row.sha256 || row.sha1 || row.md5 || row.checksum;
-        if (
-          typeof name === "string" &&
-          typeof checksum === "string" &&
-          /^[a-f0-9]{32,64}$/i.test(checksum)
-        )
-          values.set(name.replaceAll("/", path.sep), checksum.toLowerCase());
+        const name = row.path || row.file || row.relativePath;
+        const tagged = ["sha256", "sha1", "md5", "xxhash32", "xxhash"].find(
+          (key) => typeof row[key] === "string",
+        );
+        add(name, tagged ? row[tagged] : row.checksum, tagged, row.size);
       }
     } catch {
       /* non-JSON manifests continue through text parsers */
     }
-  return values;
+  return result;
+}
+
+function compareManifestStructure(
+  manifest: ParsedManifest,
+  files: Array<{ relativePath: string; size: number }>,
+): ExternalManifestComparison | undefined {
+  if (!manifest.file) return undefined;
+  const actual = new Map(
+    files
+      .filter((file) => !isManifestName(path.basename(file.relativePath)))
+      .map((file) => [normalizeManifestPath(file.relativePath), file]),
+  );
+  const missing: string[] = [],
+    extra: string[] = [],
+    sizeMismatches: ExternalManifestComparison["sizeMismatches"] = [];
+  let matched = 0;
+  for (const [relativePath, expected] of manifest.entries) {
+    const file = actual.get(relativePath);
+    if (!file) missing.push(relativePath);
+    else if (expected.size !== undefined && expected.size !== file.size)
+      sizeMismatches.push({ relativePath, expected: expected.size, actual: file.size });
+    else matched++;
+  }
+  for (const relativePath of actual.keys())
+    if (!manifest.entries.has(relativePath)) extra.push(relativePath);
+  const mismatch = Boolean(missing.length || extra.length || sizeMismatches.length);
+  return {
+    path: manifest.file,
+    algorithm: manifest.algorithm,
+    status: !manifest.entries.size
+      ? "unsupported"
+      : mismatch
+        ? "mismatch"
+        : "structure-match",
+    entries: manifest.entries.size,
+    matched,
+    missing,
+    extra,
+    sizeMismatches,
+    checksumMismatches: [],
+    checkedAt: Date.now(),
+  };
+}
+
+export async function inspectExternalManifest(
+  root: string,
+): Promise<ExternalManifestComparison | undefined> {
+  const scanned = await scan(root, false);
+  const manifestFile = scanned.files.find(
+    (file) => isManifestName(file.name) && path.dirname(file.relativePath) === ".",
+  );
+  if (!manifestFile) return undefined;
+  return compareManifestStructure(
+    await readManifest(manifestFile.absolutePath),
+    scanned.files,
+  );
 }
 
 export async function importExistingBackup(
@@ -439,16 +568,20 @@ export async function importExistingBackup(
     ),
     scanned = await scan(root, false),
     manifest = await readManifest(preview.manifest),
-    algorithm =
-      manifest.size && [...manifest.values()][0]?.length === 32
-        ? "md5"
+    mediaFiles = scanned.files.filter((file) => !isManifestName(file.name)),
+    comparison = compareManifestStructure(manifest, scanned.files),
+    algorithm: HashAlgorithm =
+      mode === "manifest-import" && manifest.algorithm
+        ? manifest.algorithm
         : "sha256",
     destinationId = randomUUID(),
-    verifiedMode = mode !== "unverified-import";
+    verifiedMode =
+      mode === "external-baseline" ||
+      (mode === "manifest-import" && Boolean(manifest.algorithm));
   const records = [];
-  for (const file of scanned.files) {
-    if (file.absolutePath === preview.manifest) continue;
-    const expected = manifest.get(file.relativePath),
+  for (const file of mediaFiles) {
+    const normalizedPath = normalizeManifestPath(file.relativePath),
+      expected = manifest.entries.get(normalizedPath),
       checksum = verifiedMode
         ? await hashFile(file.absolutePath, algorithm, undefined, (count) =>
             progress?.onBytes?.(count, file.relativePath),
@@ -458,22 +591,58 @@ export async function importExistingBackup(
       mode === "external-baseline" ||
       (mode === "manifest-import" &&
         Boolean(expected) &&
-        expected === checksum);
+        (expected?.size === undefined || expected.size === file.size) &&
+        expected?.checksum === checksum);
+    if (
+      mode === "manifest-import" &&
+      expected &&
+      (expected.size === undefined || expected.size === file.size) &&
+      expected.checksum !== checksum
+    )
+      comparison?.checksumMismatches.push(normalizedPath);
     records.push({
       name: file.name,
       relativePath: file.relativePath,
       size: file.size,
-      srcChecksum: checksum || expected || "",
+      srcChecksum: checksum || expected?.checksum || "",
       destinations: [
         { path: file.absolutePath, checksum: checksum || "", verified },
       ],
     });
     progress?.onFile?.(file.relativePath);
   }
+  if (comparison && mode === "manifest-import") {
+    comparison.matched = records.filter(
+      (record) => record.destinations[0].verified,
+    ).length;
+    comparison.status =
+      comparison.entries > 0 &&
+      !comparison.missing.length &&
+      !comparison.extra.length &&
+      !comparison.sizeMismatches.length &&
+      !comparison.checksumMismatches.length
+        ? "verified"
+        : comparison.entries
+          ? "mismatch"
+          : "unsupported";
+  }
   const verified =
       records.length > 0 &&
-      records.every((file) => file.destinations[0].verified),
+      records.every((file) => file.destinations[0].verified) &&
+      (mode !== "manifest-import" || comparison?.status === "verified"),
     now = Date.now();
+  const differenceSummary = comparison
+    ? [
+        comparison.missing.length && `缺少 ${comparison.missing.length}`,
+        comparison.extra.length && `额外 ${comparison.extra.length}`,
+        comparison.sizeMismatches.length &&
+          `大小不同 ${comparison.sizeMismatches.length}`,
+        comparison.checksumMismatches.length &&
+          `校验值不同 ${comparison.checksumMismatches.length}`,
+      ]
+        .filter(Boolean)
+        .join("、")
+    : "";
   return {
     id: randomUUID(),
     projectId: project.id,
@@ -490,6 +659,7 @@ export async function importExistingBackup(
         : mode === "external-baseline"
           ? "baseline"
           : "unverified",
+    externalManifest: comparison,
     name: metadata.card || preview.suggestedCard || path.basename(root),
     sourcePath: root,
     devices: [metadata.device || preview.suggestedDevice || "未分类设备"],
@@ -530,16 +700,18 @@ export async function importExistingBackup(
     currentFile: "",
     verifyLog: [
       mode === "manifest-import"
-        ? `根据外部清单接管：${verified ? "全部匹配" : "存在缺失或不匹配"}`
+        ? `根据外部清单接管：${verified ? "全部匹配" : differenceSummary || "清单格式暂不支持"}`
         : mode === "external-baseline"
-          ? "已在接管时建立首次哈希基线；不代表原始现场接收校验"
+          ? `已在接管时建立首次哈希基线；不代表原始现场接收校验${differenceSummary ? `；外部清单结构差异：${differenceSummary}` : ""}`
           : "目录结构已导入，尚未建立可信校验",
     ],
     errorMessage: verified
       ? undefined
       : mode === "unverified-import"
         ? "目录结构已识别，尚未建立哈希基线"
-        : "外部清单存在缺失或校验值不匹配",
+        : differenceSummary
+          ? `外部清单差异：${differenceSummary}`
+          : "外部清单格式暂不支持或没有可读取的校验条目",
     fileRecords: records,
   };
 }
@@ -559,7 +731,10 @@ export function projectCoverage(
     byProvenance[source] = (byProvenance[source] || 0) + 1;
     const copies = new Set(
       task.destinations
-        .filter((item) => item.verified)
+        .filter(
+          (item) =>
+            item.verified && task.externalManifest?.status !== "mismatch",
+        )
         .map((item) => item.volumeUuid || item.volumeId || item.path),
     ).size;
     if (copies) verified++;

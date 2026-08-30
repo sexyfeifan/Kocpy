@@ -73,6 +73,7 @@ import { CatalogDatabase } from "./catalog";
 import {
   builtInProductionTemplates,
   importExistingBackup,
+  inspectExternalManifest,
   previewExistingBackup,
   projectCoverage,
 } from "./production-lifecycle";
@@ -150,7 +151,7 @@ const consolidateProjectExistingRecords = (projectId: string) => {
         task.provenance !== "kocpy-transfer",
     );
   const result = consolidateExistingRecords(imported);
-  for (const duplicateId of result.duplicateIds)
+  for (const duplicateId of [...result.duplicateIds, ...result.aggregateIds])
     engine.deleteTask(duplicateId);
   return result;
 };
@@ -1757,12 +1758,53 @@ app.whenReady().then(async () => {
           if (task.devices[0]) devicesDetected.add(task.devices[0]);
         }
       }
-      const consolidated = consolidateExistingRecords(workingTasks),
+      const consolidated = consolidateExistingRecords(workingTasks);
+      let manifestsInspected = 0,
+        manifestDifferences = 0;
+      for (const task of consolidated.records) {
+        if (unavailableSources.has(existingSourceKey(task.sourcePath)))
+          continue;
+        try {
+          const comparison = await inspectExternalManifest(task.sourcePath);
+          task.externalManifest = comparison;
+          if (!comparison) continue;
+          manifestsInspected++;
+          if (comparison.status === "mismatch") {
+            manifestDifferences++;
+            const summary = [
+              comparison.missing.length &&
+                `缺少 ${comparison.missing.length} 个文件`,
+              comparison.extra.length &&
+                `额外 ${comparison.extra.length} 个文件`,
+              comparison.sizeMismatches.length &&
+                `${comparison.sizeMismatches.length} 个文件大小不同`,
+            ]
+              .filter(Boolean)
+              .join("、");
+            const samples = [
+              ...comparison.missing.slice(0, 3).map((file) => `缺少：${file}`),
+              ...comparison.extra.slice(0, 3).map((file) => `额外：${file}`),
+              ...comparison.sizeMismatches
+                .slice(0, 3)
+                .map((file) => `大小不同：${file.relativePath}`),
+            ];
+            task.errorMessage = `外部清单差异：${summary}${samples.length ? `。${samples.join("；")}` : ""}`;
+          } else if (task.errorMessage?.includes("外部清单")) {
+            task.errorMessage = undefined;
+          }
+        } catch {
+          unavailableSources.add(existingSourceKey(task.sourcePath));
+        }
+      }
+      const
         rootsBefore = project.boundRoots || [],
         uniqueRoots = deduplicateBoundRoots(rootsBefore),
         rootsDeduplicated = rootsBefore.length - uniqueRoots.length;
       if (apply) {
-        for (const duplicateId of consolidated.duplicateIds)
+        for (const duplicateId of [
+          ...consolidated.duplicateIds,
+          ...consolidated.aggregateIds,
+        ])
           engine.deleteTask(duplicateId);
         project.boundRoots = uniqueRoots;
         await Promise.all([
@@ -1779,6 +1821,10 @@ app.whenReady().then(async () => {
         ).length,
         duplicatesFound: consolidated.duplicateIds.length,
         duplicatesMerged: apply ? consolidated.duplicateIds.length : 0,
+        aggregateRecordsFound: consolidated.aggregateIds.length,
+        aggregateRecordsRemoved: apply ? consolidated.aggregateIds.length : 0,
+        manifestDifferences,
+        manifestsInspected,
         rootsDeduplicated,
         unavailableSources: unavailableSources.size,
         devicesDetected: [...devicesDetected].sort(),

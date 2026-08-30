@@ -1,4 +1,4 @@
-export type HashAlgorithm = "md5" | "sha1" | "sha256";
+export type HashAlgorithm = "md5" | "sha1" | "sha256" | "xxhash32";
 export type TaskStatus =
   | "pending"
   | "running"
@@ -110,6 +110,23 @@ export interface FileRecord {
   skipped?: boolean;
 }
 
+export interface ExternalManifestComparison {
+  path: string;
+  algorithm?: HashAlgorithm;
+  status: "structure-match" | "verified" | "mismatch" | "unsupported";
+  entries: number;
+  matched: number;
+  missing: string[];
+  extra: string[];
+  sizeMismatches: Array<{
+    relativePath: string;
+    expected: number;
+    actual: number;
+  }>;
+  checksumMismatches: string[];
+  checkedAt: number;
+}
+
 export interface BackupTask {
   provenance?:
     | "kocpy-transfer"
@@ -118,6 +135,7 @@ export interface BackupTask {
     | "unverified-import";
   importedAt?: number;
   confidence?: "verified" | "baseline" | "unverified";
+  externalManifest?: ExternalManifestComparison;
   projectId?: string;
   projectFolderName?: string;
   projectNamingRule?: string;
@@ -266,6 +284,10 @@ export interface ExistingReanalysisResult {
   duplicatesMerged: number;
   rootsDeduplicated: number;
   unavailableSources: number;
+  aggregateRecordsFound: number;
+  aggregateRecordsRemoved: number;
+  manifestDifferences: number;
+  manifestsInspected: number;
   devicesDetected: string[];
   applied: boolean;
 }

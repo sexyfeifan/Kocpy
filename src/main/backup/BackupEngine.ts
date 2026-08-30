@@ -14,6 +14,7 @@ import { canonical, inside, scan, segment, safeChild } from "./safety";
 import { volumeIdentity } from "../system";
 import { inspectMedia, isThumbnailMedia } from "../media";
 import { makeProjectFolderName, renderProjectCardPath } from "../project-path";
+import { XxHash32 } from "./XxHash32";
 
 export async function hashFile(
   file: string,
@@ -21,6 +22,17 @@ export async function hashFile(
   signal?: AbortSignal,
   onBytes?: (bytes: number) => void,
 ): Promise<string> {
+  if (algorithm === "xxhash32") {
+    const hash = new XxHash32();
+    for await (const chunk of createReadStream(file, {
+      highWaterMark: 4 * 1024 * 1024,
+      signal,
+    })) {
+      hash.update(chunk);
+      onBytes?.(chunk.length);
+    }
+    return hash.digestDecimal();
+  }
   const hash = createHash(algorithm);
   for await (const chunk of createReadStream(file, {
     highWaterMark: 4 * 1024 * 1024,
@@ -37,6 +49,19 @@ async function hashSource(
   signal?: AbortSignal,
   onBytes?: (bytes: number) => void,
 ) {
+  if (algorithm === "xxhash32") {
+    const primary = new XxHash32(),
+      md5 = createHash("md5");
+    for await (const chunk of createReadStream(file, {
+      highWaterMark: 4 * 1024 * 1024,
+      signal,
+    })) {
+      primary.update(chunk);
+      md5.update(chunk);
+      onBytes?.(chunk.length);
+    }
+    return { primary: primary.digestDecimal(), md5: md5.digest("hex") };
+  }
   const primary = createHash(algorithm),
     md5 = algorithm === "md5" ? primary : createHash("md5");
   for await (const chunk of createReadStream(file, {

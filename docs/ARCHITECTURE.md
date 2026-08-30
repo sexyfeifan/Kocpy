@@ -1,4 +1,4 @@
-# Kocpy 0.1.7 architecture
+# Kocpy 0.1.8 architecture
 
 ## Transfer pipeline
 
@@ -22,6 +22,10 @@ The UI reports two rates. `aggregateSpeedBps` is physical bytes written across a
 ## Compatibility
 
 Kocpy ships separate native FFmpeg binaries for Apple Silicon and Intel. All tasks, projects, preferences, thumbnails, and proxy records remain in the Kocpy local data directory.
+
+## Existing-backup reconciliation
+
+Project refresh operates on imported records only. It removes a parent record only when its normalized non-manifest file path/size set exactly equals the union of recorded descendant card folders. Card-root MHL/SHA manifests are parsed independently; nested manifests are never assigned to a parent folder. Metadata refresh compares paths and sizes without hashing media, while manifest import supports MD5, SHA-1, SHA-256, and decimal xxHash32 and performs full per-file checksum verification.
 
 ## Reliability diagnostics
 

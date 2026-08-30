@@ -24,6 +24,7 @@ export function taskMeetsCopyRequirement(
 ): boolean {
   return (
     task.status === "completed" &&
+    task.externalManifest?.status !== "mismatch" &&
     verifiedPhysicalCopyCount(task) >= requiredCopies
   );
 }

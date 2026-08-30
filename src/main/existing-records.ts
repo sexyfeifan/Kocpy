@@ -14,6 +14,64 @@ function structuralSignature(task: BackupTask): string {
   );
 }
 
+const manifestRecord = (relativePath: string) =>
+  /(?:\.mhl|sha(?:1|256)sums\.txt|manifest.*\.json)$/i.test(
+    path.basename(relativePath),
+  );
+
+function structuralFiles(task: BackupTask, prefix = "") {
+  return new Map(
+    task.fileRecords
+      .filter((record) => !manifestRecord(record.relativePath))
+      .map((record) => [
+        path
+          .normalize(path.join(prefix, record.relativePath))
+          .normalize("NFC"),
+        record.size,
+      ]),
+  );
+}
+
+function aggregateRecordIds(tasks: BackupTask[]) {
+  const aggregates = new Set<string>();
+  for (const parent of tasks) {
+    const parentRoot = existingSourceKey(parent.sourcePath);
+    const descendants = tasks.filter((candidate) => {
+      if (candidate.id === parent.id) return false;
+      const relative = path.relative(
+        parentRoot,
+        existingSourceKey(candidate.sourcePath),
+      );
+      return Boolean(
+        relative &&
+          relative !== ".." &&
+          !relative.startsWith(`..${path.sep}`) &&
+          !path.isAbsolute(relative),
+      );
+    });
+    if (!descendants.length) continue;
+    const parentFiles = structuralFiles(parent),
+      descendantFiles = new Map<string, number>();
+    for (const descendant of descendants) {
+      const prefix = path.relative(
+        parentRoot,
+        existingSourceKey(descendant.sourcePath),
+      );
+      for (const [relativePath, size] of structuralFiles(descendant, prefix))
+        descendantFiles.set(relativePath, size);
+    }
+    if (
+      parentFiles.size > 0 &&
+      parentFiles.size === descendantFiles.size &&
+      [...parentFiles].every(
+        ([relativePath, size]) => descendantFiles.get(relativePath) === size,
+      )
+    )
+      aggregates.add(parent.id);
+  }
+  return [...aggregates];
+}
+
 export function existingContentFingerprint(
   task: BackupTask,
 ): string | undefined {
@@ -117,6 +175,7 @@ function mergeGroup(group: BackupTask[]): {
 export function consolidateExistingRecords(tasks: BackupTask[]): {
   records: BackupTask[];
   duplicateIds: string[];
+  aggregateIds: string[];
 } {
   let records = [...tasks];
   const duplicateIds: string[] = [];
@@ -146,7 +205,14 @@ export function consolidateExistingRecords(tasks: BackupTask[]): {
     ]);
   }
   consolidateGroups([...contentGroups.values()]);
-  return { records, duplicateIds: [...new Set(duplicateIds)] };
+  const aggregateIds = aggregateRecordIds(records),
+    aggregateSet = new Set(aggregateIds);
+  records = records.filter((task) => !aggregateSet.has(task.id));
+  return {
+    records,
+    duplicateIds: [...new Set(duplicateIds)],
+    aggregateIds,
+  };
 }
 
 export function deduplicateBoundRoots<
