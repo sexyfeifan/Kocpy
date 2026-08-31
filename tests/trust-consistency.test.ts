@@ -182,6 +182,10 @@ describe("trust truth table and historical compatibility", () => {
     const single = (await generateReport(task)).toString();
     expect(single).toContain('class="section destination-section"');
     expect(single).toContain('.destination-section { break-inside: avoid; }');
+    expect(single).toContain('.section { box-shadow: none; border: 0; border-radius: 0; padding: 0; margin-bottom: 20px; }');
+    expect(single).toContain('@page { size: A4; margin: 10mm 8mm; }');
+    expect(single).toContain('class="section task-info-section"');
+    expect(single).toContain('.file-section > p { break-after: avoid; }');
     for (const html of await Promise.all([
       generateReport(task),
       generateDailyReport([task], "2026-09-01"),

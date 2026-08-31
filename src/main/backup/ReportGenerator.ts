@@ -152,6 +152,7 @@ export async function generateReport(
   .section { background: #fff; border-radius: 12px; padding: 20px 24px; margin-bottom: 16px; border:1px solid #eae8ef; }
   .section > p { margin: 8px 0; line-height: 1.65; }
   .destination-section { break-inside: avoid; }
+  .file-section > p { break-after: avoid; }
   .section h2 {
     break-after: avoid;
     font-size: 12px;
@@ -200,9 +201,14 @@ export async function generateReport(
   thead { display: table-header-group; }
   .mono { font-family: "SF Mono", "Menlo", monospace; }
   .footer { text-align: center; font-size: 11px; color: #aaa; margin-top: 24px; }
+  @page { size: A4; margin: 10mm 8mm; }
   @media print {
     body { background: #fff; padding: 0; }
-    .section { box-shadow: none; }
+    /* Cards spanning many pages can clip Chromium's repeated table headers.
+       Use flat print sections; keep the decorated cards for HTML viewing. */
+    .section { box-shadow: none; border: 0; border-radius: 0; padding: 0; margin-bottom: 20px; }
+    .section h2 { padding-top: 12px; }
+    .task-info-section, .info-grid { break-inside: avoid; }
   }
 </style>
 </head>
@@ -226,7 +232,7 @@ export async function generateReport(
 
 ${eventRows ? `<div class="section"><h2>任务事件时间线</h2><table><thead><tr><th>时间</th><th>阶段</th><th>事件</th></tr></thead><tbody>${eventRows}</tbody></table></div>` : ""}
 
-<div class="section">
+<div class="section task-info-section">
   <h2>任务信息</h2>
   <p><strong>${esc(trust.basis)}</strong> · ${trust.copies.verifiedTargets} 个目标有校验通过记录</p>
   <p>${esc(trust.explanation)} ${esc(trust.nextStep)}</p>
@@ -257,7 +263,7 @@ ${eventRows ? `<div class="section"><h2>任务事件时间线</h2><table><thead>
   </table>
 </div>
 
-<div class="section">
+<div class="section file-section">
   <h2>文件清单</h2>
   <p style="font-size:10px;color:#777;margin-bottom:12px">本报告记录任务执行时的校验结果，不代表当前磁盘状态。总计 ${task.totalFiles} 个文件，已处理 ${task.completedFiles} 个。</p>
   <table class="file-table${options.includeThumbnails ? " with-thumbnails" : ""}">
