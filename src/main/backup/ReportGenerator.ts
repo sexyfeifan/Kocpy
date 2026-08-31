@@ -151,7 +151,9 @@ export async function generateReport(
   .summary span { display:block; margin-top:7px; color:#8a8590; font-size:9px; letter-spacing:.05em; }
   .section { background: #fff; border-radius: 12px; padding: 20px 24px; margin-bottom: 16px; border:1px solid #eae8ef; }
   .section > p { margin: 8px 0; line-height: 1.65; }
+  .destination-section { break-inside: avoid; }
   .section h2 {
+    break-after: avoid;
     font-size: 12px;
     font-weight: 600;
     text-transform: uppercase;
@@ -247,7 +249,7 @@ ${eventRows ? `<div class="section"><h2>任务事件时间线</h2><table><thead>
   </div>
 </div>
 
-<div class="section">
+<div class="section destination-section">
   <h2>备份目的地</h2>
   <table class="dest-table">
     <thead><tr><th>目的地路径</th><th>已保存 / 本次写入</th><th>校验状态</th></tr></thead>

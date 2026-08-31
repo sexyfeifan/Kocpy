@@ -179,6 +179,9 @@ describe("trust truth table and historical compatibility", () => {
         ],
       },
     ];
+    const single = (await generateReport(task)).toString();
+    expect(single).toContain('class="section destination-section"');
+    expect(single).toContain('.destination-section { break-inside: avoid; }');
     for (const html of await Promise.all([
       generateReport(task),
       generateDailyReport([task], "2026-09-01"),

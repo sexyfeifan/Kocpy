@@ -2770,9 +2770,11 @@ export function App() {
               </div>
               <p className="current-file mono">
                 {selected.currentFile ||
-                  (taskTrustState(selected).contentVerified
-                    ? taskTrustState(selected).label
-                    : "等待或任务已停止")}
+                  (active(selected)
+                    ? transferPhaseText(selected)
+                    : taskTrustState(selected).contentVerified
+                      ? taskTrustState(selected).label
+                      : "等待或任务已停止")}
               </p>
               {!active(selected) && (
                 <div className="trust-evidence" role="status">
@@ -2886,7 +2888,7 @@ export function App() {
                       color="var(--amber)"
                     />
                   </div>
-                  <p>{selected.performanceSummary}</p>
+                  {!active(selected) && <p>{selected.performanceSummary}</p>}
                 </div>
               )}
               <h3 className="detail-label">备份目的地</h3>
@@ -4997,6 +4999,7 @@ function HelpPage({
         <div>
           <strong>0.1.22：普通备份与实时阶段反馈</strong>
           <p>普通备份无需创建项目，按次保存与保留源文件夹分开选择。高级选项默认折叠，独立回读校验不变；容量未知显示待预检。暂停后清空速度和预计时间，继续后重新采样，阶段进度不提前四舍五入到100%。</p>
+          <p>重新校验期间显示本次阶段，不混入上次已完成的性能总结。单任务PDF的目的地标题与表格一起分页；首次基线仍不等于证明接管前没有遗漏。</p>
           <p>内容校验、首次基线与可计数副本分开说明。项目覆盖、收工检查、详情和报告共用判定；旧“允许额外文件”不豁免新的缺失、大小或哈希差异。旧记录的哈希事实保留，多目标缺少同次物理拓扑证据时不会自动视为独立副本，可重新校验在线目标更新证据。</p>
           <p>
             已声明使用的设备仍会检查现有素材；休息／未使用不能免除已记录素材的校验。不同卷 UUID 不再自动算成独立物理副本，旧记录保留原校验结果并提示独立性待复核。代理、交接与归档操作区统一间距，普通窗口限制过窄或过宽的比例；侧栏字号不缩小。内置媒体组件附完整源码与许可，帮助仍默认折叠。
