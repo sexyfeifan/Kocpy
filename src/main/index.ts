@@ -74,6 +74,8 @@ import {
   taskMeetsCopyRequirement,
   verifiedPhysicalCopyCount,
 } from "./project-closeout";
+import { taskTrustState } from "../common/task-trust";
+import { shootingDateKey } from "../common/shooting-dates";
 import {
   benchmarkDirectory,
   buildDiagnosticSnapshot,
@@ -1473,7 +1475,7 @@ app.whenReady().then(async () => {
     if (scope.projectId)
       tasks = tasks.filter((task) => task.projectId === scope.projectId);
     if (scope.shootingDate)
-      tasks = tasks.filter((task) => task.shootingDate === scope.shootingDate);
+      tasks = tasks.filter((task) => shootingDateKey(task.shootingDate) === shootingDateKey(scope.shootingDate));
     if (scope.taskId) tasks = tasks.filter((task) => task.id === scope.taskId);
     if (scope.volumePath)
       tasks = tasks.filter((task) =>
@@ -2980,7 +2982,7 @@ app.whenReady().then(async () => {
         status.unconfirmed.length ||
         related.some(
           (task) =>
-            task.shootingDate === run.date &&
+            shootingDateKey(task.shootingDate) === shootingDateKey(run.date) &&
             !taskMeetsCopyRequirement(task, project.requiredCopies || 2),
         )
       )
@@ -3929,7 +3931,7 @@ app.whenReady().then(async () => {
         return (
           "\ufeff" +
           [
-            "拍摄日期,设备,机位,素材卷,文件数,素材大小,状态,通过目标,物理独立副本,项目要求副本",
+            "拍摄日期,设备,机位,素材卷,文件数,素材大小,可信状态,有校验记录目标,可计数副本,项目要求副本",
             ...tasks.map((task) =>
               [
                 task.shootingDate,
@@ -3938,10 +3940,10 @@ app.whenReady().then(async () => {
                 task.name,
                 task.totalFiles,
                 task.totalBytes,
-                task.status,
+                taskTrustState(task).label,
                 task.destinations.filter((destination) => destination.verified)
                   .length,
-                verifiedPhysicalCopyCount(task),
+                taskTrustState(task).countableCopies,
                 project.requiredCopies || 2,
               ]
                 .map(cell)

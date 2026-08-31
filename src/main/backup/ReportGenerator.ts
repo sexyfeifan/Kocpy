@@ -1,16 +1,15 @@
 import * as fs from "fs";
 import type { BackupTask, ProjectConfig } from "../types";
 import { formatBytes } from "../report-builder";
-import { projectShootingDates } from "../project-path";
+import { projectDates, shootingDateKey } from "../../common/shooting-dates";
 import { APP_VERSION } from "../../common/version";
 import { copyEvidenceSummary } from "../../common/copy-evidence";
+import { taskTrustState, savedDestinationBytes } from "../../common/task-trust";
 import {
-  manifestRequirementMet,
   projectCellStatus,
   projectCloseoutSummary,
   projectDeviceCells,
   taskMeetsCopyRequirement,
-  verifiedPhysicalCopyCount,
 } from "../project-closeout";
 
 function formatDuration(ms: number): string {
@@ -45,18 +44,10 @@ export async function generateReport(
   task: BackupTask,
   options: { includeThumbnails?: boolean } = {},
 ): Promise<Buffer> {
-  const statusLabel =
-    task.status === "completed"
-      ? manifestRequirementMet(task)
-        ? "备份成功"
-        : "文件校验通过，清单差异待处理"
-      : task.status === "unverified"
-        ? "已识别，待建立基线"
-        : task.status === "failed"
-          ? "备份失败"
-          : "部分完成";
+  const trust = taskTrustState(task);
+  const statusLabel = trust.label;
   const statusColor =
-    task.status === "completed" && manifestRequirementMet(task)
+    trust.contentVerified
       ? "#22c55e"
       : task.status === "unverified"
         ? "#f59e0b"
@@ -74,7 +65,7 @@ export async function generateReport(
       (d) => `
     <tr>
       <td>${esc(d.resolvedPath || d.path)}</td>
-      <td class="destination-amount"><strong>${formatBytes(d.copiedBytes ?? (d.verified ? task.totalBytes : d.bytesWritten))}</strong><small>本次写入 ${formatBytes(d.bytesWritten)}</small><small>${esc(d.volumeName || "未知卷")}</small><small class="identifier">${esc(d.volumeUuid || d.volumeId || "无卷标识")}</small><small>写入 ${performanceLabel(d.performance)}</small><small>回读 ${performanceLabel(d.verifyPerformance)}</small></td>
+      <td class="destination-amount"><strong>${formatBytes(savedDestinationBytes(task, d))}</strong><small>本次写入 ${formatBytes(d.bytesWritten)}</small><small>${esc(d.volumeName || "未知卷")}</small><small class="identifier">${esc(d.volumeUuid || d.volumeId || "无卷标识")}</small><small>写入 ${performanceLabel(d.performance)}</small><small>回读 ${performanceLabel(d.verifyPerformance)}</small></td>
       <td style="color:${d.verified ? "#22c55e" : d.error ? "#ef4444" : "#888"}">
         ${d.verified ? "✓ 通过" : d.error ? `✗ ${esc(d.error)}` : "未知"}
       </td>
@@ -159,6 +150,7 @@ export async function generateReport(
   .summary strong { display:block; font-size:17px; color:#24202d; }
   .summary span { display:block; margin-top:7px; color:#8a8590; font-size:9px; letter-spacing:.05em; }
   .section { background: #fff; border-radius: 12px; padding: 20px 24px; margin-bottom: 16px; border:1px solid #eae8ef; }
+  .section > p { margin: 8px 0; line-height: 1.65; }
   .section h2 {
     font-size: 12px;
     font-weight: 600;
@@ -226,7 +218,7 @@ export async function generateReport(
 <div class="summary">
   <div><strong>${task.totalFiles}</strong><span>FILES / 文件</span></div>
   <div><strong>${formatBytes(task.totalBytes)}</strong><span>SOURCE / 源数据</span></div>
-  <div><strong>${verifiedPhysicalCopyCount(task)} / ${task.destinations.length}</strong><span>COUNTABLE COPIES / 可计数副本</span></div>
+  <div><strong>${trust.countableCopies}</strong><span>COUNTABLE COPIES / 可计数副本</span></div>
   <div><strong>${duration}</strong><span>DURATION / 总用时</span></div>
 </div>
 
@@ -234,6 +226,9 @@ ${eventRows ? `<div class="section"><h2>任务事件时间线</h2><table><thead>
 
 <div class="section">
   <h2>任务信息</h2>
+  <p><strong>${esc(trust.basis)}</strong> · ${trust.copies.verifiedTargets} 个目标有校验通过记录</p>
+  <p>${esc(trust.explanation)} ${esc(trust.nextStep)}</p>
+  <p>最近记录：${trust.verifiedAt ? new Date(trust.verifiedAt).toLocaleString("zh-CN") : "未记录完整校验时间"}</p>
   <p>${copyEvidenceSummary(task.destinations).independencePending ? "物理独立性证据不足：旧记录、未知拓扑或不同检查批次不合并计数。重新校验在线目标可更新存储关系。" : "副本计数依据已记录的系统存储关系；不同目录或卷 UUID 不自动代表不同物理磁盘，也不代表机箱、供电或灾备独立。"} 校验完成不等于可以格式化原卡。</p>
   <div class="info-grid">
     <span class="label">任务名称</span><span class="value">${esc(task.name)}</span>
@@ -287,8 +282,10 @@ export async function generateDailyReport(
     bytes = safeTasks.reduce((n, t) => n + t.totalBytes, 0);
   const rows = safeTasks
     .map(
-      (t) =>
-        `<tr><td>${esc(t.name)}</td><td>${esc((t.devices || []).join(" / ") || "-")}</td><td>${t.totalFiles}</td><td>${formatBytes(t.totalBytes)}</td><td style="color:${t.status === "completed" && manifestRequirementMet(t) && t.destinations.every((destination) => destination.verified) ? "#21b76b" : "#d9545d"}">${t.status === "completed" && manifestRequirementMet(t) && t.destinations.every((destination) => destination.verified) ? "✓ 全部通过" : `⚠ ${esc(!manifestRequirementMet(t) ? "外部清单差异待处理" : t.errorMessage || "需处理")}`}</td></tr>`,
+      (t) => {
+        const trust = taskTrustState(t);
+        return `<tr><td>${esc(t.name)}</td><td>${esc((t.devices || []).join(" / ") || "-")}</td><td>${t.totalFiles}</td><td>${formatBytes(t.totalBytes)}</td><td style="color:${trust.contentVerified ? "#21b76b" : "#d9545d"}">${esc(trust.label)} · ${trust.countableCopies} 份可计数副本<br>${esc(trust.nextStep)}</td></tr>`;
+      },
     )
     .join("");
   const destinationRows = safeTasks
@@ -309,13 +306,7 @@ export async function generateProjectReport(
   project: ProjectConfig,
   tasks: BackupTask[],
 ): Promise<Buffer> {
-  const dates = projectShootingDates(
-    project.shootingDateStart || project.shootingDate || "",
-    project.shootingDateEnd ||
-      project.shootingDateStart ||
-      project.shootingDate ||
-      "",
-  );
+  const dates = projectDates(project, tasks);
   const devices = [
     ...new Set([
       ...project.devices,
@@ -350,7 +341,7 @@ export async function generateProjectReport(
     .join("");
   const dailyRows = dates
     .map((shootingDate) => {
-      const rows = tasks.filter((task) => task.shootingDate === shootingDate);
+      const rows = tasks.filter((task) => shootingDateKey(task.shootingDate) === shootingDateKey(shootingDate));
       return `<tr><td>${shootingDate}</td><td>${rows.length}</td><td>${rows.reduce((sum, task) => sum + task.totalFiles, 0)}</td><td>${formatBytes(rows.reduce((sum, task) => sum + task.totalBytes, 0))}</td></tr>`;
     })
     .join("");
@@ -368,12 +359,12 @@ export async function generateProjectReport(
         (a.startedAt || 0) - (b.startedAt || 0),
     )
     .map((task) => {
-      const copies = verifiedPhysicalCopyCount(task),
+      const trust = taskTrustState(task), copies = trust.countableCopies,
         safe = taskMeetsCopyRequirement(
           task,
           project.requiredCopies || 2,
         );
-      return `<tr><td>${esc(task.shootingDate || "-")}</td><td>${esc((task.devices || []).join(" / ") || "-")}${task.cameraPosition ? ` · ${esc(task.cameraPosition)}` : ""}</td><td>${esc(task.name)}</td><td>${task.totalFiles}</td><td>${formatBytes(task.totalBytes)}</td><td class="${safe ? "ok" : "warn"}">${safe ? `✓ ${copies} 份物理独立副本` : `⚠ ${esc(task.errorMessage || `${copies} 份物理独立副本，未达到要求`)}`}</td></tr>`;
+      return `<tr><td>${esc(task.shootingDate || "-")}</td><td>${esc((task.devices || []).join(" / ") || "-")}${task.cameraPosition ? ` · ${esc(task.cameraPosition)}` : ""}</td><td>${esc(task.name)}</td><td>${task.totalFiles}</td><td>${formatBytes(task.totalBytes)}</td><td class="${safe ? "ok" : "warn"}">${esc(trust.label)}<br>${safe ? `✓ ${copies} 份可计数副本` : `⚠ ${copies} 份可计数副本 · 未达到要求`}</td></tr>`;
     })
     .join("");
   const destinationRows = tasks
@@ -397,6 +388,6 @@ export async function generateProjectReport(
     : closeout.unconfirmed.length
       ? `没有明确缺失；仍有 ${closeout.unconfirmed.length} 个单元待确认是否使用`
       : "全部拍摄日和设备均满足收工要求";
-  const html = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><style>*{box-sizing:border-box}body{font-family:-apple-system,"PingFang SC",sans-serif;color:#24212c;padding:28px;background:#f5f3f7;font-size:11px}.cover{padding:28px;border-radius:16px;color:#fff;background:linear-gradient(135deg,#6d5ee8,#9a88ff);display:flex;justify-content:space-between}.cover h1{margin:0;font-size:25px}.cover p{margin:8px 0 0;color:#eeeaff}.period{font-size:15px}.summary{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:16px 0}.summary div,.section{background:#fff;border:1px solid #e7e2ee;border-radius:11px;padding:15px}.summary strong{display:block;font-size:19px}.summary span{display:block;color:#8b8493;font-size:8px;margin-top:5px}.section{margin-top:12px}.section h2{font-size:12px;margin:0 0 11px;padding-bottom:9px;border-bottom:1px solid #eee9f2}table{width:100%;border-collapse:collapse;table-layout:fixed}th{padding:8px;background:#eee9ff;color:#514783;text-align:left}td{padding:7px 8px;border-bottom:1px solid #eee;overflow-wrap:anywhere}tr{break-inside:avoid}.ok{color:#188b58}.warn{color:#bd4e5a}.muted{color:#999}.split{display:grid;grid-template-columns:1fr 1fr;gap:12px}.footer{text-align:center;color:#999;margin-top:18px}@page{size:A4;margin:12mm}@media print{body{padding:0;background:#fff}.section{break-inside:auto}}</style></head><body><div class="cover"><div><h1>Kocpy · 项目完整报告</h1><p>${esc(project.name)} · PROJECT MEDIA REPORT</p></div><div class="period">${esc(project.shootingDateStart || "-")} — ${esc(project.shootingDateEnd || project.shootingDateStart || "-")}<br>报告编号 ${esc(project.id.slice(0, 12).toUpperCase())}</div></div><div class="summary"><div><strong>${tasks.length}</strong><span>BACKUPS / 备份任务</span></div><div><strong>${completed} / ${tasks.length}</strong><span>SAFE TASKS / 达到副本要求</span></div><div><strong>${totalFiles}</strong><span>FILES / 文件</span></div><div><strong>${formatBytes(totalBytes)}</strong><span>MEDIA / 项目素材</span></div></div><div class="section"><h2>项目收工结论 · ${closeout.complete} / ${closeout.total} 个日期设备单元完成</h2><p class="${closeout.pending.length || closeout.unconfirmed.length ? "warn" : "ok"}">${closeoutMessage}</p></div><div class="section"><h2>日期 × 设备素材完成情况</h2><table><thead><tr><th>拍摄日期</th><th>设备 / 机位</th><th>素材卷</th><th>文件</th><th>素材量</th><th>收工状态</th></tr></thead><tbody>${matrixRows}</tbody></table></div><div class="split"><div class="section"><h2>每日素材趋势</h2><table><thead><tr><th>日期</th><th>素材卷</th><th>文件</th><th>素材量</th></tr></thead><tbody>${dailyRows}</tbody></table></div><div class="section"><h2>设备素材占比</h2><table><thead><tr><th>设备</th><th>素材卷</th><th>文件</th><th>素材量</th><th>占比</th></tr></thead><tbody>${deviceRows}</tbody></table></div></div><div class="section"><h2>全部备份任务</h2><table><thead><tr><th>日期</th><th>设备 / 机位</th><th>素材卷</th><th>文件</th><th>素材量</th><th>结论</th></tr></thead><tbody>${taskRows}</tbody></table></div><div class="section"><h2>目的地与独立校验</h2><table><thead><tr><th>素材卷</th><th>磁盘</th><th>最终路径</th><th>校验</th></tr></thead><tbody>${destinationRows}</tbody></table></div><div class="section"><h2>完整文件明细</h2><table><thead><tr><th>日期</th><th>设备</th><th>素材卷</th><th>文件路径</th><th>大小</th><th>副本校验</th></tr></thead><tbody>${fileRows}</tbody></table></div><div class="footer">Kocpy · @sexyfeifan · 生成时间 ${new Date().toLocaleString("zh-CN")}</div></body></html>`;
+  const html = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>Kocpy Project Media Report</title><style>*{box-sizing:border-box}body{font-family:-apple-system,"PingFang SC",sans-serif;color:#24212c;padding:28px;background:#f5f3f7;font-size:11px}.cover{padding:28px;border-radius:16px;color:#fff;background:linear-gradient(135deg,#6d5ee8,#9a88ff);display:flex;justify-content:space-between}.cover h1{margin:0;font-size:25px}.cover p{margin:8px 0 0;color:#eeeaff}.period{font-size:15px}.summary{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:16px 0}.summary div,.section{background:#fff;border:1px solid #e7e2ee;border-radius:11px;padding:15px}.summary strong{display:block;font-size:19px}.summary span{display:block;color:#8b8493;font-size:8px;margin-top:5px}.section{margin-top:12px}.section h2{break-after:avoid;font-size:12px;margin:0 0 11px;padding-bottom:9px;border-bottom:1px solid #eee9f2}table{width:100%;border-collapse:collapse;table-layout:fixed}th{padding:8px;background:#eee9ff;color:#514783;text-align:left}td{vertical-align:top;line-height:1.55;padding:9px 8px;border-bottom:1px solid #eee;overflow-wrap:anywhere}tr{break-inside:avoid}.ok{color:#188b58}.warn{color:#bd4e5a}.muted{color:#999}.matrix-table th:last-child{width:29%}.task-table th:nth-child(1){width:13%}.task-table th:nth-child(2){width:12%}.task-table th:nth-child(3){width:22%}.task-table th:nth-child(4){width:7%}.task-table th:nth-child(5){width:10%}.task-table th:last-child{width:36%}.destination-table th:nth-child(1){width:24%}.destination-table th:nth-child(2){width:14%}.destination-table th:nth-child(3){width:48%}.destination-table th:nth-child(4){width:14%}.split td:first-child{font-size:9px;white-space:nowrap}.task-section{break-before:page}.split{display:grid;grid-template-columns:1fr 1fr;gap:12px}.footer{text-align:center;color:#999;margin-top:18px}@page{size:A4;margin:12mm}@media print{body{padding:0;background:#fff}.section{break-inside:auto}}</style></head><body><div class="cover"><div><h1>Kocpy · 项目完整报告</h1><p>${esc(project.name)} · PROJECT MEDIA REPORT</p></div><div class="period">${esc(project.shootingDateStart || "-")} — ${esc(project.shootingDateEnd || project.shootingDateStart || "-")}<br>报告编号 ${esc(project.id.slice(0, 12).toUpperCase())}</div></div><div class="summary"><div><strong>${tasks.length}</strong><span>BACKUPS / 备份任务</span></div><div><strong>${completed} / ${tasks.length}</strong><span>SAFE TASKS / 达到副本要求</span></div><div><strong>${totalFiles}</strong><span>FILES / 文件</span></div><div><strong>${formatBytes(totalBytes)}</strong><span>MEDIA / 项目素材</span></div></div><div class="section"><h2>项目收工结论 · ${closeout.complete} / ${closeout.total} 个日期设备单元完成</h2><p class="${closeout.pending.length || closeout.unconfirmed.length ? "warn" : "ok"}">${closeoutMessage}</p></div><div class="section"><h2>日期 × 设备素材完成情况</h2><table class="matrix-table"><thead><tr><th>拍摄日期</th><th>设备 / 机位</th><th>素材卷</th><th>文件</th><th>素材量</th><th>收工状态</th></tr></thead><tbody>${matrixRows}</tbody></table></div><div class="split"><div class="section"><h2>每日素材趋势</h2><table><thead><tr><th>日期</th><th>素材卷</th><th>文件</th><th>素材量</th></tr></thead><tbody>${dailyRows}</tbody></table></div><div class="section"><h2>设备素材占比</h2><table><thead><tr><th>设备</th><th>素材卷</th><th>文件</th><th>素材量</th><th>占比</th></tr></thead><tbody>${deviceRows}</tbody></table></div></div><div class="section task-section"><h2>全部备份任务</h2><p>内容校验、接管首次基线和副本达标是不同结论。首次基线不证明接管前完整；有清单差异的任务须处理后才计为达标。同盘目录不增加独立副本，旧证据不足可重新校验在线目标。</p><table class="task-table"><thead><tr><th>日期</th><th>设备 / 机位</th><th>素材卷</th><th>文件</th><th>素材量</th><th>结论</th></tr></thead><tbody>${taskRows}</tbody></table></div><div class="section"><h2>目的地与独立校验</h2><p>以下是逐目标校验记录，不等于物理独立副本数量。清单缺失项不出现在现存文件明细中，须同时查看任务结论。</p><table class="destination-table"><thead><tr><th>素材卷</th><th>磁盘</th><th>最终路径</th><th>校验</th></tr></thead><tbody>${destinationRows}</tbody></table></div><div class="section"><h2>完整文件明细</h2><table><thead><tr><th>日期</th><th>设备</th><th>素材卷</th><th>文件路径</th><th>大小</th><th>副本校验</th></tr></thead><tbody>${fileRows}</tbody></table></div><div class="footer">Kocpy · @sexyfeifan · 生成时间 ${new Date().toLocaleString("zh-CN")}</div></body></html>`;
   return Buffer.from(html, "utf8");
 }

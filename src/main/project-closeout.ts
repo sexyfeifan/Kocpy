@@ -1,5 +1,8 @@
 import type { BackupTask, Destination, ProjectConfig } from "./types";
 import { copyEvidenceSummary, volumeCopyKey } from "../common/copy-evidence";
+import { taskMeetsCopyRequirement } from "../common/task-trust";
+import { shootingDateKey } from "../common/shooting-dates";
+export { manifestRequirementMet, taskMeetsCopyRequirement } from "../common/task-trust";
 
 export function physicalDestinationKey(destination: Destination): string {
   // Legacy export: a volume key is NOT a physical-independence conclusion.
@@ -8,24 +11,6 @@ export function physicalDestinationKey(destination: Destination): string {
 
 export function verifiedPhysicalCopyCount(task: BackupTask): number {
   return copyEvidenceSummary(task.destinations).independentCopies;
-}
-
-export function manifestRequirementMet(task: BackupTask): boolean {
-  return (
-    task.externalManifest?.status !== "mismatch" ||
-    task.externalManifest.resolution?.type === "accepted-extra"
-  );
-}
-
-export function taskMeetsCopyRequirement(
-  task: BackupTask,
-  requiredCopies: number,
-): boolean {
-  return (
-    task.status === "completed" &&
-    manifestRequirementMet(task) &&
-    verifiedPhysicalCopyCount(task) >= requiredCopies
-  );
 }
 
 export interface ProjectDeviceCell {
@@ -44,7 +29,7 @@ export function projectDeviceCells(
     ...new Set([
       ...project.devices,
       ...tasks
-        .filter((task) => !shootingDate || task.shootingDate === shootingDate)
+        .filter((task) => !shootingDate || shootingDateKey(task.shootingDate) === shootingDateKey(shootingDate))
         .flatMap((task) => task.devices || []),
     ]),
   ];
@@ -73,7 +58,7 @@ export function projectDeviceCells(
       (!shootingDate ||
         tasks.some(
           (task) =>
-            task.shootingDate === shootingDate &&
+            shootingDateKey(task.shootingDate) === shootingDateKey(shootingDate) &&
             task.devices.includes(device) &&
             !task.cameraPosition,
         ))
@@ -96,7 +81,7 @@ export function projectCellStatus(
 ) {
   const deviceTasks = tasks.filter(
     (task) =>
-      task.shootingDate === shootingDate && task.devices.includes(device),
+      shootingDateKey(task.shootingDate) === shootingDateKey(shootingDate) && task.devices.includes(device),
   );
   const hasPositionedRows =
     Boolean(project.devicePositions?.[device]?.length) ||
@@ -109,9 +94,10 @@ export function projectCellStatus(
       ? deviceTasks.filter((task) => !task.cameraPosition)
       : deviceTasks;
   const required = project.requiredCopies || 2;
-  const rest = Boolean(project.restDays?.includes(shootingDate));
-  const unusedKeys = project.unusedDevicesByDate?.[shootingDate] || [];
-  const expectedKeys = project.expectedDevicesByDate?.[shootingDate] || [];
+  const rest = Boolean(project.restDays?.some(date => shootingDateKey(date) === shootingDateKey(shootingDate)));
+  const keysFor = (byDate?: Record<string, string[]>) => Object.entries(byDate || {}).filter(([date]) => shootingDateKey(date) === shootingDateKey(shootingDate)).flatMap(([, keys]) => keys);
+  const unusedKeys = keysFor(project.unusedDevicesByDate);
+  const expectedKeys = keysFor(project.expectedDevicesByDate);
   const scheduleKey = cameraPosition ? `${device}::${cameraPosition}` : device;
   const unused = cameraPosition
     ? unusedKeys.includes(scheduleKey) || unusedKeys.includes(device)
@@ -154,7 +140,7 @@ export function projectCloseoutSummary(
   tasks: BackupTask[],
   dates: string[],
 ) {
-  const cells = dates.flatMap((shootingDate) =>
+  const cells = [...new Set(dates.map(shootingDateKey))].flatMap((shootingDate) =>
     projectDeviceCells(project, tasks, shootingDate).map((cell) => ({
       shootingDate,
       ...cell,

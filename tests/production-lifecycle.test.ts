@@ -530,8 +530,12 @@ describe("0.1.0 production lifecycle", () => {
       {
         projectId: "p",
         status: "completed",
+        provenance: "external-baseline",
+        confidence: "baseline",
         externalManifest: {
           status: "mismatch",
+          path: "/synthetic/list.mhl", entries: 1, matched: 1, checkedAt: 1,
+          missing: [], extra: ["extra.mov"], sizeMismatches: [], checksumMismatches: [],
           resolution: {
             type: "accepted-extra",
             resolvedAt: Date.now(),
@@ -539,8 +543,8 @@ describe("0.1.0 production lifecycle", () => {
           },
         },
         destinations: [
-          { verified: true, path: "/Volumes/A/card" },
-          { verified: true, path: "/Volumes/B/card" },
+          { verified: true, path: "/Volumes/A/card", volumeUuid: "A", storageEvidence: { kind: "local-physical", assessmentId: "same-inspection", checkedAt: 1, volumeUuid: "A", domains: ["disk1"], reason: "synthetic" } },
+          { verified: true, path: "/Volumes/B/card", volumeUuid: "B", storageEvidence: { kind: "local-physical", assessmentId: "same-inspection", checkedAt: 1, volumeUuid: "B", domains: ["disk2"], reason: "synthetic" } },
         ],
       } as any,
     ]);

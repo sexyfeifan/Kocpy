@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { BackupEngine } from "../src/main/backup/BackupEngine";
 import { projectCellStatus, projectCloseoutSummary } from "../src/main/project-closeout";
 import type { ProjectConfig } from "../src/main/types";
+import { projectDates, updateSchedule } from "../src/common/shooting-dates";
 
 const date = "2026-08-25";
 function fixture() {
@@ -47,5 +48,18 @@ describe("closeout cannot hide recorded unsafe material", () => {
     task.destinations[0].verified = true;
     expect(projectCellStatus(project, [task], date, "FX3")).toMatchObject({ complete: true, attention: false });
     expect(projectCellStatus(project, [], date, "FX3")).toMatchObject({ complete: false, attention: true });
+  });
+  it("treats compact and ISO dates as the same shooting day without mutating history", () => {
+    const { project, task } = fixture(); task.shootingDate = "20260825";
+    task.status = "completed"; task.destinations[0].verified = true;
+    expect(projectCellStatus(project, [task], date, "FX3").safe).toBe(1);
+    expect(projectCloseoutSummary(project, [task], [date, "20260825"]).total).toBe(1);
+    expect(task.shootingDate).toBe("20260825");
+    expect(projectDates({ ...project, shootingDateStart: date, shootingDateEnd: date }, [task])).toEqual([date]);
+    project.unusedDevicesByDate = { "20260825": ["FX3"] };
+    expect(projectCellStatus(project, [], date, "FX3").exempt).toBe(true);
+    const cleared = updateSchedule(project, date, "FX3", "clear");
+    expect(projectCellStatus(cleared, [], date, "FX3").exempt).toBe(false);
+    expect(project.unusedDevicesByDate["20260825"]).toEqual(["FX3"]);
   });
 });

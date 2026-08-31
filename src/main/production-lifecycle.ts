@@ -3,14 +3,13 @@ import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { canonical, inside, safeChild, scan } from "./backup/safety";
 import { hashFile } from "./backup/BackupEngine";
-import { manifestRequirementMet } from "./project-closeout";
+export { projectCoverage } from "../common/task-trust";
 import type {
   BackupTask,
   ExternalManifestComparison,
   ExistingImportPreview,
   HashAlgorithm,
   ProjectConfig,
-  ProjectCoverage,
   ProjectTemplate,
 } from "./types";
 import { mediaBreakdownFromFiles } from "./media-kind";
@@ -1223,46 +1222,6 @@ export async function importExistingBackup(
           ? `外部清单差异：${differenceSummary}`
           : "外部清单格式暂不支持或没有可读取的校验条目",
     fileRecords: records,
-  };
-}
-
-export function projectCoverage(
-  project: ProjectConfig,
-  tasks: BackupTask[],
-): ProjectCoverage {
-  const related = tasks.filter((task) => task.projectId === project.id),
-    required = project.requiredCopies || 2,
-    byProvenance: Record<string, number> = {};
-  let verified = 0,
-    compliant = 0,
-    attention = 0;
-  for (const task of related) {
-    const source = task.provenance || "kocpy-transfer";
-    byProvenance[source] = (byProvenance[source] || 0) + 1;
-    const copies = new Set(
-      task.destinations
-        .filter(
-          (item) =>
-            item.verified && manifestRequirementMet(task),
-        )
-        .map((item) => item.volumeUuid || item.volumeId || item.path),
-    ).size;
-    if (copies) verified++;
-    if (copies >= required) compliant++;
-    else attention++;
-  }
-  const expected = project.expectedVolumes;
-  return {
-    recorded: related.length,
-    verified,
-    compliant,
-    attention,
-    byProvenance,
-    managedSince: project.managedSince,
-    expected,
-    coveragePercent: expected
-      ? Math.min(100, Math.round((related.length / expected) * 100))
-      : undefined,
   };
 }
 

@@ -8,9 +8,9 @@
 
 ![Kocpy 工作台](docs/screenshots/dashboard.png)
 
-当前代码版本：**0.1.20** · [完整使用手册](docs/USER_GUIDE.md) · [0.1.20 更新说明](docs/RELEASE_NOTES_0.1.20.md) · [已公开发布版本](https://github.com/sexyfeifan/Kocpy/releases/latest)
+当前代码版本：**0.1.21** · [完整使用手册](docs/USER_GUIDE.md) · [0.1.21 更新说明](docs/RELEASE_NOTES_0.1.21.md) · [已公开发布版本](https://github.com/sexyfeifan/Kocpy/releases/latest)
 
-0.1.20 修复收工风险漏报，区分校验目标与有存储关系证据的副本；更新双架构媒体运行时及完整对应源码分发，修复媒体信息和代理取消问题，整理代理／归档／交接布局并约束窗口比例。已公开安装包以 Release 实际附件为准，草稿不是公开发行；测试范围及限制见 [验证记录](docs/VERIFICATION.md)。
+0.1.21 统一项目覆盖、收工、任务详情与报告的可信判定；旧人工差异确认不豁免新的缺失或损坏。包含媒体运行时、完整对应源码分发和布局维护。0.1.20 候选因发布前发现后台统计不一致未公开安装包，标签保留不覆盖。已公开安装包以 Release 实际附件为准，草稿不是公开发行；测试范围及限制见 [验证记录](docs/VERIFICATION.md)。
 
 ## 中文
 
@@ -130,8 +130,8 @@ Kocpy 支持真实深色与浅色外观，任务、项目、偏好、缩略图�
 
 从 [GitHub Releases](https://github.com/sexyfeifan/Kocpy/releases) 下载对应架构：
 
-- `Kocpy-0.1.20-arm64.dmg`：Apple Silicon Mac
-- `Kocpy-0.1.20-x64.dmg`：Intel Mac
+- `Kocpy-0.1.21-arm64.dmg`：Apple Silicon Mac
+- `Kocpy-0.1.21-x64.dmg`：Intel Mac
 
 当前代码对应上述版本；远端可下载版本以 Release 实际附件为准。
 

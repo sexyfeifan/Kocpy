@@ -113,6 +113,8 @@ import {
 import { taskMediaKind } from "../../main/media-kind";
 import { copyEvidenceSummary } from "../../common/copy-evidence";
 import { APP_VERSION } from "../../common/version";
+import { taskTrustState, projectCoverage, savedDestinationBytes } from "../../common/task-trust";
+import { projectDates, shootingDateKey, updateSchedule } from "../../common/shooting-dates";
 
 type Page =
   | "overview"
@@ -145,25 +147,6 @@ const readableError = (reason: unknown) =>
     .replace(/^Error:\s*/i, "")
     .replace(/^Error invoking remote method ['"][^'"]+['"]:\s*/i, "")
     .replace(/^Error:\s*/i, "");
-const projectDates = (project: ProjectConfig, tasks: BackupTask[]) => {
-  const result: string[] = [],
-    start = project.shootingDateStart,
-    end = project.shootingDateEnd || start;
-  if (start && end)
-    for (
-      let cursor = new Date(`${start}T12:00:00`),
-        finish = new Date(`${end}T12:00:00`);
-      cursor <= finish && result.length < 1000;
-      cursor.setDate(cursor.getDate() + 1)
-    )
-      result.push(cursor.toLocaleDateString("sv-SE"));
-  return [
-    ...new Set([
-      ...result,
-      ...(tasks.map((task) => task.shootingDate).filter(Boolean) as string[]),
-    ]),
-  ].sort();
-};
 const defaults: Settings = {
   defaultHash: "sha256",
   defaultDuplicateStrategy: "skip",
@@ -273,58 +256,10 @@ const performanceText = (performance?: TransferPerformance) =>
   performance?.samples
     ? `平均 ${bytes(performance.average)}/s · P95 ${bytes(performance.p95)}/s · 峰值 ${bytes(performance.peak)}/s${performance.stalls ? ` · ${performance.stalls} 次停顿` : ""}`
     : "样本不足";
-const taskTrustState = (task: BackupTask) => {
-  if (!task.provenance || task.provenance === "kocpy-transfer")
-    return { status: task.status, label: statusText[task.status] };
-  if (["running", "paused", "verifying", "pending"].includes(task.status))
-    return { status: task.status, label: statusText[task.status] };
-  if (task.status === "failed" && task.externalManifest?.status !== "mismatch")
-    return { status: "failed", label: "校验未通过 · 查看详情" };
-  if (task.status === "cancelled")
-    return { status: "cancelled", label: "已取消 · 校验未完成" };
-  if (
-    task.status === "completed" &&
-    task.externalManifest?.resolution?.type === "accepted-extra"
-  )
-    return { status: "completed", label: "额外文件已确认 · 当前基线可信" };
-  if (task.externalManifest?.status === "mismatch") {
-    const manifest = task.externalManifest,
-      detail = [
-        manifest.missing.length && `缺少 ${manifest.missing.length}`,
-        manifest.extra.length && `额外 ${manifest.extra.length}`,
-        manifest.sizeMismatches.length &&
-          `大小不同 ${manifest.sizeMismatches.length}`,
-        manifest.checksumMismatches.length &&
-          `校验不同 ${manifest.checksumMismatches.length}`,
-      ]
-        .filter(Boolean)
-        .join(" · ");
-    return { status: "failed", label: `清单差异 · ${detail}` };
-  }
-  if (task.externalManifest?.status === "unsupported")
-    return { status: "unverified", label: "外部清单格式不支持" };
-  if (
-    task.externalManifest?.status === "structure-match" &&
-    task.provenance === "manifest-import" &&
-    task.status !== "completed"
-  )
-    return { status: "unverified", label: "清单结构一致 · 待完整校验" };
-  if (
-    task.externalManifest?.status === "verified" &&
-    task.externalManifest.resolution?.type === "revised-missing"
-  )
-    return {
-      status: "completed",
-      label: `修订 MHL 校验通过 · 排除 ${task.externalManifest.resolution.excluded.length}`,
-    };
-  if (task.confidence === "verified" && task.status === "completed")
-    return { status: "completed", label: "外部清单校验通过" };
-  if (task.confidence === "baseline" && task.status === "completed")
-    return { status: "completed", label: "首次基线已建立" };
-  if (task.provenance === "manifest-import" && task.status === "failed")
-    return { status: "failed", label: "外部清单不匹配" };
-  return { status: "unverified", label: "已识别 · 待建立基线" };
-};
+function TaskBadge({ task }: { task: BackupTask }) {
+  const trust = taskTrustState(task);
+  return <span className={`badge ${trust.status}`} title={trust.explanation}><i />{trust.label}</span>;
+}
 export function App() {
   useModalStack();
   const [workspaceRevision, setWorkspaceRevision] = useState(0);
@@ -552,7 +487,7 @@ export function App() {
     setFilter("all");
   };
   const running = tasks.filter(active),
-    finished = tasks.filter((t) => t.status === "completed"),
+    finished = tasks.filter((t) => taskTrustState(t).contentVerified),
     current = tasks.find((t) =>
       ["running", "paused", "verifying"].includes(t.status),
     );
@@ -693,7 +628,7 @@ export function App() {
                 <small>{t.totalFiles} 个文件</small>
               </span>
             )}
-            <Badge status={t.status} />
+            <TaskBadge task={t} />
             <ChevronRight size={16} />
           </div>
         );
@@ -820,6 +755,7 @@ export function App() {
     });
   const recoveryTasks = tasks.filter(
     (task) =>
+      (!active(task) && !taskTrustState(task).contentVerified) ||
       ["failed", "cancelled", "paused", "pending", "unverified"].includes(
         task.status,
       ) ||
@@ -838,28 +774,7 @@ export function App() {
     device?: string,
     decision: "unused" | "expected" | "clear" = "unused",
   ) => {
-    const next = {
-      ...project,
-      restDays: [...(project.restDays || [])],
-      unusedDevicesByDate: { ...(project.unusedDevicesByDate || {}) },
-      expectedDevicesByDate: { ...(project.expectedDevicesByDate || {}) },
-    };
-    if (!device)
-      next.restDays = next.restDays.includes(dateValue)
-        ? next.restDays.filter((date) => date !== dateValue)
-        : [...next.restDays, dateValue];
-    else {
-      const unused = [...(next.unusedDevicesByDate[dateValue] || [])].filter(
-          (value) => value !== device,
-        ),
-        expected = [...(next.expectedDevicesByDate[dateValue] || [])].filter(
-          (value) => value !== device,
-        );
-      if (decision === "unused") unused.push(device);
-      if (decision === "expected") expected.push(device);
-      next.unusedDevicesByDate[dateValue] = unused;
-      next.expectedDevicesByDate[dateValue] = expected;
-    }
+    const next = updateSchedule(project, dateValue, device, decision);
     setProjects(await api.saveProject(next, false));
   };
   const requestProjectDeletion = async (project: ProjectConfig) => {
@@ -1137,7 +1052,7 @@ export function App() {
                         <span className="mini-label">
                           <span
                             className={
-                              tasks.some((t) => t.status === "failed")
+                              recoveryTasks.length > 0
                                 ? "alert-dot"
                                 : "live-dot"
                             }
@@ -1147,8 +1062,8 @@ export function App() {
                         <h2>
                           {current
                             ? `${current.name} · ${statusText[current.status]}`
-                            : tasks.some((t) => t.status === "failed")
-                              ? `${tasks.filter((t) => t.status === "failed").length} 个任务需要处理`
+                            : recoveryTasks.length > 0
+                              ? `${recoveryTasks.length} 个任务需要处理`
                               : "当前无进行中的任务"}
                         </h2>
                         <p>
@@ -1158,12 +1073,11 @@ export function App() {
                         </p>
                       </div>
                       <div className="operational-actions">
-                        {tasks.some((t) => t.status === "failed") && (
+                        {recoveryTasks.length > 0 && (
                           <Button
                             kind="danger"
                             onClick={() => {
-                              go("transfers");
-                              setFilter("failed");
+                              go("recovery");
                             }}
                           >
                             <AlertTriangle size={15} />
@@ -1280,7 +1194,7 @@ export function App() {
                       icon={ShieldCheck}
                       label="已校验备份"
                       value={String(finished.length)}
-                      hint="所有目的地均通过校验"
+                      hint="按完整内容证据统计，副本达标另行核对"
                     />
                     <Stat
                       icon={Layers}
@@ -1567,7 +1481,7 @@ export function App() {
                               </small>
                             </div>
                             <div className="row">
-                              <Badge status={task.status} />
+                              <TaskBadge task={task} />
                               {task.provenance &&
                               task.provenance !== "kocpy-transfer" ? (
                                 <Button
@@ -1789,24 +1703,17 @@ export function App() {
                                 tasks.filter(
                                   (t) =>
                                     t.projectId === p.id &&
-                                    t.status === "completed",
+                                    taskTrustState(t).contentVerified,
                                 ).length
                               }{" "}
-                              次备份完成
+                              卷内容校验通过
                             </span>
                           </div>
                           {(() => {
                             const related = tasks.filter(
                                 (task) => task.projectId === p.id,
                               ),
-                              required = p.requiredCopies || 2,
-                              verified = related.filter((task) =>
-                                task.destinations.some((item) => item.verified),
-                              ).length,
-                              compliant = related.filter((task) =>
-                                taskMeetsCopyRequirement(task, required),
-                              ).length,
-                              attention = related.length - compliant,
+                              { verified, compliant, attention } = projectCoverage(p, related),
                               received = related.filter(
                                 (task) =>
                                   (task.provenance || "kocpy-transfer") ===
@@ -2149,9 +2056,7 @@ export function App() {
                                             (
                                               rows.find(
                                                 (task) =>
-                                                  !task.destinations.every(
-                                                    (copy) => copy.verified,
-                                                  ),
+                                                  !taskMeetsCopyRequirement(task, projectDetail.requiredCopies || 2),
                                               ) || rows[0]
                                             ).id,
                                           )
@@ -2182,15 +2087,13 @@ export function App() {
                                 )
                               }
                             >
-                              {projectDetail.restDays?.includes(
-                                shootingDate,
-                              ) ? (
+                              {projectDetail.restDays?.some(date => shootingDateKey(date) === shootingDateKey(shootingDate)) ? (
                                 <Check size={13} />
                               ) : (
                                 <CalendarDays size={13} />
                               )}{" "}
                               {shootingDate.replace(/-/g, "")}{" "}
-                              {projectDetail.restDays?.includes(shootingDate)
+                              {projectDetail.restDays?.some(date => shootingDateKey(date) === shootingDateKey(shootingDate))
                                 ? "休息日"
                                 : "标记休息"}
                             </Button>
@@ -2564,7 +2467,7 @@ export function App() {
                                   · {bytes(t.totalBytes)}
                                 </span>
                               </div>
-                              <Badge status={t.status} />
+                              <TaskBadge task={t} />
                               <Button
                                 kind="subtle"
                                 onClick={() => void exportReport(t.id, "pdf")}
@@ -2809,7 +2712,7 @@ export function App() {
             </div>
             <div className="detail-body">
               <div className="row between">
-                <Badge status={selected.status} />
+                <TaskBadge task={selected} />
                 <span className="mono muted">
                   {selected.hashAlgorithm.toUpperCase()}
                 </span>
@@ -2887,11 +2790,19 @@ export function App() {
               </div>
               <p className="current-file mono">
                 {selected.currentFile ||
-                  (selected.status === "completed" && manifestRequirementMet(selected)
-                    ? "所有文件已完成拷贝与哈希比对"
+                  (taskTrustState(selected).contentVerified
+                    ? taskTrustState(selected).label
                     : "等待或任务已停止")}
               </p>
-              {selected.status === "completed" && manifestRequirementMet(selected) && (
+              {!active(selected) && (
+                <div className="trust-evidence" role="status">
+                  <strong>{taskTrustState(selected).label}</strong>
+                  <p>{taskTrustState(selected).explanation}</p>
+                  <p>{taskTrustState(selected).nextStep}</p>
+                  <small>依据：{taskTrustState(selected).basis} · 最近记录：{taskTrustState(selected).verifiedAt ? new Date(taskTrustState(selected).verifiedAt!).toLocaleString() : "未记录完整校验时间"}</small>
+                </div>
+              )}
+              {taskTrustState(selected).contentVerified && (
                 <div className="completion-conclusion">
                   <CheckCircle2 size={17} />
                   <div>
@@ -3045,7 +2956,7 @@ export function App() {
                           : d.speedBps
                       )
                         ? `${bytes(selected.status === "verifying" ? d.verifySpeedBps : d.speedBps)}/s`
-                        : `已保存 ${bytes(d.copiedBytes || 0)} · 本次写入 ${bytes(d.bytesWritten)}`}
+                        : `已保存 ${bytes(savedDestinationBytes(selected, d))} · 本次写入 ${bytes(d.bytesWritten)}`}
                     </span>
                     <span
                       className={
@@ -5102,7 +5013,8 @@ function HelpPage({
       <section className="help-release-note">
         <RefreshCw size={20} />
         <div>
-          <strong>0.1.20：收工判定、媒体运行时与界面一致性</strong>
+          <strong>0.1.21：统一可信状态、收工判定与媒体运行时</strong>
+          <p>内容校验、首次基线与可计数副本分开说明。项目覆盖、收工检查、详情和报告共用判定；旧“允许额外文件”不豁免新的缺失、大小或哈希差异。旧记录的哈希事实保留，多目标缺少同次物理拓扑证据时不会自动视为独立副本，可重新校验在线目标更新证据。</p>
           <p>
             已声明使用的设备仍会检查现有素材；休息／未使用不能免除已记录素材的校验。不同卷 UUID 不再自动算成独立物理副本，旧记录保留原校验结果并提示独立性待复核。代理、交接与归档操作区统一间距，普通窗口限制过窄或过宽的比例；侧栏字号不缩小。内置媒体组件附完整源码与许可，帮助仍默认折叠。
           </p>
@@ -6007,7 +5919,7 @@ function DiagnosticsPage({
                     <strong>{task.name}</strong>
                     <small>{summary}</small>
                   </span>
-                  <Badge status={task.status} />
+                  <TaskBadge task={task} />
                 </div>
               );
             })}

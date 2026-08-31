@@ -1,4 +1,8 @@
-# Kocpy 0.1.20 architecture
+# Kocpy 0.1.21 architecture
+
+## Shared trust decisions
+
+`src/common/task-trust.ts` is the metadata-only authority for content trust, manifest requirements and project coverage. UI lists, live detail, closeout and exported task/day/project reports consume the same decisions. Paged IPC omits file rows deliberately; an empty list payload does not erase historical hash evidence. Terminal success and sufficient verified targets are required for countable copies. An old extra-file acceptance never waives missing, size or checksum differences. Raw execution status and per-target historical flags remain available for audit; derived labels do not mutate records.
 
 ## Transfer pipeline
 
