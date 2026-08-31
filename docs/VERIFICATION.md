@@ -10,9 +10,11 @@
 - `npm audit --audit-level=high`：0 个已知漏洞。
 - `npm run dist` 成功生成 arm64 与 x64 两份 0.1.18 DMG。两份均通过 `hdiutil verify`；只读挂载后检查版本、主程序架构以及 `app.asar` 与对应打包目录逐字节一致，挂载点已卸载。
 - 在最终打包应用的 Electron Node 运行时分别执行 `scripts/verify-transfer-runtime.ts`：arm64 原生与 x64 Rosetta 均通过 32 MiB 文件与空文件、SHA-256／SHA-1／MD5、双目标独立回读、镜像落点、块内进度、暂停／继续及源哈希／ASC MHL 验证。x64 Rosetta 不代表真实 Intel Mac 验收。
-- arm64 DMG SHA-256：`9c5795bfa9d727fe0dd21151bcb156ab9358b62cc11add3eb2ce4dde2ea66a81`。
-- x64 DMG SHA-256：`3a8901e54e44f438fee3e6e3867f2e06b194a917f5ebcbaca5318749e3f7609a`。
-- Downloads 中两份安装包副本与上述构建摘要一致。发布时另附 `SHA256SUMS.txt` 供核对。
+- 初始本地 arm64 DMG SHA-256：`9c5795bfa9d727fe0dd21151bcb156ab9358b62cc11add3eb2ce4dde2ea66a81`；初始本地 x64：`3a8901e54e44f438fee3e6e3867f2e06b194a917f5ebcbaca5318749e3f7609a`。它们保留在本地构建目录，不是最终公开下载包。
+- GitHub 两路 CI 均通过类型检查、测试和构建。最终发布采用 CI 构建产物，已完整回下载：两份 DMG 均再次通过 `hdiutil verify`、只读挂载版本／架构检查，以及对应打包 Electron 运行时的三算法、双目标、镜像、进度和暂停／继续专项验证。
+- 最终发布 arm64 DMG SHA-256：`09e91c05835c1511034fe7bafc8f75f94fad904684143534a3c4a698406fba56`。
+- 最终发布 x64 DMG SHA-256：`a4555d90de42408209503c9ce6f06bad7c94b67521543f2107e6c81cdb471e2d`。
+- 以上摘要与 GitHub 资产摘要一致；Downloads 中两份同版本副本已更新为最终发布产物并核验一致。Release 附 `SHA256SUMS.txt`，Downloads 附 `Kocpy-0.1.18-SHA256SUMS.txt`。
 - 本轮桌面处于锁定状态，真实 Finder 拖拽、键盘焦点、深浅主题、最小窗口和用户现场介质仍需人工验收；不将源码检查和模拟渲染记作这些项目通过。
 - 写入测试仅使用生成数据和独立临时目录，没有修改正式项目、素材或 MHL。当前没有有效 Developer ID Application 证书，安装包未签名、未公证。
 
