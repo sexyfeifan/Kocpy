@@ -1,3 +1,4 @@
+import { normalizePositions } from "../../common/interaction";
 import { EventEmitter } from "node:events";
 import { promises as fs, constants, createReadStream } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
@@ -16,12 +17,17 @@ import { inspectMedia, isThumbnailMedia } from "../media";
 import { makeProjectFolderName, renderProjectCardPath } from "../project-path";
 import { mediaBreakdownFromFiles } from "../media-kind";
 import { XxHash32 } from "./XxHash32";
+import {
+  normalBackupFolder,
+  sourceFolderName,
+} from "../../common/backup-layout";
 
 export async function hashFile(
   file: string,
   algorithm: HashAlgorithm,
   signal?: AbortSignal,
   onBytes?: (bytes: number) => void,
+  beforeChunk?: () => Promise<void>,
 ): Promise<string> {
   if (algorithm === "xxhash32") {
     const hash = new XxHash32();
@@ -29,6 +35,7 @@ export async function hashFile(
       highWaterMark: 4 * 1024 * 1024,
       signal,
     })) {
+      await beforeChunk?.();
       hash.update(chunk);
       onBytes?.(chunk.length);
     }
@@ -39,6 +46,7 @@ export async function hashFile(
     highWaterMark: 4 * 1024 * 1024,
     signal,
   })) {
+    await beforeChunk?.();
     hash.update(chunk);
     onBytes?.(chunk.length);
   }
@@ -49,6 +57,7 @@ async function hashSource(
   algorithm: HashAlgorithm,
   signal?: AbortSignal,
   onBytes?: (bytes: number) => void,
+  beforeChunk?: () => Promise<void>,
 ) {
   if (algorithm === "xxhash32") {
     const primary = new XxHash32(),
@@ -57,6 +66,7 @@ async function hashSource(
       highWaterMark: 4 * 1024 * 1024,
       signal,
     })) {
+      await beforeChunk?.();
       primary.update(chunk);
       md5.update(chunk);
       onBytes?.(chunk.length);
@@ -69,6 +79,7 @@ async function hashSource(
     highWaterMark: 4 * 1024 * 1024,
     signal,
   })) {
+    await beforeChunk?.();
     primary.update(chunk);
     if (md5 !== primary) md5.update(chunk);
     onBytes?.(chunk.length);
@@ -127,6 +138,7 @@ async function validPrefix(
   sourcePath: string,
   partialPath: string,
   size: number,
+  beforeChunk?: () => Promise<void>,
 ) {
   if (!size) return true;
   const source = await fs.open(sourcePath, "r"),
@@ -136,6 +148,7 @@ async function validPrefix(
       b = Buffer.allocUnsafe(a.length);
     let position = 0;
     while (position < size) {
+      await beforeChunk?.();
       const length = Math.min(a.length, size - position);
       const [ra, rb] = await Promise.all([
         source.read(a, 0, length, position),
@@ -209,9 +222,11 @@ export class BackupEngine extends EventEmitter {
   private queue: string[] = [];
   private active = new Map<string, AbortController>();
   private paused = new Set<string>();
+  private pausedPhase = new Map<string, "running" | "verifying">();
   private retryTargets = new Map<string, Set<string>>();
   private pauseWaiters = new Map<string, Array<() => void>>();
   private lastProgressEmit = new Map<string, number>();
+  private lastProgressStatus = new Map<string, string>();
   getTask(id: string) {
     return this.tasks.get(id);
   }
@@ -263,10 +278,15 @@ export class BackupEngine extends EventEmitter {
     return this.active.size > 0;
   }
   createTask(config: TaskConfig): BackupTask {
+    if (
+      config.mirrorLayout &&
+      !["source-folder", "contents"].includes(config.mirrorLayout)
+    )
+      throw new Error("镜像目录布局无效");
     if (!["sha256", "sha1", "md5"].includes(config.hashAlgorithm))
       throw new Error("不支持的哈希算法");
-    if (config.cameraPosition && !/^[A-E]$/.test(config.cameraPosition))
-      throw new Error("机位只能选择 A–E");
+    if (config.cameraPosition)
+      config.cameraPosition = normalizePositions([config.cameraPosition])[0];
     if (!config.destinationPaths?.length || config.destinationPaths.length > 4)
       throw new Error("请选择 1–4 个目的地");
     if (
@@ -282,12 +302,11 @@ export class BackupEngine extends EventEmitter {
     const name = segment(
       config.namingTemplate || config.name || path.basename(config.sourcePath),
     );
-    const sourceVolumeName = segment(path.basename(config.sourcePath) || name);
     const folder = config.projectId
       ? name
       : config.copyMode === "mirror"
-        ? sourceVolumeName
-        : `${sourceVolumeName}_${timestamp}`;
+        ? sourceFolderName(config.sourcePath)
+        : normalBackupFolder(config.sourcePath, timestamp);
     const projectFolderName = config.projectId
       ? config.projectFolderName ||
         makeProjectFolderName(
@@ -321,7 +340,11 @@ export class BackupEngine extends EventEmitter {
       hashAlgorithm: config.hashAlgorithm,
       namingTemplate: projectFolderName ? projectCard : folder,
       shootingDateFolder: projectFolder,
-      copyMode: config.copyMode || "normal",
+      copyMode: config.projectId ? "normal" : config.copyMode || "normal",
+      mirrorLayout:
+        config.copyMode === "mirror" && !config.projectId
+          ? config.mirrorLayout || "source-folder"
+          : undefined,
       status: "pending",
       totalFiles: 0,
       completedFiles: 0,
@@ -406,25 +429,33 @@ export class BackupEngine extends EventEmitter {
     )
       return;
     this.paused.add(id);
+    this.pausedPhase.set(id, task.status as "running" | "verifying");
     task.status = "paused";
     task.pausedAt = Date.now();
     task.speedBps = 0;
     task.aggregateSpeedBps = 0;
     task.verifySpeedBps = 0;
+    task.sourceHashSpeedBps = 0;
+    task.sourceCopyReadSpeedBps = 0;
+    task.sourceReadSpeedBps = 0;
+    for (const destination of task.destinations) {
+      destination.speedBps = 0;
+      destination.verifySpeedBps = 0;
+    }
     this.record(task, "paused", "warning", "任务已暂停，检查点已保留");
-    this.emitProgress(task);
+    this.emitProgress(task, true);
   }
   resumeTask(id: string) {
     const task = this.tasks.get(id);
     if (!task || !this.paused.has(id)) return;
     this.paused.delete(id);
     task.pausedAt = undefined;
-    task.status =
-      task.verifyProgress && task.verifyProgress > 0 ? "verifying" : "running";
+    task.status = this.pausedPhase.get(id) || "running";
+    this.pausedPhase.delete(id);
     this.record(task, "resumed", "info", "任务已从检查点继续");
     for (const wake of this.pauseWaiters.get(id) || []) wake();
     this.pauseWaiters.delete(id);
-    this.emitProgress(task);
+    this.emitProgress(task, true);
   }
   cancelTask(id: string) {
     const task = this.tasks.get(id);
@@ -509,7 +540,7 @@ export class BackupEngine extends EventEmitter {
       task.verifySpeedBps = 0;
       task.verifyEta = 0;
       this.emitProgress(task);
-      this.emit("settled", task);
+      this.emit("settled", task, { kind: "reverify" });
     }
     return task;
   }
@@ -530,9 +561,27 @@ export class BackupEngine extends EventEmitter {
   private emitProgress(task: BackupTask, force = false) {
     const now = Date.now(),
       previous = this.lastProgressEmit.get(task.id) || 0;
-    if (!force && now - previous < 300) return;
+    if (
+      !force &&
+      this.lastProgressStatus.get(task.id) === task.status &&
+      now - previous < 300
+    )
+      return;
     this.lastProgressEmit.set(task.id, now);
+    this.lastProgressStatus.set(task.id, task.status);
     task.lastCheckpointAt = now;
+    const healthy = task.destinations.filter(
+      (destination) => destination.available !== false,
+    );
+    for (const destination of task.destinations)
+      destination.copyProgress = Math.min(
+        100,
+        ((destination.copiedBytes || 0) / Math.max(1, task.totalBytes)) * 100,
+      );
+    if (task.totalBytes && healthy.length)
+      task.copyProgress = Math.min(
+        ...healthy.map((destination) => destination.copyProgress || 0),
+      );
     this.emit("progress", { ...task, taskId: task.id, fileRecords: undefined });
   }
   private record(
@@ -558,6 +607,40 @@ export class BackupEngine extends EventEmitter {
     this.active.set(id, controller);
     void this.run(id, controller.signal).finally(() => this.processQueue());
   }
+  private async canStreamSource(
+    task: BackupTask,
+    relativePath: string,
+  ): Promise<boolean> {
+    if (this.retryTargets.has(task.id) || task.hashAlgorithm === "xxhash32")
+      return false;
+    const destinations = task.destinations.filter(
+      (destination) =>
+        destination.available !== false && destination.resolvedPath,
+    );
+    if (!destinations.length) return false;
+    const absent = (location: string) =>
+      fs.lstat(location).then(
+        () => false,
+        (error) => {
+          if (error.code === "ENOENT") return true;
+          throw error;
+        },
+      );
+    return (
+      await Promise.all(
+        destinations.map(async (destination) => {
+          const target = await safeChild(
+            destination.resolvedPath!,
+            relativePath,
+          );
+          return (
+            (await absent(target)) &&
+            (await absent(`${target}.kocpy-${task.id}.partial`))
+          );
+        }),
+      )
+    ).every(Boolean);
+  }
   private async fanout(
     task: BackupTask,
     sourcePath: string,
@@ -567,6 +650,7 @@ export class BackupEngine extends EventEmitter {
     meter: SpeedMeter,
     destinationMeters: Map<string, SpeedMeter>,
     sourceCopyMeter: SpeedMeter,
+    onSourceChunk?: (chunk: Buffer) => void,
   ) {
     const groups = new Map<number, CopyTarget[]>();
     for (const target of targets)
@@ -597,7 +681,7 @@ export class BackupEngine extends EventEmitter {
         let position = offset;
         while (position < size) {
           await this.waitIfPaused(task.id, signal);
-          if (!states.some((state) => state.active)) break;
+          if (!states.some((state) => state.active) && !onSourceChunk) break;
           const buffer = Buffer.allocUnsafe(
             Math.min(4 * 1024 * 1024, size - position),
           );
@@ -611,6 +695,7 @@ export class BackupEngine extends EventEmitter {
           sourceCopyMeter.add(bytesRead);
           const chunk = buffer.subarray(0, bytesRead),
             chunkOffset = position;
+          onSourceChunk?.(chunk);
           const active = states.filter((state) => state.active);
           const written = (state: (typeof states)[number]) => {
             const d = state.target.destination,
@@ -622,16 +707,25 @@ export class BackupEngine extends EventEmitter {
               (d.copiedBytes || 0) + bytesRead,
             );
             state.position = chunkOffset + bytesRead;
-            const firstWrite = !task.physicalWrittenBytes;
             task.physicalWrittenBytes =
               (task.physicalWrittenBytes || 0) + bytesRead;
             meter.add(bytesRead);
-            if (firstWrite) this.emitProgress(task, true);
           };
           await Promise.all(
             active.map(async (state) => {
-              const actual = state.handle
-                .write(chunk, 0, bytesRead, chunkOffset)
+              const actual = (async () => {
+                let writtenBytes = 0;
+                while (writtenBytes < bytesRead) {
+                  const result = await state.handle.write(
+                    chunk,
+                    writtenBytes,
+                    bytesRead - writtenBytes,
+                    chunkOffset + writtenBytes,
+                  );
+                  if (!result.bytesWritten) throw new Error("目的地写入未前进");
+                  writtenBytes += result.bytesWritten;
+                }
+              })()
                 .then(() => written(state))
                 .catch((e: any) => {
                   state.active = false;
@@ -642,12 +736,15 @@ export class BackupEngine extends EventEmitter {
                 await actual;
                 return;
               }
+              let slowTimer: ReturnType<typeof setTimeout> | undefined;
               const result = await Promise.race([
                 actual.then(() => "done" as const),
-                new Promise<"slow">((resolve) =>
-                  setTimeout(() => resolve("slow"), 2000),
+                new Promise<"slow">(
+                  (resolve) =>
+                    (slowTimer = setTimeout(() => resolve("slow"), 2000)),
                 ),
               ]);
+              clearTimeout(slowTimer);
               if (result === "slow") {
                 state.active = false;
                 state.pending = actual;
@@ -658,6 +755,11 @@ export class BackupEngine extends EventEmitter {
             }),
           );
           position += bytesRead;
+          this.emitProgress(
+            task,
+            position === offset + bytesRead &&
+              (size > 4 * 1024 * 1024 || task.completedFiles === 0),
+          );
         }
         await Promise.all(
           states
@@ -667,17 +769,18 @@ export class BackupEngine extends EventEmitter {
       } finally {
         await source.close();
         await Promise.all(
-          states
-            .filter((state) => state.active)
-            .map((state) => state.handle.close().catch(() => {})),
+          states.map(async (state) => {
+            if (state.pending) {
+              await state.pending;
+              await state.handle.sync().catch(() => {});
+            }
+            await state.handle.close().catch(() => {});
+          }),
         );
       }
       for (const state of states.filter(
         (state) => !state.active && state.pending,
       )) {
-        await state.pending;
-        await state.handle.sync().catch(() => {});
-        await state.handle.close().catch(() => {});
         if (
           state.target.destination.available !== false &&
           state.position < size
@@ -695,11 +798,6 @@ export class BackupEngine extends EventEmitter {
           );
         }
       }
-      await Promise.all(
-        states
-          .filter((state) => !state.active && !state.pending)
-          .map((state) => state.handle.close().catch(() => {})),
-      );
     }
   }
   private async publish(temp: string, finalPath: string) {
@@ -728,6 +826,7 @@ export class BackupEngine extends EventEmitter {
     const availableCount = task.destinations.filter(
       (d) => selected(d) && d.available !== false,
     ).length;
+    await this.waitIfPaused(task.id, signal);
     task.status = "verifying";
     task.verifyTotalFiles = task.fileRecords.length * availableCount;
     this.emitProgress(task, true);
@@ -804,6 +903,7 @@ export class BackupEngine extends EventEmitter {
                       100,
                   );
                 },
+                () => this.waitIfPaused(task.id, signal),
               ),
               verified = checksum === record.srcChecksum;
             result.checksum = checksum;
@@ -873,6 +973,7 @@ export class BackupEngine extends EventEmitter {
     let completionNotified = false;
     Object.assign(task, {
       status: "running",
+      transferPhase: "scanning",
       startedAt: Date.now(),
       completedAt: undefined,
       completedFiles: 0,
@@ -1067,7 +1168,9 @@ export class BackupEngine extends EventEmitter {
         try {
           const root =
             task.copyMode === "mirror"
-              ? dests[i]
+              ? task.mirrorLayout === "source-folder"
+                ? path.join(dests[i], task.namingTemplate)
+                : dests[i]
               : path.join(
                   dests[i],
                   task.shootingDateFolder || "",
@@ -1172,21 +1275,28 @@ export class BackupEngine extends EventEmitter {
             );
           lastIdentityCheck = Date.now();
         }
+        await this.waitIfPaused(id, signal);
         task.status = "running";
+        task.transferPhase = "hashing";
         task.currentFile = file.relativePath;
         this.emitProgress(task);
-        const sourceHashes = await hashSource(
+        // Fresh copies can hash the same bytes that are fanned out. Existing files,
+        // partial checkpoints and targeted retries keep the pre-hash comparison path.
+        const fresh = await this.canStreamSource(task, file.relativePath);
+        const readSourceHashes = () =>
+          hashSource(
             file.absolutePath,
             task.hashAlgorithm,
             signal,
             (count) => sourceHashMeter.add(count),
-          ),
-          srcHash = sourceHashes.primary;
+            () => this.waitIfPaused(id, signal),
+          );
+        let sourceHashes = fresh ? undefined : await readSourceHashes();
         const previousRecord = previousRecords.get(file.relativePath);
         if (
           retryTargetIds &&
           previousRecord &&
-          previousRecord.srcChecksum !== srcHash
+          previousRecord.srcChecksum !== sourceHashes?.primary
         )
           throw new Error(
             `素材源已变化，不能合并失败目标重试：${file.relativePath}`,
@@ -1195,8 +1305,8 @@ export class BackupEngine extends EventEmitter {
           name: file.name,
           relativePath: file.relativePath,
           size: file.size,
-          srcChecksum: srcHash,
-          ascMhlMd5: sourceHashes.md5,
+          srcChecksum: sourceHashes?.primary || "",
+          ascMhlMd5: sourceHashes?.md5,
           destinations: [],
         };
         const targets: CopyTarget[] = [];
@@ -1228,12 +1338,19 @@ export class BackupEngine extends EventEmitter {
             },
           );
           if (exists) {
+            if (!sourceHashes) {
+              sourceHashes = await readSourceHashes();
+              record.srcChecksum = sourceHashes.primary;
+              record.ascMhlMd5 = sourceHashes.md5;
+            }
             const existingHash = await hashFile(
               finalPath,
               task.hashAlgorithm,
               signal,
+              undefined,
+              () => this.waitIfPaused(id, signal),
             );
-            if (existingHash === srcHash) {
+            if (existingHash === record.srcChecksum) {
               record.destinations.push({
                 path: finalPath,
                 checksum: "",
@@ -1275,9 +1392,16 @@ export class BackupEngine extends EventEmitter {
             },
           );
           let tempSize = Math.max(0, foundTempSize);
+          if (foundTempSize >= 0 && !sourceHashes) {
+            sourceHashes = await readSourceHashes();
+            record.srcChecksum = sourceHashes.primary;
+            record.ascMhlMd5 = sourceHashes.md5;
+          }
           if (
             tempSize &&
-            !(await validPrefix(file.absolutePath, tempPath, tempSize))
+            !(await validPrefix(file.absolutePath, tempPath, tempSize, () =>
+              this.waitIfPaused(id, signal),
+            ))
           ) {
             await fs.truncate(tempPath, 0);
             tempSize = 0;
@@ -1306,6 +1430,15 @@ export class BackupEngine extends EventEmitter {
             offset: tempSize,
           });
         }
+        await this.waitIfPaused(id, signal);
+        task.transferPhase = "copying";
+        const streamHash = sourceHashes
+            ? undefined
+            : createHash(task.hashAlgorithm),
+          streamMd5 =
+            streamHash &&
+            (task.hashAlgorithm === "md5" ? streamHash : createHash("md5"));
+        let hashedBytes = 0;
         await this.fanout(
           task,
           file.absolutePath,
@@ -1315,7 +1448,24 @@ export class BackupEngine extends EventEmitter {
           meter,
           destinationMeters,
           sourceCopyMeter,
+          streamHash
+            ? (chunk) => {
+                streamHash.update(chunk);
+                if (streamMd5 !== streamHash) streamMd5!.update(chunk);
+                hashedBytes += chunk.length;
+                sourceHashMeter.add(chunk.length);
+              }
+            : undefined,
         );
+        if (streamHash) {
+          if (hashedBytes !== file.size)
+            throw new Error(`源文件读取不完整：${file.relativePath}`);
+          record.srcChecksum = streamHash.digest("hex");
+          record.ascMhlMd5 =
+            streamMd5 === streamHash
+              ? record.srcChecksum
+              : streamMd5!.digest("hex");
+        }
         for (const target of targets)
           if (target.destination.available !== false) {
             await this.publish(target.tempPath, target.finalPath);
@@ -1338,6 +1488,9 @@ export class BackupEngine extends EventEmitter {
           throw new Error(`备份期间素材发生变化：${file.relativePath}`);
         this.emitProgress(task, task.completedFiles === 1);
       }
+      await this.waitIfPaused(id, signal);
+      task.transferPhase = "publishing";
+      this.emitProgress(task, true);
       const finalInventory = await scan(src, task.includeHidden, signal),
         initialInventory = new Map(
           inventory.files.map((file) => [
@@ -1386,8 +1539,7 @@ export class BackupEngine extends EventEmitter {
         (item) => item.available !== false && item.resolvedPath,
       ))
         for (const directory of [...inventory.directoryMetadata].sort(
-          (left, right) =>
-            right.relativePath.length - left.relativePath.length,
+          (left, right) => right.relativePath.length - left.relativePath.length,
         )) {
           const target = await safeChild(
             destination.resolvedPath!,
@@ -1469,6 +1621,7 @@ export class BackupEngine extends EventEmitter {
       clearInterval(telemetry);
       this.retryTargets.delete(id);
       this.paused.delete(id);
+      this.pausedPhase.delete(id);
       this.active.delete(id);
       task.completedAt ||= Date.now();
       task.speedBps = 0;

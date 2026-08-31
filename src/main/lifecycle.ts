@@ -1,3 +1,4 @@
+import { normalizePositions } from "../common/interaction";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import type {
@@ -292,7 +293,7 @@ export function normalizeProjectTemplate(
     devicePositions: Object.fromEntries(
       Object.entries(template.devicePositions || {}).map(([device, values]) => [
         device,
-        [...values],
+        normalizePositions(values),
       ]),
     ),
     requiredCopies: Math.max(1, Math.min(4, template.requiredCopies || 2)),

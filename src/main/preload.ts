@@ -1,14 +1,20 @@
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, webUtils } from "electron";
 const call =
   (channel: string) =>
   (...args: unknown[]) =>
     ipcRenderer.invoke(channel, ...args);
 contextBridge.exposeInMainWorld("api", {
   resolveDroppedPaths: (files: File[]) =>
-    files
-      .map((file) => (file as File & { path?: string }).path || "")
-      .filter(Boolean),
+    files.map((file) => webUtils.getPathForFile(file)).filter(Boolean),
   selectDirectory: call("dialog:directory"),
+  validateDirectories: call("dialog:validate-directories"),
+  getOperations: call("operations:list"),
+  onWorkspaceChanged: (listener: () => void) => {
+    const handler = () => listener();
+    ipcRenderer.on("workspace:changed", handler);
+    return () => ipcRenderer.removeListener("workspace:changed", handler);
+  },
+  deleteArchiveReminder: call("archive:delete-reminder"),
   getTasks: call("tasks:list"),
   getTask: call("tasks:get"),
   getCatalogStats: call("catalog:stats"),
@@ -78,6 +84,7 @@ contextBridge.exposeInMainWorld("api", {
   restoreColdArchive: call("workspace:restore-cold"),
   startLanIndex: call("lan:start"),
   stopLanIndex: call("lan:stop"),
+  readLanIndex: call("lan:read"),
   getLanIndexStatus: call("lan:status"),
   reveal: call("system:reveal"),
   openPath: call("system:open-path"),

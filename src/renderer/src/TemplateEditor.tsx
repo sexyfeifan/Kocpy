@@ -1,3 +1,4 @@
+import { previewProjectPath } from "../../common/project-layout";
 import { useState } from "react";
 import { Check, Copy, Plus, Trash2, X } from "lucide-react";
 import { api, type ProjectTemplate } from "./api";
@@ -67,18 +68,16 @@ export function TemplateEditor({
         ]),
       ),
     ),
-    [positions, setPositions] = useState<Record<string, string[]>>(() =>
+    [positions, setPositions] = useState<Record<string, string>>(() =>
       Object.fromEntries(
         Object.entries(initial.devicePositions || {}).map(([device, value]) => [
           device,
-          [...value],
+          value.join(","),
         ]),
       ),
     ),
     [newDevice, setNewDevice] = useState(""),
-    [requiredCopies, setRequiredCopies] = useState(
-      initial.requiredCopies || 2,
-    ),
+    [requiredCopies, setRequiredCopies] = useState(initial.requiredCopies || 2),
     [expectedVolumes, setExpectedVolumes] = useState(
       initial.expectedVolumes || 0,
     ),
@@ -175,9 +174,12 @@ export function TemplateEditor({
           const [role, ...person] = line.split(":");
           return {
             id: crypto.randomUUID(),
-            role: (["DIT", "cinematographer", "data-manager", "assistant"].includes(
-              role,
-            )
+            role: ([
+              "DIT",
+              "cinematographer",
+              "data-manager",
+              "assistant",
+            ].includes(role)
               ? role
               : "other") as
               | "DIT"
@@ -201,7 +203,9 @@ export function TemplateEditor({
       ),
       devicePositions: Object.fromEntries(
         devices.flatMap((device) =>
-          positions[device]?.length ? [[device, positions[device]]] : [],
+          positions[device]?.trim()
+            ? [[device, positions[device].split(/[,，]/)]]
+            : [],
         ),
       ),
       requiredCopies,
@@ -295,7 +299,11 @@ export function TemplateEditor({
                 onClick={() => addDevice(device)}
               >
                 {device}
-                {devices.includes(device) ? <Check size={11} /> : <Plus size={11} />}
+                {devices.includes(device) ? (
+                  <Check size={11} />
+                ) : (
+                  <Plus size={11} />
+                )}
               </button>
             ))}
           </div>
@@ -308,7 +316,11 @@ export function TemplateEditor({
               }}
               placeholder="自定义设备，例如：录音"
             />
-            <Button kind="icon" title="添加设备" onClick={() => addDevice(newDevice)}>
+            <Button
+              kind="icon"
+              title="添加设备"
+              onClick={() => addDevice(newDevice)}
+            >
               <Plus size={15} />
             </Button>
           </div>
@@ -331,21 +343,21 @@ export function TemplateEditor({
                 <label>
                   机位（逗号分隔）
                   <input
-                    value={(positions[device] || []).join(",")}
+                    value={positions[device] || ""}
                     onChange={(event) =>
                       setPositions((current) => ({
                         ...current,
-                        [device]: event.target.value
-                          .split(/[,，]/)
-                          .map((value) => value.trim())
-                          .filter(Boolean)
-                          .slice(0, 5),
+                        [device]: event.target.value,
                       }))
                     }
                     placeholder="A,B"
                   />
                 </label>
-                <Button kind="icon" title={`移除 ${device}`} onClick={() => removeDevice(device)}>
+                <Button
+                  kind="icon"
+                  title={`移除 ${device}`}
+                  onClick={() => removeDevice(device)}
+                >
                   <Trash2 size={14} />
                 </Button>
               </div>
@@ -357,10 +369,14 @@ export function TemplateEditor({
               物理独立副本数
               <select
                 value={requiredCopies}
-                onChange={(event) => setRequiredCopies(Number(event.target.value))}
+                onChange={(event) =>
+                  setRequiredCopies(Number(event.target.value))
+                }
               >
                 {[1, 2, 3, 4].map((count) => (
-                  <option key={count} value={count}>{count} 份</option>
+                  <option key={count} value={count}>
+                    {count} 份
+                  </option>
                 ))}
               </select>
             </label>
@@ -370,14 +386,32 @@ export function TemplateEditor({
                 type="number"
                 min="0"
                 value={expectedVolumes}
-                onChange={(event) => setExpectedVolumes(Math.max(0, Number(event.target.value)))}
+                onChange={(event) =>
+                  setExpectedVolumes(Math.max(0, Number(event.target.value)))
+                }
               />
             </label>
           </div>
           <label>
             项目目录命名规则
-            <input value={namingRule} onChange={(event) => setNamingRule(event.target.value)} />
-            <small>必须包含 {"{card}"}；不会保存项目名称、日期或磁盘路径。</small>
+            <input
+              value={namingRule}
+              onChange={(event) => setNamingRule(event.target.value)}
+            />
+            <small className="mono">
+              {previewProjectPath(namingRule, {
+                projectName: "示例项目",
+                projectFolderName: "20260831_示例项目",
+                projectStartDate: "2026-08-31",
+                shootingDate: "2026-09-01",
+                device: devices[0] || "FX3",
+                position: positions[devices[0]]?.split(/[,，]/)[0],
+                card: "素材卷_001",
+              })}
+            </small>
+            <small>
+              必须包含 {"{card}"}；不会保存项目名称、日期或磁盘路径。
+            </small>
           </label>
           <div className="option-checks">
             {ACTIONS.map(([action, label]) => (
@@ -385,7 +419,9 @@ export function TemplateEditor({
                 <input
                   type="checkbox"
                   checked={actions.includes(action)}
-                  onChange={(event) => toggleAction(action, event.target.checked)}
+                  onChange={(event) =>
+                    toggleAction(action, event.target.checked)
+                  }
                 />
                 <span>{label}</span>
               </label>
@@ -397,7 +433,9 @@ export function TemplateEditor({
               rows={5}
               value={checklistText}
               onChange={(event) => setChecklistText(event.target.value)}
-              placeholder={"开工:确认独立目的地\n收工:全部素材卷副本达标\n收工:交接记录已完成"}
+              placeholder={
+                "开工:确认独立目的地\n收工:全部素材卷副本达标\n收工:交接记录已完成"
+              }
             />
             <small>每行使用“开工:”或“收工:”开头。</small>
           </label>
@@ -452,7 +490,9 @@ export function TemplateApplyDialog({
     setBusy(true);
     setError("");
     try {
-      onApplied(await api.applyProjectTemplate(template.id, projectId, selected));
+      onApplied(
+        await api.applyProjectTemplate(template.id, projectId, selected),
+      );
       onClose();
     } catch (reason) {
       setError(String(reason).replace(/^Error: /, ""));
@@ -479,7 +519,8 @@ export function TemplateApplyDialog({
         </div>
         <div className="form-body">
           <div className="notice">
-            将模板应用到“{projectName}”。项目名称、拍摄日期和目的地路径不会改变。
+            将模板应用到“{projectName}
+            ”。项目名称、拍摄日期和目的地路径不会改变。
           </div>
           <div className="template-diff-list">
             {changes.map((change) => (
@@ -507,7 +548,11 @@ export function TemplateApplyDialog({
         </div>
         <div className="modal-footer">
           <span className="small muted">只覆盖已勾选的配置</span>
-          <Button kind="primary" disabled={busy || !selected.length} onClick={() => void apply()}>
+          <Button
+            kind="primary"
+            disabled={busy || !selected.length}
+            onClick={() => void apply()}
+          >
             <Check size={15} />
             {busy ? "应用中…" : "确认应用"}
           </Button>

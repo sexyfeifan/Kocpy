@@ -262,7 +262,9 @@ export class CatalogDatabase {
           ? " AND f.kind IN ('.mov','.mp4','.mxf','.mkv','.avi','.m4v')"
           : kind === "image"
             ? " AND f.kind IN ('.jpg','.jpeg','.png','.arw','.cr3','.nef','.dng','.raf','.heic')"
-            : kind === "color"
+             : kind === "audio"
+              ? " AND f.kind IN ('.wav','.mp3','.aif','.aiff','.m4a','.flac')"
+              : kind === "color"
               ? " AND f.kind IN ('.cube','.cdl','.cc','.ccc','.clf')"
               : "";
     const where = `${options.projectId ? "t.project_id=? AND " : ""}f.relative_path LIKE ? ESCAPE '\\'${kindSql}`,

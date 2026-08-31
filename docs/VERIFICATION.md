@@ -2,6 +2,35 @@
 
 日期：2026-08-31；环境：当前 Apple Silicon Mac，Node.js 25.8.1，Electron 44.0.0。
 
+## 0.1.18 当前结果
+
+- TypeScript 类型检查、生产构建和 `git diff --check` 通过；18 个测试文件、133 项测试通过，3 项可选环境／性能测试跳过。
+- 新增回归覆盖明确复校验范围、切换范围清除旧选择、实际签署人与必填检查项、取消结果、批量部分失败重试、自定义机位及路径规则、维护互斥／进度／结果记录、局域网索引的真实 HTTP 读取和隐私字段限制；另有初始界面服务端渲染冒烟测试。服务端渲染不等于真实桌面交互验收。
+- 复校验结束与首次传输完成分别处理，复校验不会重复触发完成后代理或推出动作；素材目录写入成功后再通知界面刷新。
+- `npm audit --audit-level=high`：0 个已知漏洞。
+- `npm run dist` 成功生成 arm64 与 x64 两份 0.1.18 DMG。两份均通过 `hdiutil verify`；只读挂载后检查版本、主程序架构以及 `app.asar` 与对应打包目录逐字节一致，挂载点已卸载。
+- 在最终打包应用的 Electron Node 运行时分别执行 `scripts/verify-transfer-runtime.ts`：arm64 原生与 x64 Rosetta 均通过 32 MiB 文件与空文件、SHA-256／SHA-1／MD5、双目标独立回读、镜像落点、块内进度、暂停／继续及源哈希／ASC MHL 验证。x64 Rosetta 不代表真实 Intel Mac 验收。
+- arm64 DMG SHA-256：`9c5795bfa9d727fe0dd21151bcb156ab9358b62cc11add3eb2ce4dde2ea66a81`。
+- x64 DMG SHA-256：`3a8901e54e44f438fee3e6e3867f2e06b194a917f5ebcbaca5318749e3f7609a`。
+- Downloads 中两份安装包副本与上述构建摘要一致。发布时另附 `SHA256SUMS.txt` 供核对。
+- 本轮桌面处于锁定状态，真实 Finder 拖拽、键盘焦点、深浅主题、最小窗口和用户现场介质仍需人工验收；不将源码检查和模拟渲染记作这些项目通过。
+- 写入测试仅使用生成数据和独立临时目录，没有修改正式项目、素材或 MHL。当前没有有效 Developer ID Application 证书，安装包未签名、未公证。
+
+## 0.1.17 本地历史结果（改进已纳入 0.1.18）
+
+- TypeScript 类型检查、生产构建与 `git diff --check` 通过；117 项常规测试通过，3 项可选环境／性能测试默认跳过。
+- 新增回归覆盖：新镜像保留源文件夹、旧镜像恢复沿用原落点、镜像根目录符号链接越界拒绝、三种源哈希与 ASC MHL MD5 一致、单个大文件内部字节进度、暂停／继续状态不被节流丢弃、校验 0% 暂停后正确恢复、部分写入补齐、实时详情与旧快照合并、拖拽使用 `webUtils`。
+- 另行执行隔离性能对照：`KOCPY_TRANSFER_BENCH=1 npx vitest run tests/transfer-performance.integration.test.ts --reporter=verbose --disableConsoleIntercept`。本机 4 文件、256 MiB、单目标，交替进行预哈希再复制与合并读取，各 3 次；复制阶段中位数分别为 914 ms 与 853 ms，所有目标独立回读通过。该数据受本地缓存影响，不是 Finder 对照，不代表实体外接盘或 Intel 性能。
+- 将 `scripts/verify-transfer-runtime.ts` 打包后，分别在两份打包应用的 Electron Node 运行时执行。arm64 原生与 x64 Rosetta 均通过 SHA-256／SHA-1／MD5、32 MiB 文件、双目标回读、镜像落点、块内进度及暂停／继续验证。x64 Rosetta 不等于 Intel 实机验收。
+- `npm audit --audit-level=high`：0 个已知漏洞。
+- 两份 DMG 均通过 `hdiutil verify`，打包应用版本均为 0.1.17，可执行文件分别为 arm64 与 x86_64。
+- 两份 DMG 均以只读方式挂载检查：包内版本与架构正确，`app.asar` 与对应打包目录逐字节一致；已卸载本轮挂载点。Downloads 中的两份副本摘要与构建产物一致。
+- 本地 x64 DMG SHA-256：`3c87598b372b26b34f59c46fdda072ed7ebd19069ed4d3748494490d76fe4f6d`。
+- 本地 arm64 DMG SHA-256：`6d9ce6ee6019340c709d6bc31ea0b26eb47eae0a9bf40f74132438c4d18a4bcd`。
+- 桌面验收限制：已启动独立数据目录的 x64 验收应用，但 Mac 随后锁屏，未能完成真实 Finder 拖拽与窗口交互检查。此项不记为通过，需要解锁后补验；不使用模拟结果替代实际桌面验证。
+- 写入测试全部使用生成数据和独立临时目录，没有对正式素材、项目或 MHL 做修改。未覆盖本轮用户的真实外接盘速度、断连与 Intel 实机表现。
+- 当前仍无有效 Developer ID Application 证书，安装包未签名、未公证。本轮生成本地验收包，没有提交或推送 GitHub。
+
 ## 0.1.16 当前结果
 
 - TypeScript 类型检查、生产构建与补丁格式检查通过；常规自动化测试 104 项通过，2 项可选环境测试跳过。

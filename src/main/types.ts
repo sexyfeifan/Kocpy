@@ -11,7 +11,12 @@ export type TaskStatus =
 export type CopyMode = "normal" | "mirror";
 export type DuplicateStrategy = "skip" | "suffix";
 export type ProxyStatus =
-  "pending" | "running" | "paused" | "completed" | "failed" | "cancelled";
+  | "pending"
+  | "running"
+  | "paused"
+  | "completed"
+  | "failed"
+  | "cancelled";
 export type ProxyPreset = "review" | "editorial" | "offline";
 export interface SavedProxyPreset {
   id: string;
@@ -149,6 +154,7 @@ export interface ExternalManifestComparison {
 }
 
 export interface BackupTask {
+  requestId?: string;
   provenance?:
     | "kocpy-transfer"
     | "manifest-import"
@@ -175,6 +181,8 @@ export interface BackupTask {
   namingTemplate: string;
   shootingDateFolder?: string;
   copyMode?: CopyMode;
+  mirrorLayout?: import("../common/backup-layout").MirrorLayout;
+  transferPhase?: "scanning" | "hashing" | "copying" | "publishing";
   status: TaskStatus;
   totalFiles: number;
   completedFiles: number;
@@ -235,6 +243,7 @@ export interface BackupTask {
 }
 
 export interface TaskConfig {
+  requestId?: string;
   projectId?: string;
   name: string;
   sourcePath: string;
@@ -249,6 +258,7 @@ export interface TaskConfig {
   projectFolderName?: string;
   projectNamingRule?: string;
   copyMode?: CopyMode;
+  mirrorLayout?: import("../common/backup-layout").MirrorLayout;
   duplicateStrategy?: DuplicateStrategy;
   generateThumbnails?: boolean;
   priority?: boolean;
@@ -381,7 +391,12 @@ export interface ProjectConfig {
   managedSince?: string;
   expectedVolumes?: number;
   productionType?:
-    "commercial" | "documentary" | "short" | "variety" | "feature" | "custom";
+    | "commercial"
+    | "documentary"
+    | "short"
+    | "variety"
+    | "feature"
+    | "custom";
   crew?: Array<{
     id: string;
     name: string;

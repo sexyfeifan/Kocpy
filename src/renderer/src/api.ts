@@ -1,3 +1,5 @@
+import type { ArchiveScope } from "../../common/interaction";
+import type { OperationRecord } from "../../main/operations";
 import type {
   ArchiveChangeRecord,
   ArchiveHealthRecord,
@@ -99,8 +101,12 @@ export interface UpdateInfo {
   archLabel: "Apple Silicon" | "Intel";
 }
 export interface API {
+  onWorkspaceChanged(listener: () => void): () => void;
+  getOperations(): Promise<OperationRecord[]>;
+  deleteArchiveReminder(id: string): Promise<boolean>;
   resolveDroppedPaths(files: File[]): string[];
   selectDirectory(defaultPath?: string): Promise<string | null>;
+  validateDirectories(paths: string[]): Promise<string[]>;
   getTasks(): Promise<BackupTask[]>;
   getTask(id: string): Promise<BackupTask>;
   getCatalogStats(): Promise<{
@@ -137,25 +143,24 @@ export interface API {
     path: string,
   ): Promise<{ total: number; free: number; used: number }>;
   ejectVolume(path: string): Promise<void>;
-  ejectCompletedVolumes(): Promise<
-    Array<{ path: string; ok: boolean; error?: string }>
-  >;
-  runBenchmark(path: string, sizeMiB?: number): Promise<BenchmarkResult>;
+  ejectCompletedVolumes(
+    previewOnly?: boolean,
+    selectedPaths?: string[],
+  ): Promise<Array<{ path: string; ok: boolean; error?: string }>>;
+  runBenchmark(path: string, sizeMiB?: number): Promise<BenchmarkResult | null>;
   getReliabilityValidations(): Promise<ReliabilityValidationRecord[]>;
-  validateReliabilityVolume(path: string): Promise<ReliabilityValidationRecord>;
+  validateReliabilityVolume(
+    path: string,
+  ): Promise<ReliabilityValidationRecord | null>;
   getDiagnostics(): Promise<any>;
   exportDiagnostics(): Promise<string | null>;
   getArchiveHealth(): Promise<ArchiveHealthRecord[]>;
   getArchiveChanges(projectId?: string): Promise<ArchiveChangeRecord[]>;
   getArchiveReminders(): Promise<ArchiveReminder[]>;
   saveArchiveReminder(value: ArchiveReminder): Promise<ArchiveReminder[]>;
-  verifyArchiveScope(scope: {
-    projectId?: string;
-    shootingDate?: string;
-    taskId?: string;
-    relativePath?: string;
-    volumePath?: string;
-  }): Promise<{ changes: ArchiveChangeRecord[]; record: ArchiveHealthRecord }>;
+  verifyArchiveScope(
+    scope: ArchiveScope,
+  ): Promise<{ changes: ArchiveChangeRecord[]; record: ArchiveHealthRecord }>;
   auditUntrackedArchive(
     projectId: string,
     root: string,
@@ -178,10 +183,7 @@ export interface API {
   ): Promise<ProjectTemplate[]>;
   saveProjectTemplate(template: ProjectTemplate): Promise<ProjectTemplate[]>;
   deleteProjectTemplate(id: string): Promise<ProjectTemplate[]>;
-  hideProjectTemplate(
-    id: string,
-    hidden: boolean,
-  ): Promise<ProjectTemplate[]>;
+  hideProjectTemplate(id: string, hidden: boolean): Promise<ProjectTemplate[]>;
   exportProjectTemplates(): Promise<string | null>;
   importProjectTemplates(): Promise<ProjectTemplate[]>;
   previewProjectTemplate(
@@ -238,19 +240,13 @@ export interface API {
   repairExistingManifest(
     taskId: string,
     jobId?: string,
-  ): Promise<
-    | {
-        files: number;
-        bytes: number;
-        sourceRoot: string;
-        manifestRoot: string;
-      }
-    | null
-  >;
-  reverifyExistingManifest(
-    taskId: string,
-    jobId?: string,
-  ): Promise<BackupTask>;
+  ): Promise<{
+    files: number;
+    bytes: number;
+    sourceRoot: string;
+    manifestRoot: string;
+  } | null>;
+  reverifyExistingManifest(taskId: string, jobId?: string): Promise<BackupTask>;
   acceptExistingManifestExtra(taskId: string): Promise<BackupTask>;
   reviseExistingManifestMissing(
     taskId: string,
@@ -302,6 +298,10 @@ export interface API {
     addresses: string[];
     token: string;
   }>;
+  readLanIndex(
+    address: string,
+    token: string,
+  ): Promise<{ projects: any[]; tasks: any[]; generatedAt: number }>;
   getLanIndexStatus(): Promise<{
     active: boolean;
     port: number;
@@ -330,7 +330,10 @@ export interface API {
     blockingProxyJobs: number;
     canDelete: boolean;
   }>;
-  deleteProject(id: string, confirmationName: string): Promise<{
+  deleteProject(
+    id: string,
+    confirmationName: string,
+  ): Promise<{
     projects: ProjectConfig[];
     deletedTasks: number;
     deletedProxyJobs: number;
@@ -409,8 +412,9 @@ export interface API {
   deleteProxy(id: string): Promise<void>;
   exportProxyDelivery(
     format: "resolve" | "premiere" | "fcpxml" | "json",
+    jobIds?: string[],
   ): Promise<string | null>;
-  exportProxyPackage(): Promise<string | null>;
+  exportProxyPackage(jobIds?: string[]): Promise<string | null>;
   onProxyJobs(callback: (jobs: ProxyJob[]) => void): () => void;
   onTaskSettled(callback: (task: BackupTask) => void): () => void;
   onProgress(

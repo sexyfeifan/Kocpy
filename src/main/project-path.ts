@@ -1,4 +1,7 @@
 import path from "node:path";
+import { renderProjectCardPath } from "../common/project-layout";
+import { normalizePositions } from "../common/interaction";
+export { renderProjectCardPath } from "../common/project-layout";
 import { promises as fs } from "node:fs";
 import { segment } from "./backup/safety";
 import type { ProjectConfig, ProjectStructureReport } from "./types";
@@ -34,52 +37,6 @@ export function makeProjectDatePath(
   shootingDate: string,
 ): string {
   return path.join(segment(projectFolderName), compactDate(shootingDate));
-}
-
-export function renderProjectCardPath(
-  rule: string | undefined,
-  values: {
-    projectFolderName: string;
-    projectName: string;
-    projectStartDate: string;
-    shootingDate: string;
-    device: string;
-    position?: string;
-    card: string;
-  },
-) {
-  if (!rule)
-    return path.join(
-      makeProjectDayPath(
-        values.projectFolderName,
-        values.shootingDate,
-        values.device,
-        values.position,
-      ),
-      segment(values.card),
-    );
-  const tokens: Record<string, string> = {
-    date: compactDate(values.projectStartDate),
-    project: segment(values.projectName),
-    shootingDate: compactDate(values.shootingDate),
-    device: segment(values.device),
-    position: values.position ? segment(values.position) : "",
-    card: segment(values.card),
-  };
-  const unknown = [...rule.matchAll(/\{([^}]+)\}/g)]
-    .map((item) => item[1])
-    .filter((key) => !(key in tokens));
-  if (unknown.length)
-    throw new Error(`项目命名规则包含未知变量：${unknown.join("、")}`);
-  const rendered = rule
-    .replace(/\{([^}]+)\}/g, (_all, key) => tokens[key] || "")
-    .split(/[\\/]+/)
-    .map((item) => item.trim())
-    .filter(Boolean)
-    .map(segment);
-  if (!rendered.length) throw new Error("项目命名规则不能生成空路径");
-  if (!rule.includes("{card}")) rendered.push(segment(values.card));
-  return path.join(...rendered);
 }
 
 export async function createProjectDateFolders(
@@ -139,14 +96,33 @@ export function expectedProjectPaths(project: ProjectConfig): string[] {
     project.shootingDateEnd || project.shootingDateStart,
   ).flatMap((date) =>
     devices.flatMap((device) => {
-      const positions = [
-        ...new Set(project.devicePositions?.[device] || []),
-      ].filter((value) => /^[A-E]$/.test(value));
-      return positions.length
-        ? positions.map((position) =>
-            makeProjectDayPath(folder, date, device, position),
-          )
-        : [makeProjectDayPath(folder, date, device)];
+      const positions = normalizePositions(project.devicePositions?.[device]);
+      return (positions.length ? positions : [undefined])
+        .map((position) => {
+          if (!project.namingRule)
+            return makeProjectDayPath(folder, date, device, position);
+          // Only pre-create the prefix before the card component; never invent a card.
+          const full = renderProjectCardPath(project.namingRule, {
+            projectFolderName: folder,
+            projectName: project.name,
+            projectStartDate: project.shootingDateStart!,
+            shootingDate: date,
+            device,
+            position,
+            card: "__KOCPY_CARD__",
+          });
+          const prefix = full
+            .split("/")
+            .slice(
+              0,
+              full
+                .split("/")
+                .findIndex((part) => part.includes("__KOCPY_CARD__")),
+            )
+            .join("/");
+          return prefix;
+        })
+        .filter(Boolean);
     }),
   );
 }

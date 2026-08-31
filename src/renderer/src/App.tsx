@@ -1,3 +1,6 @@
+import { LifecycleControls } from "./LifecycleControls";
+import { OperationCenter, useModalStack } from "./Interaction";
+import { readableOperationError, didComplete } from "../../common/interaction";
 import {
   useState,
   useEffect,
@@ -5,6 +8,7 @@ import {
   useRef,
   type ReactNode,
 } from "react";
+import { selectLiveTask, transferPhaseText } from "./task-state";
 import {
   LayoutDashboard,
   ArrowLeftRight,
@@ -101,6 +105,7 @@ import {
   projectCloseoutSummary,
   projectDeviceCells,
   verifiedPhysicalCopyCount,
+  taskMeetsCopyRequirement,
 } from "../../main/project-closeout";
 import { taskMediaKind } from "../../main/media-kind";
 
@@ -266,7 +271,16 @@ const performanceText = (performance?: TransferPerformance) =>
 const taskTrustState = (task: BackupTask) => {
   if (!task.provenance || task.provenance === "kocpy-transfer")
     return { status: task.status, label: statusText[task.status] };
-  if (task.externalManifest?.resolution?.type === "accepted-extra")
+  if (["running", "paused", "verifying", "pending"].includes(task.status))
+    return { status: task.status, label: statusText[task.status] };
+  if (task.status === "failed" && task.externalManifest?.status !== "mismatch")
+    return { status: "failed", label: "校验未通过 · 查看详情" };
+  if (task.status === "cancelled")
+    return { status: "cancelled", label: "已取消 · 校验未完成" };
+  if (
+    task.status === "completed" &&
+    task.externalManifest?.resolution?.type === "accepted-extra"
+  )
     return { status: "completed", label: "额外文件已确认 · 当前基线可信" };
   if (task.externalManifest?.status === "mismatch") {
     const manifest = task.externalManifest,
@@ -298,7 +312,7 @@ const taskTrustState = (task: BackupTask) => {
       status: "completed",
       label: `修订 MHL 校验通过 · 排除 ${task.externalManifest.resolution.excluded.length}`,
     };
-  if (task.confidence === "verified")
+  if (task.confidence === "verified" && task.status === "completed")
     return { status: "completed", label: "外部清单校验通过" };
   if (task.confidence === "baseline" && task.status === "completed")
     return { status: "completed", label: "首次基线已建立" };
@@ -307,6 +321,15 @@ const taskTrustState = (task: BackupTask) => {
   return { status: "unverified", label: "已识别 · 待建立基线" };
 };
 export function App() {
+  useModalStack();
+  const [workspaceRevision, setWorkspaceRevision] = useState(0);
+  const [notices, setNotices] = useState<
+    Array<{ message: string; error: boolean }>
+  >([]);
+  const [taskLimit, setTaskLimit] = useState(100);
+  const [reportDate, setReportDate] = useState(today()),
+    [reportProject, setReportProject] = useState("");
+
   const [page, setPage] = useState<Page>("overview"),
     [tasks, setTasks] = useState<BackupTask[]>([]),
     [projects, setProjects] = useState<ProjectConfig[]>([]),
@@ -326,6 +349,10 @@ export function App() {
     [manifestIssue, setManifestIssue] = useState<BackupTask | null>(null),
     [detail, setDetail] = useState<string | null>(null),
     [detailTask, setDetailTask] = useState<BackupTask | null>(null),
+    [taskCommand, setTaskCommand] = useState<{
+      id: string;
+      action: "pause" | "resume";
+    } | null>(null),
     [projectDetailId, setProjectDetailId] = useState<string | null>(null);
   const [toast, setToast] = useState<{
       message: string;
@@ -353,6 +380,7 @@ export function App() {
     [proxyBusy, setProxyBusy] = useState(false),
     [completion, setCompletion] = useState<BackupTask | null>(null),
     [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
+  useEffect(() => setTaskLimit(100), [query, filter]);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
     undefined,
   );
@@ -366,22 +394,51 @@ export function App() {
     return () => window.removeEventListener("click", closeProjectMenu);
   }, []);
   const notify = useCallback((message: string, error = false) => {
+    message = readableOperationError(message);
     setToast({ message, error });
+    setNotices((values) => [...values.slice(-49), { message, error }]);
     clearTimeout(toastTimer.current);
-    toastTimer.current = setTimeout(() => setToast(null), 7000);
+    if (!error) toastTimer.current = setTimeout(() => setToast(null), 7000);
   }, []);
   const act = useCallback(
     async (fn: () => Promise<unknown>, success?: string) => {
       try {
-        await fn();
-        if (success) notify(success);
+        const result = await fn();
+        if (success && didComplete(result)) notify(success);
       } catch (e) {
         notify(String(e).replace(/^Error: /, ""), true);
       }
     },
     [notify],
   );
-  const refresh = useCallback(async () => setTasks(await api.getTasks()), []);
+  const refresh = useCallback(async () => {
+    const [t, p, j] = await Promise.all([
+      api.getTasks(),
+      api.getProjects(),
+      api.getProxyJobs(),
+    ]);
+    setTasks(t);
+    setProjects(p);
+    setProxyJobs(j);
+  }, []);
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout>;
+    const unsubscribe = api.onWorkspaceChanged(() => {
+      setWorkspaceRevision((value) => value + 1);
+      clearTimeout(timer);
+      timer = setTimeout(
+        () =>
+          void refresh().catch((error) =>
+            notify(readableOperationError(error), true),
+          ),
+        150,
+      );
+    });
+    return () => {
+      unsubscribe();
+      clearTimeout(timer);
+    };
+  }, [refresh, notify]);
   useEffect(() => {
     let stopped = false;
     Promise.all([
@@ -415,6 +472,7 @@ export function App() {
     });
     const unsubProxy = api.onProxyJobs(setProxyJobs);
     const unsubSettled = api.onTaskSettled((task) => {
+      setDetailTask((previous) => (previous?.id === task.id ? task : previous));
       if (task.status === "completed") setCompletion(task);
     });
     const interval = setInterval(() => {
@@ -444,11 +502,19 @@ export function App() {
       setDetailTask(null);
       return;
     }
+    let disposed = false;
     void api
       .getTask(detail)
-      .then(setDetailTask)
-      .catch((error) => notify(String(error), true));
-  }, [detail, notify]);
+      .then((task) => {
+        if (!disposed) setDetailTask(task);
+      })
+      .catch((error) => {
+        if (!disposed) notify(String(error), true);
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [detail, notify, workspaceRevision]);
   useEffect(() => {
     document.documentElement.dataset.theme = settings.theme;
   }, [settings.theme]);
@@ -457,14 +523,6 @@ export function App() {
       if (e.metaKey && e.key === "n") {
         e.preventDefault();
         setComposer({});
-      }
-      if (e.key === "Escape") {
-        if (document.querySelector('[role="dialog"][aria-busy="true"]')) return;
-        if (!proxyBusy) setProxy(null);
-        setComposer(null);
-        setEditor(null);
-        setDetail(null);
-        setConfirm(null);
       }
       if (
         e.key === "/" &&
@@ -506,8 +564,19 @@ export function App() {
         (filter === "active" && active(t)) ||
         t.status === filter),
   );
-  const selected =
-    detailTask?.id === detail ? detailTask : tasks.find((t) => t.id === detail);
+  const selected = selectLiveTask(detail, tasks, detailTask);
+  const controlTask = (id: string, action: "pause" | "resume") =>
+    act(async () => {
+      if (taskCommand) return;
+      setTaskCommand({ id, action });
+      try {
+        if (action === "pause") await api.pauseTask(id);
+        else await api.resumeTask(id);
+        await refresh();
+      } finally {
+        setTaskCommand(null);
+      }
+    });
   const exportReport = (
     id: string,
     format: "pdf" | "json" | "mhl" | "ascmhl",
@@ -538,7 +607,11 @@ export function App() {
             tabIndex={0}
             onClick={() => setDetail(t.id)}
             onKeyDown={(event) => {
-              if (event.key !== "Enter" && event.key !== " ") return;
+              if (
+                event.target !== event.currentTarget ||
+                (event.key !== "Enter" && event.key !== " ")
+              )
+                return;
               event.preventDefault();
               setDetail(t.id);
             }}
@@ -820,7 +893,7 @@ export function App() {
           <img src="./icon.png" alt="Kocpy 图标" />
           <div>
             <strong>
-              Kocpy<span>0.1.16</span>
+              Kocpy<span>0.1.18</span>
             </strong>
             <small>素材工作台</small>
           </div>
@@ -877,7 +950,7 @@ export function App() {
                   ? `可升级 ${updateInfo.latest}`
                   : "检查更新"}
               </span>
-              <b>v0.1.16</b>
+              <b>v0.1.18</b>
             </button>
             <div className="sidebar-author-links">
               <span>
@@ -939,6 +1012,28 @@ export function App() {
           </div>
         </header>
         <main className="page-content">
+          <OperationCenter />
+          {page !== "help" && (
+            <Button
+              kind="subtle"
+              onClick={() => {
+                sessionStorage.setItem("kocpy-help-context", page);
+                go("help");
+              }}
+            >
+              本页使用说明
+            </Button>
+          )}
+          {notices.length > 0 && (
+            <details className="notification-history">
+              <summary>操作消息（{notices.length}）</summary>
+              {[...notices].reverse().map((item, index) => (
+                <p key={index} className={item.error ? "red-text" : ""}>
+                  {item.message}
+                </p>
+              ))}
+            </details>
+          )}
           <div className="page-heading">
             <div>
               <div className="eyebrow">
@@ -1044,7 +1139,7 @@ export function App() {
                             ? `${current.name} · ${statusText[current.status]}`
                             : tasks.some((t) => t.status === "failed")
                               ? `${tasks.filter((t) => t.status === "failed").length} 个任务需要处理`
-                              : "今日素材已妥善归档"}
+                              : "当前无进行中的任务"}
                         </h2>
                         <p>
                           {current
@@ -1333,7 +1428,16 @@ export function App() {
                     />
                   </div>
                   {filtered.length ? (
-                    taskRows(filtered)
+                    <>
+                      {taskRows(filtered.slice(0, taskLimit))}
+                      {filtered.length > taskLimit && (
+                        <Button
+                          onClick={() => setTaskLimit((value) => value + 100)}
+                        >
+                          加载更多（已显示 {taskLimit}/{filtered.length}）
+                        </Button>
+                      )}
+                    </>
                   ) : (
                     <Empty
                       icon={ArrowLeftRight}
@@ -1370,9 +1474,16 @@ export function App() {
                         集中处理异常退出、断点文件、离线目的地与未完成校验
                       </span>
                     </div>
-                    <Button kind="subtle" onClick={() => void refresh()}>
+                    <Button
+                      kind="subtle"
+                      onClick={() =>
+                        void refresh().catch((error) =>
+                          notify(readableOperationError(error), true),
+                        )
+                      }
+                    >
                       <RefreshCw size={14} />
-                      重新检测
+                      刷新记录（不读取磁盘校验）
                     </Button>
                   </div>
                   <div className="recovery-summary">
@@ -1442,7 +1553,19 @@ export function App() {
                             </div>
                             <div className="row">
                               <Badge status={task.status} />
-                              {task.status === "paused" ? (
+                              {task.provenance &&
+                              task.provenance !== "kocpy-transfer" ? (
+                                <Button
+                                  kind="primary"
+                                  onClick={() =>
+                                    task.externalManifest
+                                      ? setManifestIssue(task)
+                                      : setExistingBaseline(task)
+                                  }
+                                >
+                                  查看接管校验
+                                </Button>
+                              ) : task.status === "paused" ? (
                                 <Button
                                   kind="primary"
                                   onClick={() =>
@@ -1685,9 +1808,8 @@ export function App() {
                               verified = related.filter((task) =>
                                 task.destinations.some((item) => item.verified),
                               ).length,
-                              compliant = related.filter(
-                                (task) =>
-                                  verifiedPhysicalCopyCount(task) >= required,
+                              compliant = related.filter((task) =>
+                                taskMeetsCopyRequirement(task, required),
                               ).length,
                               attention = related.length - compliant,
                               received = related.filter(
@@ -1743,6 +1865,14 @@ export function App() {
                             );
                           })()}
                           <div className="row between">
+                            <Button
+                              kind="subtle"
+                              onClick={() => {
+                                go("maintenance");
+                              }}
+                            >
+                              模板与交接
+                            </Button>
                             <div className="row">
                               <Button
                                 kind="subtle"
@@ -2020,7 +2150,16 @@ export function App() {
                                             deviceCell.scheduleKey,
                                             "clear",
                                           )
-                                        : undefined
+                                        : setDetail(
+                                            (
+                                              rows.find(
+                                                (task) =>
+                                                  !task.destinations.every(
+                                                    (copy) => copy.verified,
+                                                  ),
+                                              ) || rows[0]
+                                            ).id,
+                                          )
                                     }
                                     title={
                                       !rows.length ? "恢复为待确认" : cell.label
@@ -2096,7 +2235,9 @@ export function App() {
                         <div className="project-task-breakdown">
                           <div className="project-task-breakdown-title">
                             <strong>素材卷明细</strong>
-                            <span>刷新后按唯一素材卷统计，不重复累加同一路径</span>
+                            <span>
+                              刷新后按唯一素材卷统计，不重复累加同一路径
+                            </span>
                           </div>
                           <div className="project-task-breakdown-head">
                             <span>拍摄日期 · 设备 / 机位</span>
@@ -2124,10 +2265,23 @@ export function App() {
                                     ? ` · ${task.cameraPosition}`
                                     : ""}
                                 </span>
-                                <b>{task.name}</b>
+                                <button
+                                  className="project-roll-link"
+                                  onClick={() => setDetail(task.id)}
+                                  title="查看实时传输详情"
+                                >
+                                  {task.name}
+                                </button>
                                 <small>
                                   {task.totalFiles} 个文件 ·{" "}
                                   {bytes(task.totalBytes)}
+                                  {active(task) && (
+                                    <span className="project-live-transfer">
+                                      {task.status === "paused"
+                                        ? "已暂停"
+                                        : `${task.status === "verifying" ? "校验" : "复制"} ${Math.round(task.status === "verifying" ? task.verifyProgress || 0 : task.copyProgress || 0)}% · ${bytes(task.status === "verifying" ? task.verifySpeedBps : task.speedBps)}/s`}
+                                    </span>
+                                  )}
                                 </small>
                                 <span className="task-state-actions">
                                   {(() => {
@@ -2223,13 +2377,39 @@ export function App() {
                       kind="subtle"
                       onClick={() =>
                         void act(async () => {
-                          const results = await api.ejectCompletedVolumes();
+                          const preview = await api.ejectCompletedVolumes(true);
+                          const eligible = preview.filter((item) => item.ok);
+                          if (!eligible.length) {
+                            notify(
+                              preview
+                                .map((item) => item.path + "：" + item.error)
+                                .join("；") || "没有可推出的设备",
+                              true,
+                            );
+                            return;
+                          }
+                          if (
+                            !window.confirm(
+                              "将安全推出以下设备（执行前再次检查）：\n" +
+                                eligible.map((item) => item.path).join("\n") +
+                                "\n以下设备保留：\n" +
+                                preview
+                                  .filter((item) => !item.ok)
+                                  .map((item) => item.path + "：" + item.error)
+                                  .join("\n"),
+                            )
+                          )
+                            return;
+                          const results = await api.ejectCompletedVolumes(
+                            false,
+                            eligible.map((item) => item.path),
+                          );
                           const success = results.filter(
                             (result) => result.ok,
                           ).length;
                           setVolumes(await api.listVolumes());
                           notify(
-                            `已安全推出 ${success} 个完成设备；${results.length - success} 个设备因安全检查未推出`,
+                            `已推出 ${success} 个设备。${results.map((result) => result.path + "：" + (result.ok ? "已推出" : result.error)).join("；")}`,
                             results.some((result) => !result.ok),
                           );
                         })
@@ -2316,12 +2496,32 @@ export function App() {
                     <div className="section-title">
                       <h2>任务报告</h2>
                       <div className="row">
+                        <input
+                          aria-label="报告拍摄日期"
+                          type="date"
+                          value={reportDate}
+                          onChange={(e) => setReportDate(e.target.value)}
+                        />
+                        <select
+                          aria-label="报告项目范围"
+                          value={reportProject}
+                          onChange={(e) => setReportProject(e.target.value)}
+                        >
+                          <option value="">全部项目</option>
+                          {projects.map((project) => (
+                            <option key={project.id} value={project.id}>
+                              {project.name}
+                            </option>
+                          ))}
+                        </select>
                         <Button
                           kind="subtle"
                           onClick={() =>
                             void act(async () => {
-                              const result =
-                                await api.exportResolveCsv(today());
+                              const result = await api.exportResolveCsv(
+                                reportDate,
+                                reportProject || undefined,
+                              );
                               if (result)
                                 notify(`Resolve 媒体池清单已保存：${result}`);
                             })
@@ -2334,14 +2534,16 @@ export function App() {
                           kind="subtle"
                           onClick={() =>
                             void act(async () => {
-                              const result =
-                                await api.exportDailyReport(today());
+                              const result = await api.exportDailyReport(
+                                reportDate,
+                                reportProject || undefined,
+                              );
                               if (result) notify(`拍摄日汇总已保存：${result}`);
                             })
                           }
                         >
                           <CalendarDays size={14} />
-                          导出今日汇总
+                          导出所选日期汇总
                         </Button>
                         <SearchBox
                           value={query}
@@ -2431,9 +2633,7 @@ export function App() {
                 <MaintenancePage
                   tasks={tasks}
                   projects={projects}
-                  refreshProjects={async () =>
-                    setProjects(await api.getProjects())
-                  }
+                  refreshProjects={refresh}
                   notify={notify}
                 />
               )}
@@ -2646,6 +2846,11 @@ export function App() {
                 <span>拷贝 {Math.round(selected.copyProgress || 0)}%</span>
                 <span>校验 {Math.round(selected.verifyProgress || 0)}%</span>
               </div>
+              {active(selected) && (
+                <p className="muted small" role="status">
+                  {transferPhaseText(selected)}
+                </p>
+              )}
               <div className="progress-track layered-progress">
                 <i
                   className="copy-fill"
@@ -2695,7 +2900,9 @@ export function App() {
                   {(["video", "photo", "audio", "other"] as const).map(
                     (kind) => (
                       <div key={kind}>
-                        <strong>{selected.mediaBreakdown![kind].files}</strong>
+                        <strong>
+                          {selected.mediaBreakdown![kind].files} 个文件
+                        </strong>
                         <span>
                           {
                             {
@@ -2857,22 +3064,24 @@ export function App() {
                     {selected.status === "paused" ? (
                       <Button
                         kind="subtle"
-                        onClick={() =>
-                          void act(() => api.resumeTask(selected.id))
-                        }
+                        disabled={taskCommand?.id === selected.id}
+                        onClick={() => void controlTask(selected.id, "resume")}
                       >
                         <Play size={14} />
-                        继续
+                        {taskCommand?.id === selected.id
+                          ? "正在确认状态…"
+                          : "继续"}
                       </Button>
                     ) : ["running", "verifying"].includes(selected.status) ? (
                       <Button
                         kind="subtle"
-                        onClick={() =>
-                          void act(() => api.pauseTask(selected.id))
-                        }
+                        disabled={taskCommand?.id === selected.id}
+                        onClick={() => void controlTask(selected.id, "pause")}
                       >
                         <Pause size={14} />
-                        暂停
+                        {taskCommand?.id === selected.id
+                          ? "正在确认状态…"
+                          : "暂停"}
                       </Button>
                     ) : null}
                     <Button
@@ -3009,13 +3218,11 @@ export function App() {
               <Button onClick={() => setConfirm(null)}>取消</Button>
               <Button
                 kind={confirm.danger ? "danger" : "primary"}
-                disabled={
-                  Boolean(
-                    (confirm.requiredText &&
-                      confirmInput !== confirm.requiredText) ||
-                      (confirm.acknowledgement && !confirmAcknowledged),
-                  )
-                }
+                disabled={Boolean(
+                  (confirm.requiredText &&
+                    confirmInput !== confirm.requiredText) ||
+                    (confirm.acknowledgement && !confirmAcknowledged),
+                )}
                 onClick={() => {
                   const action = confirm.run;
                   setConfirm(null);
@@ -3029,70 +3236,17 @@ export function App() {
         </div>
       )}
       {completion && (
-        <div className="modal-backdrop top-layer">
-          <section
-            className="completion-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-label="备份完成"
+        <div className="completion-banner" role="status">
+          <span>备份与校验完成：{completion.name}</span>
+          <Button
+            onClick={() => {
+              setDetail(completion.id);
+              setCompletion(null);
+            }}
           >
-            <span className="completion-icon">
-              <CheckCheck size={30} />
-            </span>
-            <span className="eyebrow">TRANSFER COMPLETE</span>
-            <h2>备份与校验已完成</h2>
-            <p>{completion.name}</p>
-            <div className="completion-summary">
-              <div>
-                <strong>{completion.totalFiles}</strong>
-                <span>文件</span>
-              </div>
-              <div>
-                <strong>{bytes(completion.totalBytes)}</strong>
-                <span>素材大小</span>
-              </div>
-              <div>
-                <strong>
-                  {
-                    completion.destinations.filter(
-                      (destination) => destination.verified,
-                    ).length
-                  }
-                </strong>
-                <span>校验通过目标</span>
-              </div>
-              <div>
-                <strong>
-                  {duration(
-                    ((completion.completedAt || Date.now()) -
-                      (completion.startedAt ||
-                        completion.createdAt ||
-                        Date.now())) /
-                      1000,
-                  )}
-                </strong>
-                <span>总用时</span>
-              </div>
-            </div>
-            {completion.thumbnailError && (
-              <p className="muted small">{completion.thumbnailError}</p>
-            )}
-            <div className="row justify-end">
-              <Button kind="subtle" onClick={() => setCompletion(null)}>
-                关闭
-              </Button>
-              <Button
-                kind="primary"
-                onClick={() => {
-                  setDetail(completion.id);
-                  setCompletion(null);
-                }}
-              >
-                <FileCheck2 size={15} />
-                查看任务详情
-              </Button>
-            </div>
-          </section>
+            查看详情
+          </Button>
+          <Button onClick={() => setCompletion(null)}>关闭</Button>
         </div>
       )}
       {toast && (
@@ -3175,6 +3329,17 @@ function Library({
   reveal: (p: string) => void;
   proxy: (f: { path: string; name: string; paths?: string[] }) => void;
 }) {
+  const [catalogRevision, setCatalogRevision] = useState(0);
+  const [catalogBusy, setCatalogBusy] = useState(true),
+    [catalogError, setCatalogError] = useState("");
+  useEffect(
+    () =>
+      api.onWorkspaceChanged(() => setCatalogRevision((value) => value + 1)),
+    [],
+  );
+  const taskSignature = tasks
+    .map((task) => task.id + ":" + task.status + ":" + task.completedAt)
+    .join("|");
   const [kind, setKind] = useState("all"),
     [limit, setLimit] = useState(100),
     [selectedPaths, setSelectedPaths] = useState<string[]>([]),
@@ -3185,25 +3350,48 @@ function Library({
     [previewBusy, setPreviewBusy] = useState(false);
   useEffect(() => {
     let stopped = false;
-    void api
-      .getCatalogFiles({ query, kind, limit: limit + 1, offset: 0 })
-      .then((rows) => {
-        if (!stopped) {
-          setHasMore(rows.length > limit);
-          setFiles(
-            rows.slice(0, limit).map((row: any) => ({
-              ...row,
-              task: row.task_name,
-              taskId: row.task_id,
-              id: `${row.task_id}${row.relativePath}`,
-            })),
-          );
-        }
-      });
+    setCatalogBusy(true);
+    setCatalogError("");
+    const timer = setTimeout(
+      () =>
+        void api
+          .getCatalogFiles({
+            query,
+            kind,
+            limit: 101,
+            offset: Math.max(0, limit - 100),
+          })
+          .then((rows) => {
+            if (!stopped) {
+              setHasMore(rows.length > 100);
+              setFiles(
+                rows.slice(0, 100).map((row: any) => ({
+                  ...row,
+                  task: row.task_name,
+                  taskId: row.task_id,
+                  id: `${row.task_id}${row.relativePath}`,
+                })),
+              );
+            }
+          })
+          .catch((error) => {
+            if (!stopped) setCatalogError(readableOperationError(error));
+          })
+          .finally(() => {
+            if (!stopped) setCatalogBusy(false);
+          }),
+      200,
+    );
     return () => {
       stopped = true;
+      clearTimeout(timer);
     };
-  }, [query, kind, limit, tasks]);
+  }, [query, kind, limit, taskSignature, catalogRevision]);
+  useEffect(() => {
+    setSelectedPaths([]);
+  }, [query, kind, catalogRevision]);
+  const reportError = (error: unknown) =>
+    setCatalogError(readableOperationError(error));
   const isVideo = (name: string) => /\.(mov|mp4|mxf|mkv|avi|m4v)$/i.test(name);
   const isColor = (name: string) => /\.(cube|cdl|cc|ccc|clf)$/i.test(name);
   const filtered = files;
@@ -3215,6 +3403,7 @@ function Library({
             ["all", "全部文件"],
             ["video", "视频"],
             ["image", "照片 / RAW"],
+            ["audio", "音频"],
             ["color", "LUT / CDL"],
           ].map(([id, label]) => (
             <button
@@ -3230,6 +3419,12 @@ function Library({
           ))}
         </div>
         <div className="row">
+          <Button onClick={() => setCatalogRevision((value) => value + 1)}>
+            刷新可访问副本
+          </Button>
+          {selectedPaths.length > 0 && (
+            <Button onClick={() => setSelectedPaths([])}>清除选择</Button>
+          )}
           {selectedPaths.length > 0 && (
             <Button
               kind="primary"
@@ -3255,6 +3450,15 @@ function Library({
           />
         </div>
       </div>
+      {catalogError && (
+        <div className="error-box" role="alert">
+          {catalogError}
+          <Button onClick={() => setCatalogRevision((value) => value + 1)}>
+            重试加载
+          </Button>
+        </div>
+      )}
+      {catalogBusy && <p role="status">正在加载素材与可访问副本…</p>}
       {filtered.length ? (
         <>
           <div className="library-head">
@@ -3265,7 +3469,9 @@ function Library({
           </div>
           {filtered.slice(0, limit).map((f) => {
             const verified = f.destinations.filter((d: any) => d.verified),
-              p = locations[f.id] || verified[0]?.path;
+              p =
+                locations[f.id] ||
+                verified.find((copy: any) => copy.online)?.path;
             return (
               <div className="library-row" key={f.id}>
                 <div className="row">
@@ -3303,7 +3509,8 @@ function Library({
                       : "red-text small"
                   }
                 >
-                  {verified.length} / {f.destinations.length} 已校验
+                  {verified.length} / {f.destinations.length} 历史校验 ·{" "}
+                  {verified.filter((copy: any) => copy.online).length} 可访问
                 </span>
                 <div className="row">
                   <Button
@@ -3326,9 +3533,12 @@ function Library({
                               ...current,
                               [f.id]: located,
                             }));
+                            setSelectedPaths([]);
+                            setCatalogRevision((value) => value + 1);
                             reveal(located);
                           }
                         })
+                        .catch(reportError)
                     }
                   >
                     <RefreshCw size={15} />
@@ -3339,7 +3549,9 @@ function Library({
                         kind="icon"
                         title="播放素材"
                         disabled={!p}
-                        onClick={() => p && void api.openPath(p)}
+                        onClick={() =>
+                          p && void api.openPath(p).catch(reportError)
+                        }
                       >
                         <Play size={15} />
                       </Button>
@@ -3353,6 +3565,7 @@ function Library({
                           api
                             .inspectMedia(p)
                             .then(setPreview)
+                            .catch(reportError)
                             .finally(() => setPreviewBusy(false)))
                         }
                       >
@@ -3373,13 +3586,21 @@ function Library({
           })}
           <div className="library-footer">
             <span>
-              已加载 {filtered.length} 个文件
+              第 {Math.ceil(limit / 100)} 页 · 本页 {filtered.length} 个文件
               {hasMore ? " · 还有更多结果" : " · 已到末尾"}·
               记录中的校验状态不代表实时磁盘检测
             </span>
+            {limit > 100 && (
+              <Button
+                kind="subtle"
+                onClick={() => setLimit((n) => Math.max(100, n - 100))}
+              >
+                上一页
+              </Button>
+            )}
             {hasMore && (
               <Button kind="subtle" onClick={() => setLimit((n) => n + 100)}>
-                加载更多
+                下一页
               </Button>
             )}
           </div>
@@ -3387,7 +3608,15 @@ function Library({
       ) : (
         <Empty
           icon={Film}
-          title={files.length ? "没有找到匹配的素材" : "素材备份后，在这里汇合"}
+          title={
+            catalogBusy
+              ? "正在加载素材"
+              : catalogError
+                ? "素材加载失败"
+                : query || kind !== "all"
+                  ? "没有找到匹配的素材"
+                  : "素材备份后，在这里汇合"
+          }
           detail="保留文件结构与校验状态，可在 Finder 中定位副本，或为视频生成剪辑代理。"
         />
       )}
@@ -3395,6 +3624,7 @@ function Library({
         <div className="media-preview" role="dialog" aria-label="媒体预览">
           <button
             className="media-preview-close"
+            title="关闭"
             onClick={() => setPreview(null)}
           >
             <X size={16} />
@@ -3463,6 +3693,41 @@ function ExistingImportModal({
     [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
     [progress, setProgress] = useState<ExistingImportProgress | null>(null);
+  const [preview, setPreview] = useState(value.preview);
+  const [previewRetry, setPreviewRetry] = useState(0);
+  const [previewBusy, setPreviewBusy] = useState(false);
+  useEffect(() => {
+    let stopped = false;
+    setPreviewBusy(true);
+    setError("");
+    const timer = setTimeout(
+      () =>
+        void api
+          .previewExistingBackup(
+            value.preview.root,
+            value.project.id,
+            scope,
+            dateValue,
+          )
+          .then((next) => {
+            if (!stopped) setPreview(next);
+          })
+          .catch((error) => {
+            if (!stopped) {
+              setError(readableOperationError(error));
+              setPreview({ ...value.preview, candidates: [] });
+            }
+          })
+          .finally(() => {
+            if (!stopped) setPreviewBusy(false);
+          }),
+      250,
+    );
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+    };
+  }, [value.preview.root, value.project.id, scope, dateValue, previewRetry]);
   const jobIdRef = useRef("");
   useEffect(
     () =>
@@ -3471,14 +3736,7 @@ function ExistingImportModal({
       }),
     [],
   );
-  const count =
-    scope === "card"
-      ? 1
-      : scope === "day"
-        ? value.preview.candidates.filter(
-            (item) => item.shootingDate === dateValue,
-          ).length
-        : value.preview.candidates.length;
+  const count = preview.candidates.length;
   return (
     <div className="modal-backdrop top-layer">
       <section
@@ -3486,13 +3744,14 @@ function ExistingImportModal({
         role="dialog"
         aria-modal="true"
         aria-label="接管既有备份"
+        aria-busy={busy}
       >
         <div className="modal-header">
           <div>
             <span className="eyebrow">ADOPT EXISTING MEDIA</span>
             <h2>接管既有备份</h2>
           </div>
-          <Button kind="icon" title="关闭" onClick={onClose} disabled={busy}>
+          <Button kind="icon" title="关闭" onClick={onClose}>
             <X size={19} />
           </Button>
         </div>
@@ -3504,21 +3763,21 @@ function ExistingImportModal({
             </span>
           </div>
           <div className="import-preview">
-            <strong>{leaf(value.preview.root)}</strong>
+            <strong>{leaf(preview.root)}</strong>
             <span>
-              {value.preview.files} 个文件 · {bytes(value.preview.bytes)} ·
-              识别到 {value.preview.candidates.length} 个素材卷 ·
-              {value.preview.detectedStructure === "project"
+              {preview.files} 个文件 · {bytes(preview.bytes)} · 识别到{" "}
+              {preview.candidates.length} 个素材卷 ·
+              {preview.detectedStructure === "project"
                 ? "项目目录"
-                : value.preview.detectedStructure === "day"
+                : preview.detectedStructure === "day"
                   ? "单日目录"
-                  : value.preview.detectedStructure === "card"
+                  : preview.detectedStructure === "card"
                     ? "素材卡目录"
                     : "结构待确认"}
             </span>
-            <small className="mono">{value.preview.root}</small>
+            <small className="mono">{preview.root}</small>
           </div>
-          {value.preview.warnings.map((warning) => (
+          {preview.warnings.map((warning) => (
             <div className="notice amber" key={warning}>
               <AlertTriangle size={15} />
               {warning}
@@ -3527,6 +3786,7 @@ function ExistingImportModal({
           <label>
             接管范围
             <select
+              disabled={busy || previewBusy}
               value={scope}
               onChange={(event) => setScope(event.target.value as typeof scope)}
             >
@@ -3540,13 +3800,15 @@ function ExistingImportModal({
               拍摄日期
               <input
                 type="date"
+                disabled={busy}
                 value={dateValue}
                 onChange={(event) => setDateValue(event.target.value)}
               />
             </label>
           )}
+          {previewBusy && <p role="status">正在重新识别所选范围…</p>}
           <div className="import-candidates">
-            {value.preview.candidates.slice(0, 12).map((item) => (
+            {preview.candidates.map((item) => (
               <span key={item.relativeRoot}>
                 <strong>{item.card}</strong>
                 <small>
@@ -3563,6 +3825,7 @@ function ExistingImportModal({
           <label>
             接管可信度
             <select
+              disabled={busy}
               value={mode}
               onChange={(event) => setMode(event.target.value as typeof mode)}
             >
@@ -3618,16 +3881,26 @@ function ExistingImportModal({
               )}
             </div>
           )}
-          {error && <div className="error-box">{error}</div>}
+          {error && (
+            <div className="error-box">
+              {error}
+              <Button
+                disabled={busy}
+                onClick={() => setPreviewRetry((value) => value + 1)}
+              >
+                重新识别范围
+              </Button>
+            </div>
+          )}
         </div>
         <div className="modal-footer">
           <span className="muted small">将创建 {count} 个独立素材卷记录</span>
-          <Button kind="subtle" onClick={onClose} disabled={busy}>
-            取消
+          <Button kind="subtle" onClick={onClose}>
+            {busy ? "后台继续" : "取消"}
           </Button>
           <Button
             kind="primary"
-            disabled={busy || count < 1}
+            disabled={busy || previewBusy || !!error || count < 1}
             onClick={() => {
               const nextJobId = crypto.randomUUID();
               jobIdRef.current = nextJobId;
@@ -3637,7 +3910,7 @@ function ExistingImportModal({
               void api
                 .importExistingScope(
                   value.project.id,
-                  value.preview.root,
+                  preview.root,
                   mode,
                   scope,
                   dateValue,
@@ -3655,7 +3928,11 @@ function ExistingImportModal({
             ) : (
               <Database size={15} />
             )}
-            识别校验并接管
+            {mode === "unverified-import"
+              ? "仅导入结构"
+              : mode === "external-baseline"
+                ? "读取文件并建立基线"
+                : "按外部清单校验并接管"}
           </Button>
         </div>
       </section>
@@ -3711,7 +3988,9 @@ function ManifestIssueModal({
     ),
     zeroByteExtras = comparison.extra.filter(
       (relativePath) =>
-        actualSizes.get(relativePath.replace(/[\\/]+/g, "/").normalize("NFC")) === 0,
+        actualSizes.get(
+          relativePath.replace(/[\\/]+/g, "/").normalize("NFC"),
+        ) === 0,
     ),
     extraOnly =
       comparison.extra.length > 0 &&
@@ -3735,8 +4014,10 @@ function ManifestIssueModal({
     return [
       manifest.missing.length && `缺少 ${manifest.missing.length}`,
       manifest.extra.length && `额外 ${manifest.extra.length}`,
-      manifest.sizeMismatches.length && `大小不同 ${manifest.sizeMismatches.length}`,
-      manifest.checksumMismatches.length && `校验不同 ${manifest.checksumMismatches.length}`,
+      manifest.sizeMismatches.length &&
+        `大小不同 ${manifest.sizeMismatches.length}`,
+      manifest.checksumMismatches.length &&
+        `校验不同 ${manifest.checksumMismatches.length}`,
     ]
       .filter(Boolean)
       .join("、");
@@ -3795,22 +4076,23 @@ function ManifestIssueModal({
         </div>
         <div className="manifest-file-list">
           {values.map((value) => {
-            const relativePath =
-                typeof value === "string" ? value : value.path,
+            const relativePath = typeof value === "string" ? value : value.path,
               label = typeof value === "string" ? value : value.label;
             return (
-            <div key={`${tone}-${relativePath}`}>
-              <span className="mono">{label}</span>
-              <button
-                title={tone === "missing" ? "显示目标目录" : "在 Finder 中显示"}
-                onClick={() =>
-                  void api.revealExistingManifestItem(task.id, relativePath)
-                }
-              >
-                <FolderOpen size={13} />
-                Finder
-              </button>
-            </div>
+              <div key={`${tone}-${relativePath}`}>
+                <span className="mono">{label}</span>
+                <button
+                  title={
+                    tone === "missing" ? "显示目标目录" : "在 Finder 中显示"
+                  }
+                  onClick={() =>
+                    void api.revealExistingManifestItem(task.id, relativePath)
+                  }
+                >
+                  <FolderOpen size={13} />
+                  Finder
+                </button>
+              </div>
             );
           })}
         </div>
@@ -3823,17 +4105,25 @@ function ManifestIssueModal({
         role="dialog"
         aria-modal="true"
         aria-label="处理外部清单差异"
+        aria-busy={busy}
       >
         <div className="modal-header">
           <div>
             <span className="eyebrow">MANIFEST DIFFERENCE</span>
             <h2>处理外部清单差异</h2>
           </div>
-          <Button kind="icon" title="关闭" onClick={onClose} disabled={busy}>
+          <Button kind="icon" title="关闭" onClick={onClose}>
             <X size={19} />
           </Button>
         </div>
         <div className="form-body">
+          <details className="context-help">
+            <summary>这是什么意思 / 下一步怎么做</summary>
+            <p>
+              这里按外部清单记录的相对路径、大小和哈希核对当前目录，不根据项目名称推测素材总量。缺失文件先尝试从同一卷健康副本补回；有意剔除内容须走保留原清单与审计的修订流程。额外文件和缺失文件不是同一类差异，读取
+              100% 也不表示差异已经消失。
+            </p>
+          </details>
           <div className="notice amber">
             <AlertTriangle size={17} />
             <span>
@@ -3846,7 +4136,9 @@ function ManifestIssueModal({
               <ol>
                 <li>先从健康副本补回清单缺少的文件。</li>
                 <li>Kocpy 自动重新完整核对，并保留已经成功的修复。</li>
-                <li>再检查剩余的额外文件：误放或空文件应移出素材卷；有效文件应建立当前哈希基线后确认。</li>
+                <li>
+                  再检查剩余的额外文件：误放或空文件应移出素材卷；有效文件应建立当前哈希基线后确认。
+                </li>
               </ol>
             </div>
           )}
@@ -3858,14 +4150,18 @@ function ManifestIssueModal({
                   发现 {comparison.pathCollisionHints.length} 组疑似同名冲突
                 </strong>
                 <p>
-                  文件名相似不代表内容相同，Kocpy 不会把带“(1)”的清单文件与另一个文件自动视为同一文件。
+                  文件名相似不代表内容相同，Kocpy
+                  不会把带“(1)”的清单文件与另一个文件自动视为同一文件。
                 </p>
                 {comparison.pathCollisionHints.map((hint) => (
                   <small
                     className="mono"
                     key={`${hint.missingPath}-${hint.extraPath}`}
                   >
-                    清单：{hint.missingPath} · {hint.expectedSize === undefined ? "大小未记录" : bytes(hint.expectedSize)}
+                    清单：{hint.missingPath} ·{" "}
+                    {hint.expectedSize === undefined
+                      ? "大小未记录"
+                      : bytes(hint.expectedSize)}
                     <br />
                     当前：{hint.extraPath} · {bytes(hint.actualSize)}
                   </small>
@@ -3877,13 +4173,16 @@ function ManifestIssueModal({
             <div className="notice amber compact">
               <AlertTriangle size={16} />
               <span>
-                发现 {zeroByteExtras.length} 个 0 字节额外文件。空文件不能替代清单中的有效素材；建议先在 Finder 中确认并移出素材卷，不建议直接采用为可信基线。
+                发现 {zeroByteExtras.length} 个 0
+                字节额外文件。空文件不能替代清单中的有效素材；建议先在 Finder
+                中确认并移出素材卷，不建议直接采用为可信基线。
               </span>
             </div>
           )}
           <div className="import-preview">
             <strong>
-              {task.shootingDate?.replace(/-/g, "")} · {task.devices.join("/")} · {task.name}
+              {task.shootingDate?.replace(/-/g, "")} · {task.devices.join("/")}{" "}
+              · {task.name}
             </strong>
             <span>
               清单 {comparison.entries} 项 · 当前匹配 {comparison.matched} 项
@@ -3919,7 +4218,9 @@ function ManifestIssueModal({
           {list("文件校验值不同", comparison.checksumMismatches, "different")}
           {comparison.missing.length > 0 && (
             <div className="manifest-action-card">
-              <strong>{mixedDifference ? "第 1 步：先补回缺失文件" : "补回缺失文件"}</strong>
+              <strong>
+                {mixedDifference ? "第 1 步：先补回缺失文件" : "补回缺失文件"}
+              </strong>
               <p>
                 可选择同一张素材卡、对应素材子目录或其上级目录。Kocpy
                 只接受唯一一致的目录映射，并会在写入前按清单预检全部缺失文件；全部通过后才暂存、提交并自动完整重校验。
@@ -3931,7 +4232,9 @@ function ManifestIssueModal({
                   onChange={(event) => setRepairConfirmed(event.target.checked)}
                   disabled={busy}
                 />
-                <span>我确认将选择同一素材卷的健康副本，并允许补回缺失文件。</span>
+                <span>
+                  我确认将选择同一素材卷的健康副本，并允许补回缺失文件。
+                </span>
               </label>
               <Button
                 kind="primary"
@@ -3979,11 +4282,13 @@ function ManifestIssueModal({
               <div className="notice amber compact">
                 <AlertTriangle size={16} />
                 <span>
-                  这是不可忽略的重要定义变更：修订后，绿色通过只证明“保留素材集合”完整，不再证明它与原数据卡全部内容一致。原始 MHL 会先保存到 Kocpy 审计历史，不会被无痕删除。
+                  这是不可忽略的重要定义变更：修订后，绿色通过只证明“保留素材集合”完整，不再证明它与原数据卡全部内容一致。原始
+                  MHL 会先保存到 Kocpy 审计历史，不会被无痕删除。
                 </span>
               </div>
               <p>
-                仅当上方 {comparison.missing.length} 个文件确实由操作人主动剔除、无需补回时使用。大小不同、哈希不同或额外文件不能通过此功能消除。
+                仅当上方 {comparison.missing.length}{" "}
+                个文件确实由操作人主动剔除、无需补回时使用。大小不同、哈希不同或额外文件不能通过此功能消除。
               </p>
               <label>
                 素材剔除原因
@@ -3999,7 +4304,9 @@ function ManifestIssueModal({
                 <input
                   type="checkbox"
                   checked={revisionConfirmed}
-                  onChange={(event) => setRevisionConfirmed(event.target.checked)}
+                  onChange={(event) =>
+                    setRevisionConfirmed(event.target.checked)
+                  }
                   disabled={busy}
                 />
                 <span>
@@ -4055,7 +4362,9 @@ function ManifestIssueModal({
             <div className="manifest-action-card">
               <strong>下一步：处理额外文件</strong>
               <p>
-                如果它是误放文件或 0 字节空文件，请先在 Finder 中将其移出素材卷，再点击“重新完整核对”。如果它确属有效素材，可建立当前完整哈希基线后确认保留。此操作不会修改原 MHL。
+                如果它是误放文件或 0 字节空文件，请先在 Finder
+                中将其移出素材卷，再点击“重新完整核对”。如果它确属有效素材，可建立当前完整哈希基线后确认保留。此操作不会修改原
+                MHL。
               </p>
               {!canAcceptExtra && !comparison.resolution && (
                 <div className="notice amber compact">
@@ -4116,7 +4425,9 @@ function ManifestIssueModal({
                   void api
                     .acceptExistingManifestExtra(task.id)
                     .then(() =>
-                      onCompleted("额外文件已确认；外部清单差异已保留在审计记录中"),
+                      onCompleted(
+                        "额外文件已确认；外部清单差异已保留在审计记录中",
+                      ),
                     )
                     .catch((reason) => setError(readableError(reason)))
                     .finally(() => setBusy(false));
@@ -4141,12 +4452,17 @@ function ManifestIssueModal({
                   文件阶段 {progress.completedFiles} / {progress.totalFiles}
                 </span>
                 <span>
-                  {bytes(progress.completedBytes)} / {bytes(progress.totalBytes)}
+                  {bytes(progress.completedBytes)} /{" "}
+                  {bytes(progress.totalBytes)}
                 </span>
                 <span>
-                  {progress.speedBps ? `${bytes(progress.speedBps)}/s` : "准备读取"}
+                  {progress.speedBps
+                    ? `${bytes(progress.speedBps)}/s`
+                    : "准备读取"}
                 </span>
-                <span>{progress.eta ? `剩余 ${duration(progress.eta)}` : "—"}</span>
+                <span>
+                  {progress.eta ? `剩余 ${duration(progress.eta)}` : "—"}
+                </span>
               </div>
               {progress.currentFile && (
                 <small className="mono">{progress.currentFile}</small>
@@ -4162,7 +4478,7 @@ function ManifestIssueModal({
           {error && <div className="error-box">{error}</div>}
         </div>
         <div className="modal-footer">
-          <Button kind="subtle" onClick={onClose} disabled={busy}>
+          <Button kind="subtle" onClick={onClose}>
             关闭
           </Button>
           <Button kind="subtle" disabled={busy} onClick={() => void reverify()}>
@@ -4205,17 +4521,24 @@ function ExistingBaselineModal({
         role="dialog"
         aria-modal="true"
         aria-label="建立首次哈希基线"
+        aria-busy={busy}
       >
         <div className="modal-header">
           <div>
             <span className="eyebrow">ESTABLISH BASELINE</span>
             <h2>建立首次哈希基线</h2>
           </div>
-          <Button kind="icon" title="关闭" onClick={onClose} disabled={busy}>
+          <Button kind="icon" title="关闭" onClick={onClose}>
             <X size={19} />
           </Button>
         </div>
         <div className="form-body">
+          <details className="context-help">
+            <summary>首次基线能证明什么？</summary>
+            <p>
+              读取当前目录并记录哈希，供今后复校验使用；不证明原始素材卡曾经有多少文件，也不会自动消除外部清单差异。
+            </p>
+          </details>
           <div className="notice amber">
             <ShieldCheck size={17} />
             <span>
@@ -4265,7 +4588,7 @@ function ExistingBaselineModal({
           {error && <div className="error-box">{error}</div>}
         </div>
         <div className="modal-footer">
-          <Button kind="subtle" onClick={onClose} disabled={busy}>
+          <Button kind="subtle" onClick={onClose}>
             取消
           </Button>
           <Button
@@ -4306,6 +4629,20 @@ function HelpPage({
   go: (page: Page) => void;
   openBackup: () => void;
 }) {
+  const [helpQuery, setHelpQuery] = useState("");
+  useEffect(() => {
+    const context = sessionStorage.getItem("kocpy-help-context");
+    sessionStorage.removeItem("kocpy-help-context");
+    if (context) {
+      const target = document.querySelector<HTMLDetailsElement>(
+        `details[data-page="${context}"]`,
+      );
+      if (target) {
+        target.open = true;
+        target.scrollIntoView({ block: "start" });
+      }
+    }
+  }, []);
   const guides: Array<{
     id: string;
     icon: typeof HardDrive;
@@ -4316,6 +4653,29 @@ function HelpPage({
     page?: Page;
   }> = [
     {
+      id: "interaction-safety",
+      icon: ShieldCheck,
+      title: "0.1.18：操作范围、后台任务与安全确认",
+      purpose: "理解取消、进度、基线与安全结论；管理检查表、提醒和 NAS。",
+      steps: [
+        "接管范围改变后等待新预览，滚动核对全部候选卷；仅导入结构不会建立基线。",
+        "复校验必须明确项目、日期、素材卷或文件；缺少参数不会扩大范围。",
+        "批次失败后只重试未提交项；已创建任务留在传输列表，参数不再变更。",
+        "在维护中选择拍摄日、检查阶段和实际签署人，逐项勾选；未处理的收工风险仍会阻止签署。",
+        "后台操作可在切页后查看；修复/提交阶段不支持强制取消，结束前勿强制退出。",
+        "报告选择日期和项目，批量推出确认设备清单；NAS 预设可编辑并直接选为目的地。",
+        "在局域网区域填写另一工作站的内网地址与令牌，即可只读查看元数据，无需命令行。",
+      ],
+      tips: [
+        "读取到 100% 不等于校验通过；外部基线只证明建立时的文件，不证明历史拍摄总量完整。",
+        "刷新只更新记录，不会替代重新读取文件哈希。路径可访问也不等于重新校验通过。",
+        "镜像保留源文件夹，但不会删除目的地额外文件；删除项目记录不会删除磁盘素材。",
+        "诊断只是本次 64 MiB / 1000 小文件读写检查，不代表所有现场故障场景通过。",
+        "桌面键盘、最小窗口与真实 Intel 设备仍须按发布验证记录人工验收。",
+      ],
+      page: "maintenance",
+    },
+    {
       id: "backup",
       icon: MemoryStick,
       title: "新建备份",
@@ -4323,11 +4683,16 @@ function HelpPage({
       steps: [
         "连接素材卡，点击“新建备份”并选择素材来源。",
         "选择素材卡模式或拍摄项目，确认日期、设备和机位。",
-        "普通备份保存为“源卷名_时间戳”；勾选镜像备份则直接保留原目录结构。",
+        "在设置目的地时选择普通备份或镜像备份；目的地统一选择存放副本的父目录。",
+        "普通备份保存为“源文件夹名_时间戳”；镜像备份保留所选源文件夹这一层，不添加时间戳。开始前核对每个来源的最终路径。",
+        "扫描统计中的数字是各类型的文件数，不是卷数；其他／附属文件也会备份。源和目的地均支持从 Finder 拖入文件夹。",
         "选择位于不同物理磁盘的目的地并开始；紫色表示拷贝，绿色表示独立校验。",
       ],
       tips: [
         "Kocpy 不会自动开始写入。",
+        "任务详情和拍摄项目素材卷明细会实时更新速度与进度，无需关闭重开。暂停/继续会即时更新状态，当前小块读写或安全落盘可能需要收尾。",
+        "全新文件边复制边计算源哈希，之后仍独立回读每个目标。完整备份含校验，与只复制的耗时不是同一指标。",
+        "升级前创建的旧镜像任务恢复时保留旧目录落点，不会自动移动已备份文件；新建镜像任务才采用保留源文件夹的布局。",
         "不要把多个目录位于同一物理盘误当成独立副本。",
         "校验完成前不要拔出素材卡或目的地。",
         "完成判定前会重新扫描素材源；复制期间新增、删除或修改文件会停止任务，避免生成不完整的成功记录。",
@@ -4575,7 +4940,8 @@ function HelpPage({
       id: "manifest-differences",
       icon: AlertTriangle,
       title: "处理外部清单差异（0.1.13）",
-      purpose: "查看缺少、额外、大小或校验值不同的完整文件列表，并安全完成处理。",
+      purpose:
+        "查看缺少、额外、大小或校验值不同的完整文件列表，并安全完成处理。",
       steps: [
         "在拍摄项目的素材卷明细中点击红色“清单差异”状态。",
         "使用 Finder 按钮打开素材卷、外部清单或具体差异文件的位置。",
@@ -4664,7 +5030,7 @@ function HelpPage({
       <section className="panel help-start">
         <div>
           <span className="mini-label">
-            <BookOpen size={13} /> KOCPY 0.1.16 · QUICK START
+            <BookOpen size={13} /> KOCPY 0.1.18 · QUICK START
           </span>
           <h2>软件使用说明</h2>
           <p>
@@ -4689,50 +5055,63 @@ function HelpPage({
       <section className="help-release-note">
         <RefreshCw size={20} />
         <div>
-          <strong>0.1.16：项目清理、自定义模板与稳定侧栏</strong>
+          <strong>0.1.18：范围明确、状态可追踪、操作可确认</strong>
           <p>
-            进行中和已归档项目均可在重要确认后清理 Kocpy 内部记录；项目模板可新建、重命名、编辑、导入导出并选择性应用；缩小窗口时侧栏保持原有文字与图标比例，由导航区域独立滚动。
+            范围选择不会隐式扩大；批量任务重试不重复创建。检查表逐项确认，交接记录实际操作人。后台操作保留进度与结果，素材库分页、报告可选历史日期，提醒和
+            NAS 可管理；帮助默认折叠。
           </p>
         </div>
       </section>
+      <SearchBox
+        value={helpQuery}
+        onChange={setHelpQuery}
+        placeholder="搜索模块、操作步骤或注意事项…"
+      />
       <div className="help-grid">
-        {guides.map(({ id, icon: Icon, title, purpose, steps, tips, page }) => (
-          <details className="help-module" key={id}>
-            <summary>
-              <span>
-                <Icon size={19} />
-              </span>
-              <div>
-                <strong>{title}</strong>
-                <small>{purpose}</small>
+        {guides
+          .filter((guide) =>
+            [guide.title, guide.purpose, ...guide.steps, ...guide.tips]
+              .join(" ")
+              .toLowerCase()
+              .includes(helpQuery.toLowerCase()),
+          )
+          .map(({ id, icon: Icon, title, purpose, steps, tips, page }) => (
+            <details className="help-module" key={id} data-page={page || id}>
+              <summary>
+                <span>
+                  <Icon size={19} />
+                </span>
+                <div>
+                  <strong>{title}</strong>
+                  <small>{purpose}</small>
+                </div>
+                <ChevronRight size={15} />
+              </summary>
+              <div className="help-body">
+                <h4>操作步骤</h4>
+                <ol>
+                  {steps.map((step, index) => (
+                    <li key={step}>
+                      <b>{index + 1}</b>
+                      <span>{step}</span>
+                    </li>
+                  ))}
+                </ol>
+                <h4>注意事项</h4>
+                <ul>
+                  {tips.map((tip) => (
+                    <li key={tip}>{tip}</li>
+                  ))}
+                </ul>
+                {page && (
+                  <Button kind="subtle" onClick={() => go(page)}>
+                    打开{title}
+                    <ArrowRight size={13} />
+                  </Button>
+                )}
               </div>
-              <ChevronRight size={15} />
-            </summary>
-            <div className="help-body">
-              <h4>操作步骤</h4>
-              <ol>
-                {steps.map((step, index) => (
-                  <li key={step}>
-                    <b>{index + 1}</b>
-                    <span>{step}</span>
-                  </li>
-                ))}
-              </ol>
-              <h4>注意事项</h4>
-              <ul>
-                {tips.map((tip) => (
-                  <li key={tip}>{tip}</li>
-                ))}
-              </ul>
-              {page && (
-                <Button kind="subtle" onClick={() => go(page)}>
-                  打开{title}
-                  <ArrowRight size={13} />
-                </Button>
-              )}
-            </div>
-          </details>
-        ))}
+            </details>
+          ))}
       </div>
     </div>
   );
@@ -4755,9 +5134,12 @@ function MaintenancePage({
     [templates, setTemplates] = useState<import("./api").ProjectTemplate[]>([]),
     [busy, setBusy] = useState<string | null>(null),
     [handoff, setHandoff] = useState(""),
-    [templateEditor, setTemplateEditor] = useState<
-      Partial<import("./api").ProjectTemplate> | null
-    >(null),
+    [handoffOperator, setHandoffOperator] = useState(""),
+    [handoffProject, setHandoffProject] = useState(projects[0]?.id || ""),
+    [outcome, setOutcome] = useState(""),
+    [templateEditor, setTemplateEditor] = useState<Partial<
+      import("./api").ProjectTemplate
+    > | null>(null),
     [templateApply, setTemplateApply] = useState<{
       template: import("./api").ProjectTemplate;
       projectId: string;
@@ -4787,12 +5169,29 @@ function MaintenancePage({
   ) => {
     setBusy(key);
     try {
-      await action();
+      const result = await action();
+      if (!didComplete(result)) {
+        setOutcome("已取消");
+        return false;
+      }
       await reload();
       await refreshProjects();
-      notify(success);
+      const data = result as any;
+      const details =
+        data?.taskCount !== undefined
+          ? ` · ${data.healthyTasks}/${data.taskCount} 个任务健康`
+          : data?.repaired !== undefined
+            ? ` · 修复 ${data.repaired} 个文件，保留原损坏文件 ${data.preservedDamagedOriginals} 个`
+            : "";
+      if (success) {
+        setOutcome(success + details);
+        notify(success + details);
+      }
+      return true;
     } catch (error) {
-      notify(String(error).replace(/^Error: /, ""), true);
+      setOutcome(readableOperationError(error));
+      notify(readableOperationError(error), true);
+      return false;
     } finally {
       setBusy(null);
     }
@@ -4805,6 +5204,11 @@ function MaintenancePage({
     );
   return (
     <div className="maintenance-center">
+      {outcome && (
+        <p className="notice" role="status">
+          {outcome}
+        </p>
+      )}
       <section className="panel diagnostics-hero">
         <div>
           <span className="mini-label">
@@ -4824,6 +5228,7 @@ function MaintenancePage({
                 async () => {
                   const file = await api.backupWorkspaceData();
                   if (file) await api.reveal(file);
+                  return file;
                 },
                 "本地数据备份已导出",
               )
@@ -4840,8 +5245,9 @@ function MaintenancePage({
                 async () => {
                   const result = await api.restoreColdArchive();
                   if (result) notify(`冷归档已恢复：${result.tasks} 个任务`);
+                  return result;
                 },
-                "冷归档已恢复",
+                "",
               )
             }
           >
@@ -4856,6 +5262,7 @@ function MaintenancePage({
                 async () => {
                   const file = await api.exportWorkspace();
                   if (file) await api.reveal(file);
+                  return file;
                 },
                 "工作站配置包已导出",
               )
@@ -4873,10 +5280,11 @@ function MaintenancePage({
                   const result = await api.importWorkspace();
                   if (result)
                     notify(
-                      `合并完成：新增 ${result.tasksAdded} 个任务，跳过 ${result.duplicates} 个重复项${result.conflicts.length ? `，${result.conflicts.length} 个冲突已记录` : ""}`,
+                      `合并完成：新增 ${result.tasksAdded} 个任务，跳过 ${result.duplicates} 个重复项${result.conflicts.length ? `，冲突：${result.conflicts.join("；")}` : ""}`,
                     );
+                  return result;
                 },
-                "工作站记录已合并",
+                "",
               )
             }
           >
@@ -4956,6 +5364,7 @@ function MaintenancePage({
                         async () => {
                           const file = await api.coldArchiveProject(project.id);
                           if (file) await api.reveal(file);
+                          return file;
                         },
                         "项目已冷归档并从热数据中卸载",
                       )
@@ -4964,7 +5373,7 @@ function MaintenancePage({
                     <Archive size={14} />
                     冷归档
                   </Button>
-                  {failed.slice(0, 1).map(({ task, destination }) => (
+                  {failed.map(({ task, destination }) => (
                     <Button
                       key={destination.id}
                       kind="danger"
@@ -4978,7 +5387,8 @@ function MaintenancePage({
                       }
                     >
                       <ShieldCheck size={14} />
-                      修复失败副本
+                      修复 {task.name} ·{" "}
+                      {leaf(destination.resolvedPath || destination.path)}
                     </Button>
                   ))}
                 </div>
@@ -5043,6 +5453,7 @@ function MaintenancePage({
                   async () => {
                     const file = await api.exportProjectTemplates();
                     if (file) await api.reveal(file);
+                    return file;
                   },
                   "自定义模板已导出",
                 )
@@ -5070,7 +5481,9 @@ function MaintenancePage({
                   <div className="template-card-copy">
                     <div className="row">
                       <strong>{template.name}</strong>
-                      <span className={`template-kind ${system ? "system" : "custom"}`}>
+                      <span
+                        className={`template-kind ${system ? "system" : "custom"}`}
+                      >
                         {system ? "系统模板" : "自定义"}
                       </span>
                     </div>
@@ -5129,10 +5542,7 @@ function MaintenancePage({
                             }),
                           )
                           .catch((error) =>
-                            notify(
-                              String(error).replace(/^Error: /, ""),
-                              true,
-                            ),
+                            notify(String(error).replace(/^Error: /, ""), true),
                           )
                           .finally(() => setBusy(null));
                       }}
@@ -5156,7 +5566,11 @@ function MaintenancePage({
                         )
                       }
                     >
-                      {system ? <Copy size={14} /> : <SlidersHorizontal size={14} />}
+                      {system ? (
+                        <Copy size={14} />
+                      ) : (
+                        <SlidersHorizontal size={14} />
+                      )}
                     </Button>
                     {system ? (
                       <Button
@@ -5200,7 +5614,18 @@ function MaintenancePage({
           />
         )}
         <div className="handoff-row">
-          <select id="handoff-project" aria-label="交接项目">
+          <input
+            aria-label="交接操作人"
+            placeholder="实际交接人姓名"
+            value={handoffOperator}
+            onChange={(event) => setHandoffOperator(event.target.value)}
+          />
+          <select
+            id="handoff-project"
+            aria-label="交接项目"
+            value={handoffProject}
+            onChange={(event) => setHandoffProject(event.target.value)}
+          >
             {projects.map((project) => (
               <option key={project.id} value={project.id}>
                 {project.name}
@@ -5214,7 +5639,12 @@ function MaintenancePage({
           />
           <Button
             kind="primary"
-            disabled={!projects.length || !handoff.trim()}
+            disabled={
+              busy !== null ||
+              !projects.some((project) => project.id === handoffProject) ||
+              !handoff.trim() ||
+              !handoffOperator.trim()
+            }
             onClick={() => {
               const select = document.getElementById(
                 "handoff-project",
@@ -5222,9 +5652,15 @@ function MaintenancePage({
               void run(
                 "handoff",
                 () =>
-                  api.addProjectHandoff(select.value, "@sexyfeifan", handoff),
+                  api.addProjectHandoff(
+                    handoffProject,
+                    handoffOperator.trim(),
+                    handoff,
+                  ),
                 "交接记录已保存",
-              ).then(() => setHandoff(""));
+              ).then((ok) => {
+                if (ok) setHandoff("");
+              });
             }}
           >
             <Check size={14} />
@@ -5232,7 +5668,7 @@ function MaintenancePage({
           </Button>
         </div>
       </section>
-      <LifecycleAdvanced
+      <LifecycleControls
         projects={projects}
         tasks={tasks}
         notify={notify}
@@ -5262,470 +5698,6 @@ function MaintenancePage({
         />
       )}
     </div>
-  );
-}
-
-function LifecycleAdvanced({
-  projects,
-  tasks,
-  notify,
-  refreshProjects,
-}: {
-  projects: ProjectConfig[];
-  tasks: BackupTask[];
-  notify: (message: string, error?: boolean) => void;
-  refreshProjects: () => Promise<void>;
-}) {
-  const [changes, setChanges] = useState<import("./api").ArchiveChangeRecord[]>(
-      [],
-    ),
-    [nas, setNas] = useState<import("./api").NasPreset[]>([]),
-    [signature, setSignature] = useState(""),
-    [nasPath, setNasPath] = useState(""),
-    [verifyDate, setVerifyDate] = useState(today()),
-    [archiveScope, setArchiveScope] = useState<
-      "project" | "day" | "card" | "file" | "disk"
-    >("project"),
-    [archiveTaskId, setArchiveTaskId] = useState(""),
-    [archiveRelative, setArchiveRelative] = useState(""),
-    [archiveRoot, setArchiveRoot] = useState(""),
-    [lan, setLan] = useState<{
-      active: boolean;
-      port: number;
-      addresses: string[];
-      token: string;
-    }>({ active: false, port: 47821, addresses: [], token: "" }),
-    [busy, setBusy] = useState(false);
-  const reload = useCallback(async () => {
-    const [changeValues, nasValues, lanValue] = await Promise.all([
-      api.getArchiveChanges(),
-      api.getNasPresets(),
-      api.getLanIndexStatus(),
-    ]);
-    setChanges(changeValues);
-    setNas(nasValues);
-    setLan(lanValue);
-  }, []);
-  useEffect(() => {
-    void reload();
-    const timer = window.setInterval(() => void reload(), 60_000);
-    return () => window.clearInterval(timer);
-  }, [reload]);
-  const projectId = () =>
-    (document.getElementById("lifecycle-project") as HTMLSelectElement)
-      ?.value || projects[0]?.id;
-  const run = async (action: () => Promise<unknown>, message: string) => {
-    setBusy(true);
-    try {
-      await action();
-      await reload();
-      await refreshProjects();
-      notify(message);
-    } catch (error) {
-      notify(String(error).replace(/^Error: /, ""), true);
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <>
-      <section className="panel">
-        <div className="section-title">
-          <div>
-            <h2>
-              <CalendarDays size={18} />
-              检查表、提醒与变化审计
-            </h2>
-            <span className="muted small">
-              开工/收工签名、周期复校验提醒和副本变化统一留痕
-            </span>
-          </div>
-          <span className="muted small">{changes.length} 条变化</span>
-        </div>
-        <div className="lifecycle-tools">
-          <select id="lifecycle-project">
-            {projects.map((project) => (
-              <option key={project.id} value={project.id}>
-                {project.name}
-              </option>
-            ))}
-          </select>
-          <input
-            value={signature}
-            onChange={(e) => setSignature(e.target.value)}
-            placeholder="签名人姓名或签名标识"
-          />
-          <Button
-            kind="subtle"
-            disabled={busy || !signature.trim()}
-            onClick={() => {
-              const id = projectId(),
-                project = projects.find((item) => item.id === id),
-                items = (project?.checklists || []).filter(
-                  (item) => item.phase === "start",
-                );
-              void run(
-                () =>
-                  api.signProjectChecklist(id, {
-                    phase: "start",
-                    date: today(),
-                    completed: items.map((item) => item.id),
-                    operator: signature,
-                    signature,
-                  }),
-                "开工检查表已签名",
-              ).then(() => setSignature(""));
-            }}
-          >
-            <Check size={14} />
-            签署开工
-          </Button>
-          <Button
-            kind="subtle"
-            disabled={busy || !signature.trim()}
-            onClick={() => {
-              const id = projectId(),
-                project = projects.find((item) => item.id === id),
-                items = (project?.checklists || []).filter(
-                  (item) => item.phase === "close",
-                );
-              void run(
-                () =>
-                  api.signProjectChecklist(id, {
-                    phase: "close",
-                    date: today(),
-                    completed: items.map((item) => item.id),
-                    operator: signature,
-                    signature,
-                  }),
-                "收工检查表已签名",
-              ).then(() => setSignature(""));
-            }}
-          >
-            <Check size={14} />
-            签署收工
-          </Button>
-          <Button
-            kind="subtle"
-            disabled={busy || !projects.length}
-            onClick={() =>
-              void run(
-                () =>
-                  api.saveArchiveReminder({
-                    id: `reminder-${projectId()}`,
-                    projectId: projectId(),
-                    intervalDays: 180,
-                    nextAt: Date.now() + 180 * 86400000,
-                    enabled: true,
-                  }),
-                "已设置每 180 天复校验提醒",
-              )
-            }
-          >
-            <Clock size={14} />
-            复校验提醒
-          </Button>
-          <Button
-            kind="subtle"
-            disabled={!projects.length}
-            onClick={() =>
-              void api
-                .exportArchiveChanges(projectId())
-                .then((file) => file && notify(`变化报告已保存：${file}`))
-            }
-          >
-            <Download size={14} />
-            变化报告
-          </Button>
-        </div>
-        <div className="archive-change-list">
-          {changes
-            .slice(-8)
-            .reverse()
-            .map((item) => (
-              <div key={item.id}>
-                <span className={`badge ${item.kind}`}>{item.kind}</span>
-                <span>
-                  <strong>{item.note}</strong>
-                  <small>{new Date(item.at).toLocaleString("zh-CN")}</small>
-                </span>
-              </div>
-            ))}
-          {!changes.length && (
-            <span className="muted small">尚无长期归档变化记录</span>
-          )}
-        </div>
-      </section>
-      <section className="panel">
-        <div className="section-title">
-          <div>
-            <h2>
-              <RefreshCw size={18} />
-              分级归档复校验
-            </h2>
-            <span className="muted small">
-              支持整盘、项目、拍摄日、素材卷和单文件；结果写入故障时间线与性能历史
-            </span>
-          </div>
-        </div>
-        <div className="lifecycle-tools">
-          <select
-            value={archiveScope}
-            onChange={(e) =>
-              setArchiveScope(e.target.value as typeof archiveScope)
-            }
-          >
-            <option value="project">整个项目</option>
-            <option value="day">单个拍摄日</option>
-            <option value="card">单张素材卷</option>
-            <option value="file">单个文件</option>
-            <option value="disk">整块归档盘</option>
-          </select>
-          {archiveScope === "day" && (
-            <input
-              type="date"
-              value={verifyDate}
-              onChange={(e) => setVerifyDate(e.target.value)}
-            />
-          )}{" "}
-          {(archiveScope === "card" || archiveScope === "file") && (
-            <select
-              value={archiveTaskId}
-              onChange={(e) => setArchiveTaskId(e.target.value)}
-            >
-              <option value="">选择素材卷</option>
-              {tasks
-                .filter((item) => item.projectId === projectId())
-                .map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.name}
-                  </option>
-                ))}
-            </select>
-          )}
-          {archiveScope === "file" && (
-            <input
-              value={archiveRelative}
-              onChange={(e) => setArchiveRelative(e.target.value)}
-              placeholder="文件相对路径"
-            />
-          )}
-          {archiveScope === "disk" && (
-            <>
-              <input
-                value={archiveRoot}
-                onChange={(e) => setArchiveRoot(e.target.value)}
-                placeholder="归档盘根目录"
-              />
-              <Button
-                kind="subtle"
-                onClick={() =>
-                  void api
-                    .selectDirectory()
-                    .then((value) => value && setArchiveRoot(value))
-                }
-              >
-                <FolderOpen size={14} />
-                选择磁盘
-              </Button>
-            </>
-          )}
-          <Button
-            kind="primary"
-            disabled={
-              busy ||
-              !projects.length ||
-              (archiveScope === "disk" && !archiveRoot) ||
-              (archiveScope === "file" && (!archiveTaskId || !archiveRelative))
-            }
-            onClick={() =>
-              void run(
-                () =>
-                  api.verifyArchiveScope({
-                    projectId:
-                      archiveScope === "disk" ? undefined : projectId(),
-                    shootingDate:
-                      archiveScope === "day" ? verifyDate : undefined,
-                    taskId: ["card", "file"].includes(archiveScope)
-                      ? archiveTaskId
-                      : undefined,
-                    relativePath:
-                      archiveScope === "file" ? archiveRelative : undefined,
-                    volumePath:
-                      archiveScope === "disk" ? archiveRoot : undefined,
-                  }),
-                "归档复校验完成",
-              )
-            }
-          >
-            <RefreshCw size={14} />
-            开始复校验
-          </Button>
-          <Button
-            kind="subtle"
-            disabled={busy || !archiveRoot || !projects.length}
-            onClick={() =>
-              void run(
-                () => api.auditUntrackedArchive(projectId(), archiveRoot),
-                "未记录新增文件扫描完成",
-              )
-            }
-          >
-            <ScanLine size={14} />
-            扫描未记录修改
-          </Button>
-        </div>
-      </section>
-      <section className="panel">
-        <div className="section-title">
-          <div>
-            <h2>
-              <HardDrive size={18} />
-              NAS 目标预设
-            </h2>
-            <span className="muted small">
-              保存已挂载 SMB/NFS 路径并执行容量、延迟、写入和回读检查
-            </span>
-          </div>
-        </div>
-        <div className="lifecycle-tools">
-          <input
-            value={nasPath}
-            onChange={(e) => setNasPath(e.target.value)}
-            placeholder="/Volumes/ProductionNAS"
-          />
-          <Button
-            kind="subtle"
-            onClick={() =>
-              void api
-                .selectDirectory()
-                .then((value) => value && setNasPath(value))
-            }
-          >
-            <FolderOpen size={14} />
-            选择目录
-          </Button>
-          <Button
-            kind="primary"
-            disabled={busy || !nasPath.startsWith("/")}
-            onClick={() =>
-              void run(
-                () =>
-                  api.saveNasPreset({
-                    id: crypto.randomUUID(),
-                    name: leaf(nasPath),
-                    path: nasPath,
-                    protocol: "network",
-                    createdAt: Date.now(),
-                  }),
-                "NAS 预设已保存",
-              ).then(() => setNasPath(""))
-            }
-          >
-            <Plus size={14} />
-            保存预设
-          </Button>
-        </div>
-        <div className="template-list">
-          {nas.map((item) => (
-            <div key={item.id}>
-              <span>
-                <strong>
-                  {item.name} ·{" "}
-                  {item.online === undefined
-                    ? "未检查"
-                    : item.online
-                      ? "在线"
-                      : "离线"}
-                </strong>
-                <small className="mono">
-                  {item.path}
-                  {item.lastLatencyMs !== undefined
-                    ? ` · ${item.lastLatencyMs} ms`
-                    : ""}
-                </small>
-              </span>
-              <div className="row">
-                <Button
-                  kind="subtle"
-                  onClick={() =>
-                    void run(
-                      () => api.testNasPreset(item.id),
-                      `${item.name} 网络与读写检查通过`,
-                    )
-                  }
-                >
-                  <Gauge size={14} />
-                  检查
-                </Button>
-                <Button
-                  kind="icon"
-                  title="删除"
-                  onClick={() =>
-                    void run(
-                      () => api.deleteNasPreset(item.id),
-                      "NAS 预设已删除",
-                    )
-                  }
-                >
-                  <Trash2 size={14} />
-                </Button>
-              </div>
-            </div>
-          ))}
-        </div>
-      </section>
-      <section className="panel">
-        <div className="section-title">
-          <div>
-            <h2>
-              <Share2 size={18} />
-              局域网只读项目索引
-            </h2>
-            <span className="muted small">
-              只共享项目与校验元数据，不传输原素材；随机令牌在每次启动时更新
-            </span>
-          </div>
-          <Button
-            kind={lan.active ? "danger" : "primary"}
-            disabled={busy}
-            onClick={() =>
-              void run(
-                async () =>
-                  setLan(
-                    lan.active
-                      ? await api.stopLanIndex()
-                      : await api.startLanIndex(),
-                  ),
-                lan.active ? "局域网索引已停止" : "局域网索引已启动",
-              )
-            }
-          >
-            <Wifi size={14} />
-            {lan.active ? "停止共享" : "开始共享"}
-          </Button>
-        </div>
-        {lan.active ? (
-          <div className="lan-index-info">
-            <strong>
-              {lan.addresses.length
-                ? lan.addresses
-                    .map((address) => `http://${address}:${lan.port}/index`)
-                    .join(" · ")
-                : `端口 ${lan.port}`}
-            </strong>
-            <small className="mono">Authorization: Bearer {lan.token}</small>
-            <p className="muted small">
-              仅在受信任的现场局域网中使用，并通过可信渠道传递访问令牌。
-            </p>
-          </div>
-        ) : (
-          <span className="muted small">
-            当前未共享。启用后，同一局域网的其他工作站可读取脱敏后的项目汇总。
-          </span>
-        )}
-      </section>
-    </>
   );
 }
 
@@ -5765,6 +5737,7 @@ function DiagnosticsPage({
     setRunning(volume.path);
     try {
       const result = await api.runBenchmark(volume.path, 64);
+      if (!result) return;
       setResults((current) => ({ ...current, [volume.path]: result }));
       notify(`${volume.name} 性能预检完成，临时测试文件已清理`);
     } catch (error) {
@@ -5777,9 +5750,10 @@ function DiagnosticsPage({
     setRunning(`validate:${volume.path}`);
     try {
       const result = await api.validateReliabilityVolume(volume.path);
+      if (!result) return;
       setValidations(await api.getReliabilityValidations());
       notify(
-        `${volume.name} 可靠性验收通过：${result.smallFiles} 个小文件与 ${bytes(result.largeFileBytes)} 大文件`,
+        `${volume.name} 有限读写测试通过：${result.smallFiles} 个小文件与 ${bytes(result.largeFileBytes)} 大文件`,
       );
     } catch (error) {
       setValidations(
@@ -5873,7 +5847,11 @@ function DiagnosticsPage({
                 )}
                 <Button
                   kind="subtle"
-                  disabled={running !== null || volume.writable === false}
+                  disabled={
+                    running !== null ||
+                    volume.writable === false ||
+                    volume.deviceType === "source"
+                  }
                   onClick={() => void run(volume)}
                 >
                   {running === volume.path ? (
@@ -5885,7 +5863,11 @@ function DiagnosticsPage({
                 </Button>
                 <Button
                   kind="subtle"
-                  disabled={running !== null || volume.writable === false}
+                  disabled={
+                    running !== null ||
+                    volume.writable === false ||
+                    volume.deviceType === "source"
+                  }
                   onClick={() => void validate(volume)}
                 >
                   {running === `validate:${volume.path}` ? (
@@ -5893,7 +5875,7 @@ function DiagnosticsPage({
                   ) : (
                     <ShieldCheck size={14} />
                   )}
-                  可靠性验收
+                  有限读写测试
                 </Button>
                 {validation && (
                   <small
@@ -5903,7 +5885,7 @@ function DiagnosticsPage({
                   >
                     {validation.fileSystem} ·{" "}
                     {validation.status === "passed"
-                      ? "大文件/海量小文件通过"
+                      ? "64 MiB / 1000 小文件通过（非全面可靠性认证）"
                       : validation.error}
                   </small>
                 )}
@@ -5982,9 +5964,43 @@ function ProxyQueue({
   act: (fn: () => Promise<unknown>, success?: string) => Promise<void>;
   refresh: () => Promise<void>;
 }) {
-  const rows = [...jobs].reverse();
+  const [sourceTask, setSourceTask] = useState("");
+  const [queueLimit, setQueueLimit] = useState(100);
+  const rows = [...jobs]
+    .filter((job) => !sourceTask || job.sourceTaskId === sourceTask)
+    .reverse();
+  const exportIds = rows
+    .filter((job) => job.status === "completed")
+    .map((job) => job.id);
   return (
     <section className="panel">
+      <label>
+        队列与交付范围
+        <select
+          value={sourceTask}
+          onChange={(e) => {
+            setSourceTask(e.target.value);
+            setQueueLimit(100);
+          }}
+        >
+          <option value="">全部已记录素材</option>
+          {[
+            ...new Map(
+              jobs
+                .filter((job) => job.sourceTaskId)
+                .map((job) => [job.sourceTaskId, job.name]),
+            ).entries(),
+          ].map(([id, name]) => (
+            <option key={id} value={id}>
+              {name} · {id?.slice(0, 8)}
+            </option>
+          ))}
+        </select>
+      </label>
+      <p className="muted small">
+        以下导出仅包含当前范围已完成的 {exportIds.length}{" "}
+        个代理；排队中不代表完成。
+      </p>
       <div className="section-title">
         <div>
           <h2>
@@ -6006,8 +6022,9 @@ function ProxyQueue({
             kind="primary"
             onClick={() =>
               void act(async () => {
-                const folder = await api.exportProxyPackage();
+                const folder = await api.exportProxyPackage(exportIds);
                 if (folder) await api.reveal(folder);
+                return folder;
               }, "完整交付目录与检查报告已生成")
             }
           >
@@ -6018,8 +6035,12 @@ function ProxyQueue({
             kind="subtle"
             onClick={() =>
               void act(async () => {
-                const file = await api.exportProxyDelivery("resolve");
+                const file = await api.exportProxyDelivery(
+                  "resolve",
+                  exportIds,
+                );
                 if (file) await api.reveal(file);
+                return file;
               }, "Resolve 交付清单已导出")
             }
           >
@@ -6029,8 +6050,12 @@ function ProxyQueue({
             kind="subtle"
             onClick={() =>
               void act(async () => {
-                const file = await api.exportProxyDelivery("premiere");
+                const file = await api.exportProxyDelivery(
+                  "premiere",
+                  exportIds,
+                );
                 if (file) await api.reveal(file);
+                return file;
               }, "Premiere 交付清单已导出")
             }
           >
@@ -6040,8 +6065,9 @@ function ProxyQueue({
             kind="subtle"
             onClick={() =>
               void act(async () => {
-                const file = await api.exportProxyDelivery("fcpxml");
+                const file = await api.exportProxyDelivery("fcpxml", exportIds);
                 if (file) await api.reveal(file);
+                return file;
               }, "Final Cut XML 已导出")
             }
           >
@@ -6049,9 +6075,14 @@ function ProxyQueue({
           </Button>
         </div>
       </div>
+      {rows.length > queueLimit && (
+        <Button onClick={() => setQueueLimit((value) => value + 100)}>
+          加载更多代理任务
+        </Button>
+      )}
       {rows.length ? (
         <div className="proxy-job-list">
-          {rows.map((job) => (
+          {rows.slice(0, queueLimit).map((job) => (
             <div className="proxy-job" key={job.id}>
               <span
                 className={`file-icon ${job.status === "completed" ? "green" : ""}`}
@@ -6088,6 +6119,14 @@ function ProxyQueue({
                 <div className="progress-track">
                   <i style={{ width: `${job.progress}%` }} />
                 </div>
+                <p className="mono">
+                  源：{job.input}
+                  <br />
+                  目的地：{job.outputPath || job.outputDir}
+                </p>
+                {!!job.dependsOn?.length && (
+                  <p className="small">等待依赖：{job.dependsOn.join("、")}</p>
+                )}
                 {job.validation && (
                   <small
                     className={
@@ -6130,7 +6169,7 @@ function ProxyQueue({
                     继续
                   </Button>
                 )}
-                {job.status === "running" || job.status === "pending" ? (
+                {["running", "pending", "paused"].includes(job.status) ? (
                   <Button
                     kind="danger"
                     onClick={() =>
@@ -6167,7 +6206,7 @@ function ProxyQueue({
                     <FolderOpen size={15} />
                   </Button>
                 )}
-                {!["running", "pending"].includes(job.status) && (
+                {!["running", "pending", "paused"].includes(job.status) && (
                   <Button
                     kind="icon"
                     title="删除队列记录"
@@ -6208,6 +6247,15 @@ function SettingsPage({
   updateInfo: UpdateInfo | null;
   setUpdateInfo: (info: UpdateInfo | null) => void;
 }) {
+  const savedTheme = useRef(settings.theme);
+  savedTheme.current = settings.theme;
+  useEffect(
+    () => () => {
+      document.documentElement.dataset.theme = savedTheme.current;
+      void api.previewTheme(savedTheme.current).catch(() => {});
+    },
+    [],
+  );
   const [draft, setDraft] = useState(settings),
     [saving, setSaving] = useState(false);
   useEffect(() => {
@@ -6234,6 +6282,24 @@ function SettingsPage({
           </h2>
           <span className="muted small">新任务会使用这些设置</span>
         </div>
+        <div className="setting-row">
+          <div>
+            <h3>操作人</h3>
+            <p>报告使用实际操作人姓名；交接与签署仍需明确确认。</p>
+          </div>
+          <input
+            aria-label="默认操作人"
+            value={draft.operator}
+            onChange={(event) =>
+              setDraft({ ...draft, operator: event.target.value })
+            }
+          />
+        </div>
+        <p className="muted small">
+          {JSON.stringify(draft) === JSON.stringify(settings)
+            ? "设置已保存"
+            : "有未保存的设置；离开页面将放弃本次修改与主题预览"}
+        </p>
         <div className="setting-row">
           <div>
             <h3>完整性校验</h3>
@@ -6483,7 +6549,7 @@ function SettingsPage({
         <img src="./icon.png" alt="Kocpy 图标" />
         <div>
           <h3>
-            Kocpy <span>0.1.16</span>
+            Kocpy <span>0.1.18</span>
           </h3>
           <p>从现场接卡、项目归档到交付报告，为每一份创作保留可靠副本。</p>
           <small>本地优先 · 独立校验 · 项目全周期记录 · @sexyfeifan</small>
@@ -6658,7 +6724,9 @@ function ProxyDialog({
                 value={preset}
                 onChange={(e) => {
                   const value = e.target.value as
-                    "review" | "editorial" | "offline";
+                    | "review"
+                    | "editorial"
+                    | "offline";
                   setPreset(value);
                   if (value === "editorial") {
                     setFormat("prores");
@@ -6795,7 +6863,7 @@ function ProxyDialog({
             onClick={() => void run()}
           >
             <Play size={15} />
-            {busy ? "生成中…" : result ? "已完成" : "开始生成"}
+            {busy ? "提交中…" : result ? "已加入队列" : "加入代理队列"}
           </Button>
         </div>
       </section>

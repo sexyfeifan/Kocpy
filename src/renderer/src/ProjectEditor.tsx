@@ -1,3 +1,4 @@
+import { previewProjectPath } from "../../common/project-layout";
 import { useMemo, useState } from "react";
 import {
   X,
@@ -463,7 +464,10 @@ export function ProjectEditor({
 
           <div className="form-section-title">
             <h3>02 · 常用设备与素材卷</h3>
-            <p>最多保存 10 个设备；同型号多机位可按 A–E 增加一层机位目录。</p>
+            <p>
+              最多保存 10 个设备；同型号多机位可自定义名称，最多 5
+              个，用逗号分隔。
+            </p>
           </div>
           <div className="device-suggestions">
             {DEVICE_SUGGESTIONS.map((device) => (
@@ -548,21 +552,17 @@ export function ProjectEditor({
                   {positions[device]?.length ? (
                     <>
                       <label>
-                        机位数量
-                        <select
-                          aria-label={`${device} 机位数量`}
-                          value={positions[device].length}
-                          onChange={(e) =>
-                            setPositionCount(device, Number(e.target.value))
+                        机位名称（逗号分隔，最多 5 个）
+                        <input
+                          aria-label={`${device} 机位名称`}
+                          value={positions[device].join(",")}
+                          onChange={(event) =>
+                            setPositions((current) => ({
+                              ...current,
+                              [device]: event.target.value.split(/[,，]/),
+                            }))
                           }
-                        >
-                          {[2, 3, 4, 5].map((count) => (
-                            <option key={count} value={count}>
-                              {count} 个（
-                              {CAMERA_POSITIONS.slice(0, count).join(" / ")}）
-                            </option>
-                          ))}
-                        </select>
+                        />
                       </label>
                       <small className="mono">
                         设备/{positions[device].join("、")}/素材卷
@@ -689,18 +689,24 @@ export function ProjectEditor({
           <div className="notice">
             <Info size={16} />
             <span>
-              新项目保存后会按整个拍摄日期范围、设备及 A–E
+              新项目保存后会按整个拍摄日期范围、设备及自定义
               机位创建完整目录结构。
               <br />
               备份路径示例：
               <span className="mono">
-                备份根目录/{folderName}/{start.replace(/-/g, "")}/
-                {devices[0] || "设备"}/
-                {positions[devices[0]]?.[0]
-                  ? `${positions[devices[0]][0]}/`
-                  : ""}
-                {cleanPrefix(prefixes[devices[0]] || "Untitled_")}
-                {previewVolumeTimestamp()}/
+                备份根目录/
+                {previewProjectPath(namingRule, {
+                  projectName: name,
+                  projectFolderName: folderName,
+                  projectStartDate: start,
+                  shootingDate: start,
+                  device: devices[0] || "设备",
+                  position: positions[devices[0]]?.[0],
+                  card:
+                    cleanPrefix(prefixes[devices[0]] || "Untitled_") +
+                    previewVolumeTimestamp(),
+                })}
+                /
               </span>
             </span>
           </div>

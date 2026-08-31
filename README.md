@@ -8,7 +8,9 @@
 
 ![Kocpy 工作台](docs/screenshots/dashboard.png)
 
-当前版本：**0.1.16** · [完整使用手册](docs/USER_GUIDE.md) · [0.1.16 更新说明](docs/RELEASE_NOTES_0.1.16.md) · [下载最新版](https://github.com/sexyfeifan/Kocpy/releases/latest)
+当前代码版本：**0.1.18** · [完整使用手册](docs/USER_GUIDE.md) · [0.1.18 更新说明](docs/RELEASE_NOTES_0.1.18.md) · [已公开发布版本](https://github.com/sexyfeifan/Kocpy/releases/latest)
+
+0.1.18 完成交互安全与日常流程改进：显式复校验范围、可重试批次、统一目录规则、自定义机位、逐项检查表、写入修复确认、后台操作记录、取消与部分结果说明、实时索引刷新、分页素材库、代理与报告范围、提醒/NAS/LAN 管理和上下文帮助。包含上一轮镜像落点、Finder 拖拽和传输实时状态修复。测试范围及尚待真实桌面/Intel 设备验收的项目见 [验证记录](docs/VERIFICATION.md)。
 
 ## 中文
 
@@ -22,7 +24,7 @@ Kocpy 将素材卡接收、多目标备份、逐目标回读校验、项目归�
 备份根目录 / 项目开始日期_项目名 / 拍摄日期 / 设备 / [同型号机位] / 设备_任务开始时间 /
 ```
 
-例如：`20260827_山海之间/20260829/FX3/A/FX3_202608291430/`。未启用同型号多机位时不会产生 A–E 层级。
+例如：`20260827_山海之间/20260829/FX3/A/FX3_202608291430/`。机位名称可自定义；未启用同型号多机位时不会产生机位层级。
 
 ![项目备份完整路径](docs/screenshots/project-backup-path.png)
 
@@ -34,12 +36,12 @@ Kocpy 将素材卡接收、多目标备份、逐目标回读校验、项目归�
 - 恢复中心集中列出异常退出、暂停任务、离线目标和未完成校验，并区分“当前位置继续”“扫描并复用断点”“仅重试失败目标”和“重新校验全部副本”。成功目标不会在单目标重试中重新读取或初始化。
 - 记录卷 UUID，防止同名磁盘替换后误写；按物理卷合并预检空间和临时发布余量。
 - 慢盘可以从快速分发中分离，健康目标继续完成。
-- 素材卡自动扫描并显示本次实际待备份容量、文件数量、磁盘总容量和可用空间。
+- 选择素材源后扫描本次实际待备份容量、文件数量，并显示磁盘总容量和可用空间；不再自动遍历所有未选择的介质。
 - 设置目的地时可直接点击外接磁盘，并从该磁盘继续选择目标文件夹。
 - 紫色进度表示拷贝，绿色覆盖表示校验；显示真实有效传输速度、回读速度、百分比与时分秒剩余时间。
 - 速度按操作系统确认完成的字节以 1 秒间隔采样和平滑处理；多目标速度不会重复累加。
 - 任务详情分别显示源素材哈希读取、源素材分发读取、各目标写入和校验回读曲线；完整任务记录保留平均值、P50、P95、峰值与停顿次数，并指出持续最慢的目的地。
-- 校验结束后立即结算任务并弹出完成通知，媒体缩略图随后在后台生成。
+- 校验结束后结算任务并显示不抢焦点的完成提示，媒体缩略图随后在后台生成。
 
 ![传输队列](docs/screenshots/transfers.png)
 
@@ -51,7 +53,7 @@ Kocpy 将素材卡接收、多目标备份、逐目标回读校验、项目归�
 
 项目页按“拍摄日期 × 设备/机位”展示整个执行周期：每一天每台设备是否已经备份、素材卷数量、文件数量、素材容量、已校验数量，以及项目总任务、总文件和总素材量。项目可设置 1–4 份收工副本标准，并标记休息日或当天未使用的设备，避免空白单元格被误判为漏备份。副本按物理卷 UUID 去重，同一磁盘上的多个文件夹只计算为一份；工作台同时显示尚未完成的日期与设备。
 
-既有备份可按单张素材卡、单日所有机位或整个项目接管。Kocpy 会复用项目命名规则识别日期、设备、A–E 机位和任意名称的素材卷；接管任务与原生任务共同进入项目矩阵，缺少历史机位元数据的旧任务会明确显示为“未标机位”。
+既有备份可按单张素材卡、单日所有机位或整个项目接管。Kocpy 会复用项目命名规则识别日期、设备、项目机位和任意名称的素材卷；接管任务与原生任务共同进入项目矩阵，缺少历史机位元数据的旧任务会明确显示为“未标机位”。
 
 接管读取过程显示素材卷、文件、字节、速度、剩余时间和当前文件。目录识别、外部清单校验、首次基线与清单不匹配使用不同状态；项目外设备只在实际发现的拍摄日显示，没有文件夹的设备先标为“待确认”，不会直接推断成漏备份或当天未使用。
 
@@ -127,8 +129,10 @@ Kocpy 支持真实深色与浅色外观，任务、项目、偏好、缩略图�
 
 从 [GitHub Releases](https://github.com/sexyfeifan/Kocpy/releases) 下载对应架构：
 
-- `Kocpy-0.1.16-arm64.dmg`：Apple Silicon Mac
-- `Kocpy-0.1.16-x64.dmg`：Intel Mac
+- `Kocpy-0.1.18-arm64.dmg`：Apple Silicon Mac
+- `Kocpy-0.1.18-x64.dmg`：Intel Mac
+
+当前代码对应上述版本；远端可下载版本以 Release 实际附件为准。
 
 打开 DMG，将 Kocpy 拖入“应用程序”。当前公开包尚未使用 Apple Developer ID 签名和公证。若 macOS 明确提示应用“已损坏”，请先确认文件来自本仓库官方 Release，再执行：
 
@@ -174,6 +178,10 @@ Kocpy は、macOS 向けのローカル優先メディアバックアップ／�
 
 バージョン 0.1.16 では、保護された内部記録の削除を進行中プロジェクトにも拡張しました。未完了のバックアップまたはプロキシ作業がある場合は拒否され、確認チェックと正確なプロジェクト名入力が必要です。プロジェクトテンプレートは説明表示、編集、読み込み／書き出し、項目別プレビュー後の選択適用に対応しました。低いウインドウでもサイドバーの文字とアイコン比率を維持し、ナビゲーション部分だけをスクロールします。
 
+0.1.18 improves folder layout previews, restores native folder drag-and-drop, keeps transfer details live, and hashes fresh files during copying while retaining independent destination readback. New mirror tasks retain the selected source folder; legacy tasks keep their original destination layout. See [release notes](docs/RELEASE_NOTES_0.1.18.md).
+
 ## License
 
 Kocpy source code is available under the MIT License. Bundled FFmpeg binaries retain their respective licenses.
+
+0.1.18 adds explicit maintenance scopes, retry-safe batch submission, shared path previews, editable camera positions, item-by-item checklists, background operation history, paginated media browsing, scoped exports, and NAS/LAN controls. Desktop acceptance limits are documented; independent destination verification remains mandatory.

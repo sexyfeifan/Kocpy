@@ -34,6 +34,7 @@ const config = (extra: Partial<TaskConfig> = {}): TaskConfig => ({
   devices: [],
   shootingDate: "",
   copyMode: "mirror",
+  mirrorLayout: "contents", // Explicit legacy layout; new-task default is tested separately.
   ...extra,
 });
 function wait(engine: BackupEngine, id: string) {
@@ -60,6 +61,95 @@ async function run(cfg = config()) {
   return { task: await done, engine };
 }
 describe("Real filesystem backup integrity", () => {
+  it("keeps the selected source folder for new mirrors, without renaming internal files", async () => {
+    const renamed = path.join(root, "素材 : 原名");
+    await fs.rename(source, renamed);
+    const { task } = await run(config({ sourcePath: renamed, mirrorLayout: undefined }));
+    expect(task.status).toBe("completed");
+    expect(task.mirrorLayout).toBe("source-folder");
+    expect(task.destinations[0].resolvedPath).toBe(await fs.realpath(path.join(d1, "素材 : 原名")));
+    expect(await hashFile(path.join(d1, "素材 : 原名", "DCIM", "片段.bin"), "sha256")).toBe(task.fileRecords.find((record) => record.name === "片段.bin")!.srcChecksum);
+    await expect(fs.access(path.join(d1, "DCIM"))).rejects.toThrow();
+  });
+  it("retains the exact contents layout when loading a legacy mirror task", async () => {
+    const original = new BackupEngine().createTask(config({ mirrorLayout: undefined }));
+    delete original.mirrorLayout;
+    const engine = new BackupEngine();
+    engine.loadTask(original);
+    const done = wait(engine, original.id);
+    engine.startTask(original.id);
+    const task = await done;
+    expect(task.status).toBe("completed");
+    expect(task.destinations[0].resolvedPath).toBe(await fs.realpath(d1));
+    expect(await fs.stat(path.join(d1, "DCIM", "片段.bin"))).toBeTruthy();
+  });
+  it("new mirror roots cannot escape through an existing symlink", async () => {
+    await fs.symlink(source, path.join(d1, "source"));
+    const { task } = await run(config({ mirrorLayout: undefined }));
+    expect(task.status).toBe("failed");
+    expect(task.destinations[0].verified).toBe(false);
+    expect(task.destinations[1].verified).toBe(true);
+  });
+  it.each(["sha256", "sha1", "md5"] as const)("hashes fresh copies during fanout and independently verifies %s plus ASC MHL MD5", async (algorithm) => {
+    const { task } = await run(config({ hashAlgorithm: algorithm }));
+    expect(task.status).toBe("completed");
+    for (const record of task.fileRecords) {
+      expect(record.srcChecksum).toBe(await hashFile(path.join(source, record.relativePath), algorithm));
+      expect(record.ascMhlMd5).toBe(await hashFile(path.join(source, record.relativePath), "md5"));
+      expect(record.destinations.every((destination) => destination.verified)).toBe(true);
+    }
+  });
+  it("reports byte progress inside one large file and never throttles pause/resume transitions", async () => {
+    const single = path.join(root, "single");
+    await fs.mkdir(single);
+    await fs.writeFile(path.join(single, "large.bin"), randomBytes(16 * 1024 * 1024));
+    const engine = new BackupEngine(), task = engine.createTask(config({ sourcePath: single }));
+    const statuses: string[] = [];
+    let paused = false, partial = false;
+    engine.on("progress", (event) => {
+      statuses.push(event.status);
+      if (!paused && event.status === "running" && event.physicalWrittenBytes > 0) {
+        partial = event.completedFiles === 0 && event.copyProgress > 0 && event.copyProgress < 100;
+        paused = true;
+        engine.pauseTask(task.id);
+        setTimeout(() => engine.resumeTask(task.id), 25);
+      }
+    });
+    const done = wait(engine, task.id);
+    engine.startTask(task.id);
+    expect((await done).status).toBe("completed");
+    expect(partial).toBe(true);
+    const pauseIndex = statuses.indexOf("paused");
+    expect(pauseIndex).toBeGreaterThan(0);
+    expect(statuses[pauseIndex + 1]).toBe("running");
+  });
+  it("resumes the verification phase even when paused before its first byte", async () => {
+    const engine = new BackupEngine(), task = engine.createTask(config());
+    let paused = false, resumedStatus = "";
+    engine.on("progress", (event) => {
+      if (!paused && event.status === "verifying") {
+        paused = true;
+        engine.pauseTask(task.id);
+        setTimeout(() => { engine.resumeTask(task.id); resumedStatus = task.status; }, 20);
+      }
+    });
+    const done = wait(engine, task.id); engine.startTask(task.id);
+    expect((await done).status).toBe("completed");
+    expect(resumedStatus).toBe("verifying");
+  });
+  it("handles short writes without losing any part of a block", async () => {
+    const open = fs.open.bind(fs);
+    const spy = vi.spyOn(fs, "open").mockImplementation(async (...args: Parameters<typeof fs.open>) => {
+      const handle = await open(...args);
+      if (String(args[0]).endsWith(".partial")) {
+        const write = handle.write.bind(handle);
+        handle.write = ((buffer: Buffer, offset: number, length: number, position: number) => write(buffer, offset, Math.min(length, 32 * 1024), position)) as typeof handle.write;
+      }
+      return handle;
+    });
+    try { expect((await run()).task.status).toBe("completed"); }
+    finally { spy.mockRestore(); }
+  });
   it("samples acknowledged bytes on a fixed interval and decays smoothly during stalls", () => {
     const meter = new SpeedMeter(0);
     meter.add(50 * 1024 * 1024);

@@ -1,4 +1,14 @@
-import { useState, useEffect, useRef } from "react";
+import { previewProjectPath } from "../../common/project-layout";
+import {
+  submitBatch,
+  readableOperationError,
+  type BatchEntry,
+} from "../../common/interaction";
+import { useState, useEffect, useRef, type DragEvent } from "react";
+import {
+  previewBackupPath,
+  sourceFolderName,
+} from "../../common/backup-layout";
 import {
   Plus,
   X,
@@ -61,6 +71,16 @@ export function Composer({
   onCreated: () => Promise<void>;
   onCreateProject: () => void;
 }) {
+  const [nasPresets, setNasPresets] = useState<import("./api").NasPreset[]>([]);
+  useEffect(() => {
+    void api
+      .getNasPresets()
+      .then(setNasPresets)
+      .catch(() => {});
+  }, []);
+  const batch = useRef<BatchEntry[]>([]);
+  const [batchRevision, setBatchRevision] = useState(0);
+  const [scanStatus, setScanStatus] = useState("");
   const [step, setStep] = useState(0),
     [sources, setSources] = useState<Source[]>(
       initial.source ? [{ path: initial.source }] : [],
@@ -101,6 +121,7 @@ export function Composer({
       Record<string, Scan | "loading" | "error">
     >({});
   const [draggingDestination, setDraggingDestination] = useState(false);
+  const [draggingSource, setDraggingSource] = useState(false);
   const dialog = useRef<HTMLElement>(null);
   const project = projects.find((p) => p.id === projectId),
     total = sources.reduce((n, s) => n + (s.scan?.totalBytes || 0), 0),
@@ -168,27 +189,6 @@ export function Composer({
     return () => clearInterval(timer);
   }, []);
   useEffect(() => {
-    for (const volume of externalVolumes.filter(
-      (item) => item.deviceType === "source",
-    )) {
-      if (detectedScans[volume.path]) continue;
-      setDetectedScans((all) => ({ ...all, [volume.path]: "loading" }));
-      void api
-        .scanSource(volume.path, hidden)
-        .then((scan) =>
-          setDetectedScans((all) => ({ ...all, [volume.path]: scan })),
-        )
-        .catch(() =>
-          setDetectedScans((all) => ({ ...all, [volume.path]: "error" })),
-        );
-    }
-  }, [
-    externalVolumes
-      .map((volume) => `${volume.path}:${volume.deviceType}`)
-      .join("|"),
-    hidden,
-  ]);
-  useEffect(() => {
     if (!projectId) return;
     localStorage.setItem(
       `kocpy-project-choice-${projectId}`,
@@ -201,7 +201,7 @@ export function Composer({
     try {
       await fn();
     } catch (e) {
-      setError(String(e).replace(/^Error: /, ""));
+      setError(readableOperationError(e));
     } finally {
       setBusy(false);
     }
@@ -211,6 +211,12 @@ export function Composer({
     if (!p) return;
     if (!p.startsWith("/")) {
       setError("请输入绝对文件夹路径");
+      return;
+    }
+    try {
+      sourceFolderName(p);
+    } catch (error) {
+      setError(String(error).replace(/^Error: /, ""));
       return;
     }
     setSources((old) =>
@@ -232,6 +238,29 @@ export function Composer({
     setDestInput("");
     setError("");
   }
+  function dropFolders(event: DragEvent, target: "source" | "destination") {
+    event.preventDefault();
+    event.stopPropagation();
+    setDraggingSource(false);
+    setDraggingDestination(false);
+    if (busy) return;
+    const files = Array.from(event.dataTransfer.files);
+    void attempt(async () => {
+      const paths = api.resolveDroppedPaths(files);
+      if (!paths.length)
+        throw new Error(
+          "无法读取路径，请从 Finder 拖入真实文件夹，或点击选择文件夹",
+        );
+      const directories = await api.validateDirectories(paths);
+      if (
+        target === "destination" &&
+        new Set([...dests, ...directories]).size > 4
+      )
+        throw new Error("最多添加 4 个目的地，请减少拖入的文件夹数量");
+      for (const location of directories)
+        target === "source" ? addSource(location) : addDest(location);
+    });
+  }
   async function next() {
     await attempt(async () => {
       if (step === 0) {
@@ -240,6 +269,9 @@ export function Composer({
           throw new Error("请先选择或新建拍摄项目");
         const scanned: Source[] = [];
         for (const s of sources) {
+          setScanStatus(
+            `扫描 ${scanned.length + 1}/${sources.length}：${s.path}（扫描阶段无法预估总数）`,
+          );
           const scan = await api.scanSource(s.path, hidden);
           if (!scan.totalFiles)
             throw new Error(`${leaf(s.path)} 没有可备份文件`);
@@ -250,6 +282,17 @@ export function Composer({
         setStep(1);
       } else if (step === 1) {
         if (!dests.length) throw new Error("请添加至少一个目的地");
+        if (
+          mode === "card" &&
+          new Set(
+            sources.map((source) =>
+              sourceFolderName(source.path).normalize("NFC").toLowerCase(),
+            ),
+          ).size !== sources.length
+        )
+          throw new Error(
+            "所选来源包含同名文件夹，请分批选择不同目的地，避免合并到同一个目录",
+          );
         if (mode === "project" && !project) throw new Error("请选择拍摄项目");
         if (mode === "project" && project) {
           const required = project.requiredCopies || 2;
@@ -291,51 +334,81 @@ export function Composer({
   }
   async function start() {
     await attempt(async () => {
-      for (const source of sources) {
-        const claimed =
-          mode === "project" && project
-            ? await api.claimProjectVolume(
-                project.id,
-                camera,
-                name || undefined,
-              )
-            : undefined;
-        const automaticName = claimed?.label || leaf(source.path);
-        const taskName =
-          mode === "project" ? automaticName : name || automaticName;
-        const config = {
-          name: taskName,
+      if (!batch.current.length) {
+        await api.validateDirectories(sources.map((source) => source.path));
+        batch.current = sources.map((source) => ({
           sourcePath: source.path,
-          destinationPaths: dests,
-          hashAlgorithm: algorithm,
-          namingTemplate: taskName
-            ? sources.length > 1
-              ? `${taskName}_${leaf(source.path)}`
-              : taskName
-            : leaf(source.path),
-          devices: mode === "project" ? [camera] : [],
-          cameraPosition:
-            mode === "project" && multiPosition ? cameraPosition : undefined,
-          shootingDate: mode === "project" ? shootDate : "",
-          projectName: mode === "project" ? project?.name : undefined,
-          projectStartDate:
-            mode === "project" ? project?.shootingDateStart : undefined,
-          projectFolderName:
-            mode === "project" ? project?.projectFolderName : undefined,
-          projectNamingRule:
-            mode === "project" ? project?.namingRule : undefined,
-          projectId: mode === "project" ? project?.id : undefined,
-          copyMode: mirror ? ("mirror" as const) : ("normal" as const),
-          duplicateStrategy: duplicate,
-          includeHidden: hidden,
-          priority,
-        };
-        const task = await api.createTask(config);
-        await api.startTask(task.id);
+          requestId: crypto.randomUUID(),
+        }));
       }
+      await submitBatch(
+        batch.current,
+        async (entry) => {
+          const source = sources.find(
+            (source) => source.path === entry.sourcePath,
+          )!;
+          const claimed =
+            entry.claim ||
+            (mode === "project" && project
+              ? await api.claimProjectVolume(
+                  project.id,
+                  camera,
+                  name || undefined,
+                )
+              : undefined);
+          entry.claim = claimed;
+          const automaticName = claimed?.label || leaf(source.path);
+          const taskName =
+            mode === "project" ? automaticName : name || automaticName;
+          const config = {
+            requestId: entry.requestId,
+            name: taskName,
+            sourcePath: source.path,
+            destinationPaths: dests,
+            hashAlgorithm: algorithm,
+            namingTemplate: taskName
+              ? sources.length > 1
+                ? `${taskName}_${leaf(source.path)}`
+                : taskName
+              : leaf(source.path),
+            devices: mode === "project" ? [camera] : [],
+            cameraPosition:
+              mode === "project" && multiPosition ? cameraPosition : undefined,
+            shootingDate: mode === "project" ? shootDate : "",
+            projectName: mode === "project" ? project?.name : undefined,
+            projectStartDate:
+              mode === "project" ? project?.shootingDateStart : undefined,
+            projectFolderName:
+              mode === "project" ? project?.projectFolderName : undefined,
+            projectNamingRule:
+              mode === "project" ? project?.namingRule : undefined,
+            projectId: mode === "project" ? project?.id : undefined,
+            copyMode:
+              mode === "card" && mirror
+                ? ("mirror" as const)
+                : ("normal" as const),
+            duplicateStrategy: duplicate,
+            includeHidden: hidden,
+            priority,
+          };
+          return await api.createTask(config);
+        },
+        (id) => api.startTask(id),
+        () => setBatchRevision((value) => value + 1),
+      );
       await onCreated();
     });
   }
+  const projectPath = (folder: string) =>
+    previewProjectPath(project?.namingRule, {
+      projectName: project?.name || "",
+      projectFolderName: project?.projectFolderName || "",
+      projectStartDate: project?.shootingDateStart || "",
+      shootingDate: shootDate,
+      device: camera,
+      position: multiPosition ? cameraPosition : undefined,
+      card: folder,
+    });
   function chooseProject(id: string) {
     setProjectId(id);
     const p = projects.find((p) => p.id === id);
@@ -382,7 +455,11 @@ export function Composer({
     }
   }
   return (
-    <div className="modal-backdrop">
+    <div
+      className="modal-backdrop"
+      onDragOver={(event) => event.preventDefault()}
+      onDrop={(event) => event.preventDefault()}
+    >
       <section
         className="composer-modal"
         role="dialog"
@@ -426,8 +503,23 @@ export function Composer({
             );
           })}
         </div>
-        <div className="composer-body">
-          <div className="composer-main">
+        <div
+          className="composer-body"
+          data-frozen={busy || batch.current.length > 0}
+          onClickCapture={(event) => {
+            if (
+              (busy || batch.current.length > 0) &&
+              (event.target as Element).closest("button,input,select")
+            ) {
+              event.preventDefault();
+              event.stopPropagation();
+            }
+          }}
+        >
+          <fieldset
+            className="composer-main interaction-fieldset"
+            disabled={busy || batch.current.length > 0}
+          >
             {step === 0 && (
               <>
                 <div className="form-section-title">
@@ -505,22 +597,24 @@ export function Composer({
                   </div>
                 )}
                 <div
-                  className="source-drop"
-                  onDragOver={(e) => e.preventDefault()}
-                  onDrop={(e) => {
-                    e.preventDefault();
-                    if (!busy)
-                      for (const f of Array.from(e.dataTransfer.files)) {
-                        const p = (f as File & { path?: string }).path;
-                        if (p) addSource(p);
-                      }
+                  className={`source-drop ${draggingSource ? "dragging" : ""}`}
+                  onDragOver={(event) => {
+                    event.preventDefault();
+                    event.dataTransfer.dropEffect = "copy";
+                    setDraggingSource(true);
                   }}
+                  onDragLeave={() => setDraggingSource(false)}
+                  onDrop={(event) => dropFolders(event, "source")}
                 >
                   <span className="drop-icon">
                     <FolderOpen size={26} />
                   </span>
-                  <h3>选择或拖入素材文件夹</h3>
-                  <p>支持素材卡和待归档目录；每个来源建立独立素材卷任务</p>
+                  <h3>
+                    {draggingSource
+                      ? "松开以添加素材源"
+                      : "选择或拖入素材文件夹"}
+                  </h3>
+                  <p>选择要备份的那一层文件夹或素材卡；每个来源建立独立任务</p>
                   <Button
                     kind="subtle"
                     disabled={busy}
@@ -697,40 +791,87 @@ export function Composer({
                     </div>
                   )}
                 {sources.some((source) => source.scan?.breakdown) && (
-                  <div className="source-breakdown">
-                    {(["video", "photo", "audio", "other"] as const).map(
-                      (kind) => {
-                        const files = sources.reduce(
-                            (sum, source) =>
-                              sum +
-                              (source.scan?.breakdown?.[kind]?.files || 0),
-                            0,
-                          ),
-                          size = sources.reduce(
-                            (sum, source) =>
-                              sum +
-                              (source.scan?.breakdown?.[kind]?.bytes || 0),
-                            0,
-                          );
-                        return (
-                          <div key={kind}>
-                            <strong>{files}</strong>
-                            <span>
-                              {
+                  <section aria-label="素材源扫描统计">
+                    <p className="scan-summary">
+                      扫描结果：
+                      {sources.reduce(
+                        (sum, source) => sum + (source.scan?.totalFiles || 0),
+                        0,
+                      )}{" "}
+                      个文件 · {bytes(total)}
+                    </p>
+                    <div className="source-breakdown">
+                      {(["video", "photo", "audio", "other"] as const).map(
+                        (kind) => {
+                          const files = sources.reduce(
+                              (sum, source) =>
+                                sum +
+                                (source.scan?.breakdown?.[kind]?.files || 0),
+                              0,
+                            ),
+                            size = sources.reduce(
+                              (sum, source) =>
+                                sum +
+                                (source.scan?.breakdown?.[kind]?.bytes || 0),
+                              0,
+                            );
+                          return (
+                            <div key={kind}>
+                              <strong>{files} 个文件</strong>
+                              <span>
                                 {
-                                  video: "视频",
-                                  photo: "照片 / RAW",
-                                  audio: "音频",
-                                  other: "其他",
-                                }[kind]
-                              }{" "}
-                              · {bytes(size)}
-                            </span>
-                          </div>
-                        );
-                      },
-                    )}
-                  </div>
+                                  {
+                                    video: "视频",
+                                    photo: "照片 / RAW",
+                                    audio: "音频",
+                                    other: "其他 / 附属文件",
+                                  }[kind]
+                                }{" "}
+                                · {bytes(size)}
+                              </span>
+                            </div>
+                          );
+                        },
+                      )}
+                    </div>
+                    <p className="scan-explanation">
+                      按文件扩展名统计，不是素材卷数量。其他／附属文件包含清单、XML、LRF
+                      和未识别类型；这些文件仍会备份。RAW 与 JPG 各算一个文件。
+                    </p>
+                  </section>
+                )}
+                {mode === "card" && (
+                  <fieldset className="copy-layout-choice">
+                    <legend>文件夹组织方式</legend>
+                    <label>
+                      <input
+                        type="radio"
+                        name="copy-layout"
+                        checked={!mirror}
+                        onChange={() => setMirror(false)}
+                      />
+                      <span>
+                        <strong>普通备份 · 按次保存</strong>
+                        <small>
+                          目的地内创建“源文件夹名_时间戳”，内部文件名不变。
+                        </small>
+                      </span>
+                    </label>
+                    <label>
+                      <input
+                        type="radio"
+                        name="copy-layout"
+                        checked={mirror}
+                        onChange={() => setMirror(true)}
+                      />
+                      <span>
+                        <strong>镜像备份 · 保留源文件夹</strong>
+                        <small>
+                          目的地内保留所选源文件夹及其全部下层结构，不加时间戳；不删除目的地已有额外文件。
+                        </small>
+                      </span>
+                    </label>
+                  </fieldset>
                 )}
                 {mode === "project" && (
                   <div className="project-form">
@@ -916,7 +1057,7 @@ export function Composer({
                   )}
                 </div>
                 <div className="dest-heading">
-                  <span>备份目的地</span>
+                  <span>备份目的地（选择存放副本的父目录）</span>
                   <span>{dests.length} / 4</span>
                 </div>
                 {dests.map((d, i) => (
@@ -926,6 +1067,16 @@ export function Composer({
                     <div>
                       <strong>{leaf(d)}</strong>
                       <span title={d}>{d}</span>
+                      {mode === "card" &&
+                        sources.map((source) => (
+                          <small
+                            className="destination-preview mono"
+                            key={source.path}
+                          >
+                            最终路径：
+                            {previewBackupPath(d, source.path, mirror)}
+                          </small>
+                        ))}
                     </div>
                     <Button
                       kind="icon"
@@ -953,19 +1104,7 @@ export function Composer({
                         setDraggingDestination(true);
                       }}
                       onDragLeave={() => setDraggingDestination(false)}
-                      onDrop={(event) => {
-                        event.preventDefault();
-                        setDraggingDestination(false);
-                        const paths = api.resolveDroppedPaths([
-                          ...event.dataTransfer.files,
-                        ]);
-                        if (!paths.length) {
-                          setError("请从 Finder 拖入一个目的地文件夹");
-                          return;
-                        }
-                        for (const dropped of paths.slice(0, 4 - dests.length))
-                          addDest(dropped);
-                      }}
+                      onDrop={(event) => dropFolders(event, "destination")}
                       onClick={() =>
                         void attempt(async () => {
                           const p = await api.selectDirectory();
@@ -1002,6 +1141,23 @@ export function Composer({
                     </div>
                   </>
                 )}
+                {nasPresets.length > 0 && (
+                  <label>
+                    使用 NAS 目的地预设
+                    <select
+                      aria-label="NAS 目的地预设"
+                      value=""
+                      onChange={(event) => addDest(event.target.value)}
+                    >
+                      <option value="">选择已挂载路径…</option>
+                      {nasPresets.map((preset) => (
+                        <option key={preset.id} value={preset.path}>
+                          {preset.name} · {preset.path}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
                 {mode === "project" && dests.length > 0 && (
                   <div className="destination-final-paths">
                     <div className="dest-heading">
@@ -1024,10 +1180,7 @@ export function Composer({
                               <span>
                                 <strong>{leaf(destination)}</strong>
                                 <small className="mono">
-                                  {destination}/{project?.projectFolderName}/
-                                  {shootDate.replace(/-/g, "")}/{camera}/
-                                  {multiPosition ? `${cameraPosition}/` : ""}
-                                  {folder}/
+                                  {destination}/{projectPath(folder)}/
                                 </small>
                               </span>
                             </div>
@@ -1097,19 +1250,12 @@ export function Composer({
                 </div>
                 <div className="option-checks">
                   {mode === "card" && (
-                    <label>
-                      <input
-                        type="checkbox"
-                        checked={mirror}
-                        onChange={(event) => setMirror(event.target.checked)}
-                      />
-                      <span>
-                        镜像备份
-                        <small>
-                          直接把源目录结构原封不动复制到目的地，不创建素材卷名称与时间戳文件夹
-                        </small>
-                      </span>
-                    </label>
+                    <p className="scan-summary">
+                      {mirror
+                        ? "镜像备份：保留源文件夹，不加时间戳"
+                        : "普通备份：源文件夹名_开始时的时间戳"}
+                      （返回上一步可更改）
+                    </p>
                   )}
                   <label>
                     <input
@@ -1155,12 +1301,7 @@ export function Composer({
                                 className="mono"
                                 key={`${destination}-${source.path}`}
                               >
-                                {destination}/
-                                {project?.projectFolderName ||
-                                  `${(project?.shootingDateStart || "").replace(/-/g, "")}_${project?.name}`}
-                                /{shootDate.replace(/-/g, "")}/{camera}/
-                                {multiPosition ? `${cameraPosition}/` : ""}
-                                {folder}/
+                                {destination}/{projectPath(folder)}/
                               </p>
                             );
                           },
@@ -1168,13 +1309,16 @@ export function Composer({
                       )}
                     </div>
                   ) : (
-                    dests.map((destination) => (
-                      <p className="mono" key={destination}>
-                        {mirror
-                          ? `${destination}/（原目录结构）`
-                          : `${destination}/${sources.length === 1 ? leaf(sources[0].path) : "[素材源卷名]"}_[时间戳]/`}
-                      </p>
-                    ))
+                    dests.flatMap((destination) =>
+                      sources.map((source) => (
+                        <p
+                          className="mono"
+                          key={`${destination}-${source.path}`}
+                        >
+                          {previewBackupPath(destination, source.path, mirror)}
+                        </p>
+                      )),
+                    )
                   )}
                   {mode === "project" && (
                     <small className="muted">
@@ -1298,13 +1442,38 @@ export function Composer({
                 )}
               </>
             )}
+            {busy && scanStatus && <p role="status">{scanStatus}</p>}
+            {batch.current.length > 0 && (
+              <div className="notice" data-revision={batchRevision}>
+                <div>
+                  <strong>
+                    批次提交：
+                    {batch.current.filter((entry) => entry.started).length}/
+                    {batch.current.length} 已启动
+                  </strong>
+                  <p>
+                    重试仅处理未启动项；关闭后可从传输列表继续已创建的任务。
+                  </p>
+                  {batch.current.map((entry) => (
+                    <p key={entry.requestId} className="mono">
+                      {entry.sourcePath} ·{" "}
+                      {entry.started
+                        ? "已启动"
+                        : entry.taskId
+                          ? "已创建，待启动"
+                          : "未提交"}
+                    </p>
+                  ))}
+                </div>
+              </div>
+            )}
             {error && (
               <div role="alert" className="error-box">
                 <AlertTriangle size={17} />
                 {error}
               </div>
             )}
-          </div>
+          </fieldset>
           <aside className="transfer-summary">
             <div className="summary-heading">
               <ShieldCheck size={19} />
@@ -1380,10 +1549,14 @@ export function Composer({
           <Button
             kind="subtle"
             disabled={busy}
-            onClick={() => (step > 0 ? setStep((s) => s - 1) : onClose())}
+            onClick={() =>
+              step > 0 && !batch.current.length
+                ? setStep((s) => s - 1)
+                : onClose()
+            }
           >
             <ChevronLeft size={16} />
-            {step > 0 ? "上一步" : "取消"}
+            {batch.current.length ? "关闭" : step > 0 ? "上一步" : "取消"}
           </Button>
           <div className="row">
             <span className="small muted">
@@ -1408,7 +1581,11 @@ export function Composer({
               ) : step === 2 ? (
                 <Play size={15} />
               ) : null}
-              {step === 2 ? "开始备份" : "下一步"}
+              {step === 2
+                ? batch.current.length
+                  ? "重试未提交任务"
+                  : "开始备份"
+                : "下一步"}
               {step < 2 && <ArrowRight size={16} />}
             </Button>
           </div>

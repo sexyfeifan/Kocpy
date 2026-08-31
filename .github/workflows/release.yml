@@ -44,4 +44,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release view "${GITHUB_REF_NAME}" >/dev/null || gh release create "${GITHUB_REF_NAME}" --title "Kocpy ${GITHUB_REF_NAME#v}" --generate-notes || gh release view "${GITHUB_REF_NAME}" >/dev/null
-          gh release upload "${GITHUB_REF_NAME}" release/Kocpy-*.dmg --clobber
+          # 已发布并提供摘要的安装包保持不变，不以重建产物覆盖。
+          for asset in release/Kocpy-*.dmg; do
+            asset_name="$(basename "$asset")"
+            existing="$(gh release view "${GITHUB_REF_NAME}" --json assets --jq ".assets[] | select(.name == \"${asset_name}\") | .name")"
+            if [ -n "$existing" ]; then
+              echo "Preserving existing release asset: $asset_name"
+            else
+              gh release upload "${GITHUB_REF_NAME}" "$asset"
+            fi
+          done

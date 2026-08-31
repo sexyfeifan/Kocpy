@@ -1,4 +1,11 @@
 import {
+  normalizePositions,
+  validateArchiveScope,
+  validateChecklist,
+  type ArchiveScope,
+} from "../common/interaction";
+import { OperationRegistry } from "./operations";
+import {
   app,
   BrowserWindow,
   ipcMain,
@@ -60,6 +67,7 @@ import {
 } from "./project-path";
 import {
   manifestRequirementMet,
+  projectCloseoutSummary,
   taskMeetsCopyRequirement,
   verifiedPhysicalCopyCount,
 } from "./project-closeout";
@@ -86,7 +94,7 @@ import {
   repairMissingManifestFiles,
   reviseMhlMissingEntries,
 } from "./production-lifecycle";
-import { LanProjectIndex } from "./lan-index";
+import { LanProjectIndex, readLanProjectIndex } from "./lan-index";
 import {
   consolidateExistingRecords,
   deduplicateBoundRoots,
@@ -133,9 +141,7 @@ const normalizeProject = (project: ProjectConfig): ProjectConfig => {
     ),
     devicePositions: Object.fromEntries(
       devices.flatMap((device) => {
-        const positions = (project.devicePositions?.[device] || [])
-          .filter((value) => /^[A-E]$/.test(value))
-          .slice(0, 5);
+        const positions = normalizePositions(project.devicePositions?.[device]);
         return positions.length ? [[device, positions]] : [];
       }),
     ),
@@ -144,7 +150,12 @@ const normalizeProject = (project: ProjectConfig): ProjectConfig => {
       Object.entries(project.unusedDevicesByDate || {}).map(
         ([date, values]) => [
           date,
-          [...new Set(values)].filter((device) => devices.includes(device)),
+          [...new Set(values)].filter(
+            (key) =>
+              typeof key === "string" &&
+              key.length <= 160 &&
+              !/[\\/]/.test(key),
+          ),
         ],
       ),
     ),
@@ -220,9 +231,7 @@ const prepareProject = (value: ProjectConfig): ProjectConfig => {
   );
   project.devicePositions = Object.fromEntries(
     project.devices.flatMap((device) => {
-      const positions = [...new Set(project.devicePositions?.[device] || [])]
-        .filter((position) => /^[A-E]$/.test(position))
-        .slice(0, 5);
+      const positions = normalizePositions(project.devicePositions?.[device]);
       return positions.length ? [[device, positions]] : [];
     }),
   );
@@ -230,7 +239,10 @@ const prepareProject = (value: ProjectConfig): ProjectConfig => {
   project.unusedDevicesByDate = Object.fromEntries(
     Object.entries(project.unusedDevicesByDate || {}).map(([date, values]) => [
       date,
-      [...new Set(values)].filter((device) => project.devices.includes(device)),
+      [...new Set(values)].filter(
+        (key) =>
+          typeof key === "string" && key.length <= 160 && !/[\\/]/.test(key),
+      ),
     ]),
   );
   project.requiredCopies = Math.max(
@@ -255,11 +267,18 @@ let healthRecords: ArchiveHealthRecord[] = [],
   archiveReminders: ArchiveReminder[] = [],
   nasPresets: NasPreset[] = [],
   savedProxyPresets: SavedProxyPreset[] = [];
+const operations = new OperationRegistry((records) =>
+  store.write("operation-history.json", records),
+);
 const maintenanceLocks = new Set<string>();
-const withMaintenanceLock = async <T>(key: string, operation: () => Promise<T>) => {
+const withMaintenanceLock = async <T>(
+  key: string,
+  operation: () => Promise<T>,
+) => {
   if (engine.hasActive() || proxyBusy)
     throw new Error("请等待备份或代理任务结束后再维护素材记录");
-  if (maintenanceLocks.has(key)) throw new Error("同一素材卷已有维护操作进行中");
+  if (maintenanceLocks.has(key))
+    throw new Error("同一素材卷已有维护操作进行中");
   maintenanceLocks.add(key);
   try {
     return await operation();
@@ -304,10 +323,7 @@ const mergeProjectSnapshots = (
 };
 const sourceInventoryMatches = async (task: BackupTask) => {
   const identity = await volumeIdentity(task.sourcePath);
-  if (
-    task.sourceVolumeUuid &&
-    task.sourceVolumeUuid !== identity.uuid
-  )
+  if (task.sourceVolumeUuid && task.sourceVolumeUuid !== identity.uuid)
     return false;
   if (
     !task.sourceVolumeUuid &&
@@ -321,9 +337,7 @@ const sourceInventoryMatches = async (task: BackupTask) => {
     );
   return (
     current.files.length === expected.size &&
-    current.files.every(
-      (file) => expected.get(file.relativePath) === file.size,
-    )
+    current.files.every((file) => expected.get(file.relativePath) === file.size)
   );
 };
 const manifestDestinationIndex = (task: BackupTask) =>
@@ -344,8 +358,137 @@ app.on("second-instance", () => {
     main.focus();
   }
 });
+async function assertDiagnosticTarget(directory: string) {
+  const volumes = await listVolumes();
+  const volume = volumes
+    .filter(
+      (item) =>
+        directory === item.path || directory.startsWith(item.path + "/"),
+    )
+    .sort((a, b) => b.path.length - a.path.length)[0];
+  if (
+    volume?.deviceType === "source" ||
+    engine
+      .getAllTasks()
+      .some(
+        (task) =>
+          ["pending", "running", "paused", "verifying"].includes(task.status) &&
+          (inside(task.sourcePath, directory) ||
+            inside(directory, task.sourcePath)),
+      )
+  )
+    throw new Error(
+      "素材介质或正在使用的来源禁止写入诊断，请使用专门的空白测试盘。",
+    );
+  if (
+    !(await confirmOperation(
+      "允许在此目录进行临时写入测试？",
+      directory +
+        "\n将创建独立临时目录，写入、回读约 64 MiB 数据（介质测试另含 1000 个小文件），随后清理。不改动已有素材；不代表拔盘、睡眠、断电或长期可靠性认证。",
+    ))
+  )
+    return false;
+  return true;
+}
+const maintenanceNames: Record<string, string> = {
+  "existing:import": "接管素材",
+  "existing:import-scope": "批量接管",
+  "existing:reanalyze-project": "刷新接管记录",
+  "existing:establish-baseline": "建立首次基线",
+  "existing:repair-manifest-missing": "补回清单缺失文件",
+  "existing:reverify-manifest": "核对外部清单",
+  "existing:accept-manifest-extra": "修订额外文件清单",
+  "existing:revise-manifest-missing": "修订缺失文件清单",
+  "archive:verify-project": "复校验项目",
+  "archive:verify-scope": "分级复校验",
+  "archive:repair-copy": "修复归档副本",
+  "archive:audit-untracked": "扫描未记录文件",
+  "archive:move-copy": "更新副本位置",
+  "workspace:cold-archive": "冷归档",
+  "workspace:restore-cold": "恢复冷归档",
+  "workspace:import": "合并工作站",
+  "diagnostics:benchmark": "磁盘性能预检",
+  "diagnostics:validate-volume": "有限介质测试",
+  "nas:test": "NAS 读写检查",
+  "proxy:export-package": "生成交付目录",
+  "volumes:eject-completed": "安全推出设备",
+};
+const guardedCommands = new Set([
+  "tasks:create",
+  "tasks:start",
+  "tasks:resume",
+  "tasks:retry-failed",
+  "tasks:reverify",
+  "proxy:enqueue",
+  "proxy:resume",
+  "proxy:retry",
+  "volumes:eject",
+]);
+const changeChannels =
+  /^(tasks:(create|delete|reverify|retry-failed)|projects:(save|delete$|claim-volume|sign-checklist|handoff)|existing:(import|reanalyze|establish|repair|reverify|accept|revise)|archive:(verify|repair|move|audit)|workspace:(import|cold-archive|restore-cold)|templates:(apply|save|delete|import|hide)|catalog:rebuild|library:relink)/;
+const serialCreates = new Map<string, Promise<unknown>>();
+let commandInFlight = 0;
+async function confirmOperation(message: string, detail: string) {
+  return (
+    (
+      await dialog.showMessageBox({
+        type: "warning",
+        title: "Kocpy · 确认操作",
+        message,
+        detail,
+        buttons: ["取消", "确认继续"],
+        defaultId: 0,
+        cancelId: 0,
+        noLink: true,
+      })
+    ).response === 1
+  );
+}
+function emitExistingProgress(progress: any) {
+  operations.progress(progress);
+  if (main && !main.isDestroyed())
+    main.webContents.send("existing:progress", progress);
+}
 function handle(name: string, fn: (...args: any[]) => any) {
-  ipcMain.handle(name, (_event, ...args) => fn(...args));
+  ipcMain.handle(name, async (_event, ...args) => {
+    if (
+      operations.active &&
+      (guardedCommands.has(name) ||
+        /^(tasks:(delete|cancel|pause)|projects:(save|delete|claim-volume)|templates:apply|library:relink|catalog:rebuild)$/.test(
+          name,
+        ))
+    )
+      throw new Error("后台维护仍在进行，请在操作中心查看结果后再开始传输。");
+    const execute = async () => {
+      const guarded = guardedCommands.has(name);
+      if (guarded) commandInFlight++;
+      try {
+        if (maintenanceNames[name]) {
+          if (engine.hasActive() || proxyBusy || commandInFlight)
+            throw new Error("请先完成或取消传输和代理任务，再执行维护。");
+          return await operations.run(maintenanceNames[name], () =>
+            fn(...args),
+          );
+        }
+        return await fn(...args);
+      } finally {
+        if (guarded) commandInFlight--;
+        if (changeChannels.test(name) && main && !main.isDestroyed())
+          main.webContents.send("workspace:changed");
+        if (maintenanceNames[name]) void processProxyQueue();
+      }
+    };
+    const key = name === "tasks:create" ? args[0]?.requestId : undefined;
+    if (!key) return execute();
+    if (serialCreates.has(key)) return serialCreates.get(key);
+    const promise = execute();
+    serialCreates.set(key, promise);
+    try {
+      return await promise;
+    } finally {
+      serialCreates.delete(key);
+    }
+  });
 }
 const persistProxyJobs = () => store.write("proxy-jobs.json", proxyJobs);
 const workspaceIntegrity = (value: Record<string, unknown>) =>
@@ -454,7 +597,7 @@ async function htmlToPdf(html: Buffer | string) {
   }
 }
 async function processProxyQueue() {
-  if (proxyBusy) return;
+  if (proxyBusy || operations.active) return;
   let dependencyChanged = false;
   for (const queued of proxyJobs.filter((item) => item.status === "pending")) {
     const failed = (queued.dependsOn || []).find((id) =>
@@ -612,7 +755,7 @@ function createWindow() {
   main.webContents.on("will-navigate", (event) => event.preventDefault());
   main.once("ready-to-show", () => main?.show());
   main.on("close", (event) => {
-    if ((engine.hasActive() || proxyBusy) && !quitReady) {
+    if ((engine.hasActive() || proxyBusy || operations.active) && !quitReady) {
       event.preventDefault();
       main?.hide();
     }
@@ -622,6 +765,7 @@ function createWindow() {
   else main.loadFile(path.join(__dirname, "../renderer/index.html"));
 }
 app.whenReady().then(async () => {
+  operations.restore(await store.read("operation-history.json", []));
   const initialSettings = await store.read("settings.json", defaultSettings);
   nativeTheme.themeSource =
     initialSettings.theme === "light" ? "light" : "dark";
@@ -747,10 +891,7 @@ app.whenReady().then(async () => {
     indexedProjects = (await catalog.loadProjects().catch(() => [])).map(
       normalizeProject,
     ),
-    initialProjects = mergeProjectSnapshots(
-      mirroredProjects,
-      indexedProjects,
-    );
+    initialProjects = mergeProjectSnapshots(mirroredProjects, indexedProjects);
   startupRecordsChanged ||=
     initialProjects.length !== indexedProjects.length ||
     initialProjects.some((project) => {
@@ -773,6 +914,26 @@ app.whenReady().then(async () => {
     });
     return r.canceled ? null : r.filePaths[0];
   });
+  handle("dialog:validate-directories", async (paths: string[]) => {
+    if (!Array.isArray(paths) || !paths.length || paths.length > 64)
+      throw new Error("请拖入 1–64 个文件夹");
+    return Promise.all(
+      [...new Set(paths)].map(async (location) => {
+        if (
+          typeof location !== "string" ||
+          !path.isAbsolute(location) ||
+          location.includes("\0")
+        )
+          throw new Error("拖入的文件夹路径无效");
+        const real = await fs.realpath(location);
+        if (!(await fs.stat(real)).isDirectory())
+          throw new Error(
+            `请选择文件夹，不是单个文件：${path.basename(location)}`,
+          );
+        return real;
+      }),
+    );
+  });
   handle("tasks:list", () =>
     engine.getAllTasks().map((task) => ({ ...task, fileRecords: [] })),
   );
@@ -784,13 +945,29 @@ app.whenReady().then(async () => {
   handle("catalog:stats", () => catalog.stats());
   handle(
     "catalog:files",
-    (options: {
+    async (options: {
       projectId?: string;
       query?: string;
       kind?: string;
       offset?: number;
       limit?: number;
-    }) => catalog.pageFiles(options || {}),
+    }) => {
+      const rows = await catalog.pageFiles(options || {});
+      return await Promise.all(
+        rows.map(async (row: any) => {
+          const destinations = await Promise.all(
+            row.destinations.map(async (copy: any) => ({
+              ...copy,
+              online: await fs.access(copy.path).then(
+                () => true,
+                () => false,
+              ),
+            })),
+          );
+          return { ...row, destinations };
+        }),
+      );
+    },
   );
   handle("catalog:rebuild", async () => {
     if (engine.hasActive() || proxyBusy)
@@ -802,6 +979,14 @@ app.whenReady().then(async () => {
     return catalog.stats();
   });
   handle("tasks:create", async (config: TaskConfig) => {
+    if (operations.active)
+      throw new Error("维护操作正在执行，请完成后再创建备份");
+    if (config.requestId) {
+      const existing = engine
+        .getAllTasks()
+        .find((task) => task.requestId === config.requestId);
+      if (existing) return existing;
+    }
     const speedFor = (destination: string) =>
       benchmarkHistory
         .filter(
@@ -837,6 +1022,7 @@ app.whenReady().then(async () => {
         );
     }
     const task = engine.createTask(config);
+    task.requestId = config.requestId;
     task.sourceVolumeId = sourceIdentity.id;
     task.sourceVolumeUuid = sourceIdentity.uuid;
     task.sourceVolumeName = sourceIdentity.name;
@@ -866,6 +1052,14 @@ app.whenReady().then(async () => {
     return task;
   });
   handle("tasks:start", async (id: string) => {
+    if (operations.active)
+      throw new Error("维护操作正在执行，请完成后再开始备份");
+    if (
+      ["running", "verifying", "paused", "completed"].includes(
+        engine.getTask(id)?.status || "",
+      )
+    )
+      return true;
     engine.startTask(id);
     await persist();
     return true;
@@ -976,114 +1170,124 @@ app.whenReady().then(async () => {
     if (
       proxyJobs.some(
         (job) =>
-          ["pending", "running"].includes(job.status) &&
+          ["pending", "running", "paused"].includes(job.status) &&
           (inside(job.input, volume) || inside(job.outputDir, volume)),
       )
     )
       throw new Error("该磁盘有等待中或进行中的代理任务，请先取消任务");
     return ejectVolume(volume);
   });
-  handle("volumes:eject-completed", async () => {
-    const volumes = await listVolumes(),
-      results: Array<{ path: string; ok: boolean; error?: string }> = [];
-    for (const volume of volumes.filter((item) => item.canEject)) {
-      const unsafe = engine
-        .getAllTasks()
-        .some(
-          (task) =>
-            ["running", "paused", "verifying", "pending"].includes(
-              task.status,
-            ) &&
-            (inside(task.sourcePath, volume.path) ||
-              task.destinations.some((destination) =>
-                inside(destination.path, volume.path),
-              )),
-        );
-      if (unsafe) {
-        results.push({ path: volume.path, ok: false, error: "仍有进行中任务" });
-        continue;
-      }
-      if (
-        proxyJobs.some(
-          (job) =>
-            ["pending", "running"].includes(job.status) &&
-            (inside(job.input, volume.path) ||
-              inside(job.outputDir, volume.path)),
-        )
-      ) {
-        results.push({
-          path: volume.path,
-          ok: false,
-          error: "仍有代理任务正在使用",
-        });
-        continue;
-      }
-      const related = engine
-        .getAllTasks()
-        .filter(
-          (task) =>
-            inside(task.sourcePath, volume.path) ||
-            task.destinations.some((destination) =>
-              inside(destination.path, volume.path),
-            ),
-        );
-      const complete = related.filter(
-        (task) =>
-          task.status === "completed" &&
-          task.destinations.every((destination) => destination.verified) &&
-          manifestRequirementMet(task),
-      );
-      const uncovered = related
-        .filter((task) => ["failed", "cancelled"].includes(task.status))
-        .some(
-          (task) =>
-            !complete.some(
-              (candidate) =>
-                (candidate.createdAt || 0) >= (task.createdAt || 0) &&
-                ((candidate.sourceVolumeUuid &&
-                  candidate.sourceVolumeUuid === task.sourceVolumeUuid) ||
-                  candidate.sourcePath === task.sourcePath),
-            ),
-        );
-      if (!related.length || !complete.length || uncovered) {
-        results.push({
-          path: volume.path,
-          ok: false,
-          error: uncovered
-            ? "存在尚未被后续成功备份覆盖的失败任务"
-            : "没有完整且通过校验的备份记录",
-        });
-        continue;
-      }
-      const sourceTasks = complete.filter((task) =>
-        inside(task.sourcePath, volume.path),
-      );
-      if (sourceTasks.length) {
-        const latest = sourceTasks.sort(
-          (left, right) => (right.completedAt || 0) - (left.completedAt || 0),
-        )[0];
-        if (!(await sourceInventoryMatches(latest).catch(() => false))) {
+  handle(
+    "volumes:eject-completed",
+    async (previewOnly = false, selectedPaths?: string[]) => {
+      const volumes = await listVolumes(),
+        results: Array<{ path: string; ok: boolean; error?: string }> = [];
+      for (const volume of volumes.filter(
+        (item) =>
+          item.canEject && (previewOnly || selectedPaths?.includes(item.path)),
+      )) {
+        const unsafe = engine
+          .getAllTasks()
+          .some(
+            (task) =>
+              ["running", "paused", "verifying", "pending"].includes(
+                task.status,
+              ) &&
+              (inside(task.sourcePath, volume.path) ||
+                task.destinations.some((destination) =>
+                  inside(destination.path, volume.path),
+                )),
+          );
+        if (unsafe) {
           results.push({
             path: volume.path,
             ok: false,
-            error: "当前素材卡身份或文件清单与已完成任务不一致",
+            error: "仍有进行中任务",
           });
           continue;
         }
+        if (
+          proxyJobs.some(
+            (job) =>
+              ["pending", "running", "paused"].includes(job.status) &&
+              (inside(job.input, volume.path) ||
+                inside(job.outputDir, volume.path)),
+          )
+        ) {
+          results.push({
+            path: volume.path,
+            ok: false,
+            error: "仍有代理任务正在使用",
+          });
+          continue;
+        }
+        const related = engine
+          .getAllTasks()
+          .filter(
+            (task) =>
+              inside(task.sourcePath, volume.path) ||
+              task.destinations.some((destination) =>
+                inside(destination.path, volume.path),
+              ),
+          );
+        const complete = related.filter(
+          (task) =>
+            task.status === "completed" &&
+            task.destinations.every((destination) => destination.verified) &&
+            manifestRequirementMet(task),
+        );
+        const uncovered = related
+          .filter((task) => ["failed", "cancelled"].includes(task.status))
+          .some(
+            (task) =>
+              !complete.some(
+                (candidate) =>
+                  (candidate.createdAt || 0) >= (task.createdAt || 0) &&
+                  ((candidate.sourceVolumeUuid &&
+                    candidate.sourceVolumeUuid === task.sourceVolumeUuid) ||
+                    candidate.sourcePath === task.sourcePath),
+              ),
+          );
+        if (!related.length || !complete.length || uncovered) {
+          results.push({
+            path: volume.path,
+            ok: false,
+            error: uncovered
+              ? "存在尚未被后续成功备份覆盖的失败任务"
+              : "没有完整且通过校验的备份记录",
+          });
+          continue;
+        }
+        const sourceTasks = complete.filter((task) =>
+          inside(task.sourcePath, volume.path),
+        );
+        if (sourceTasks.length) {
+          const latest = sourceTasks.sort(
+            (left, right) => (right.completedAt || 0) - (left.completedAt || 0),
+          )[0];
+          if (!(await sourceInventoryMatches(latest).catch(() => false))) {
+            results.push({
+              path: volume.path,
+              ok: false,
+              error: "当前素材卡身份或文件清单与已完成任务不一致",
+            });
+            continue;
+          }
+        }
+        try {
+          if (!previewOnly) await ejectVolume(volume.path);
+          results.push({ path: volume.path, ok: true });
+        } catch (error: any) {
+          results.push({
+            path: volume.path,
+            ok: false,
+            error: error.message || String(error),
+          });
+        }
       }
-      try {
-        await ejectVolume(volume.path);
-        results.push({ path: volume.path, ok: true });
-      } catch (error: any) {
-        results.push({
-          path: volume.path,
-          ok: false,
-          error: error.message || String(error),
-        });
-      }
-    }
-    return results;
-  });
+      return results;
+    },
+  );
   const diagnosticSnapshot = async () => ({
     ...(await buildDiagnosticSnapshot({
       version: app.getVersion(),
@@ -1097,6 +1301,7 @@ app.whenReady().then(async () => {
     archiveHealth: healthRecords.slice(-20),
   });
   handle("diagnostics:benchmark", async (directory: string, sizeMiB = 64) => {
+    if (!(await assertDiagnosticTarget(directory))) return null;
     if (!path.isAbsolute(directory))
       throw new Error("请选择有效的性能预检目录");
     if (engine.hasActive() || proxyBusy)
@@ -1108,6 +1313,7 @@ app.whenReady().then(async () => {
   });
   handle("diagnostics:reliability-list", () => reliabilityValidations);
   handle("diagnostics:validate-volume", async (directory: string) => {
+    if (!(await assertDiagnosticTarget(directory))) return null;
     if (!path.isAbsolute(directory)) throw new Error("请选择有效的验收目录");
     if (engine.hasActive() || proxyBusy)
       throw new Error("请在没有任务运行时执行可靠性验收");
@@ -1217,6 +1423,12 @@ app.whenReady().then(async () => {
       : archiveChanges,
   );
   handle("archive:reminders", () => archiveReminders);
+  handle("archive:delete-reminder", async (id: string) => {
+    archiveReminders = archiveReminders.filter((item) => item.id !== id);
+    await store.write("archive-reminders.json", archiveReminders);
+    return true;
+  });
+  handle("operations:list", () => operations.list());
   handle("archive:save-reminder", async (value: ArchiveReminder) => {
     const reminder = {
       ...value,
@@ -1233,171 +1445,168 @@ app.whenReady().then(async () => {
     await store.write("archive-reminders.json", archiveReminders);
     return archiveReminders;
   });
-  handle(
-    "archive:verify-scope",
-    async (scope: {
-      projectId?: string;
-      shootingDate?: string;
-      taskId?: string;
-      relativePath?: string;
-      volumePath?: string;
-    }) => {
-      if (engine.hasActive() || proxyBusy)
-        throw new Error("请等待当前任务结束");
-      const started = Date.now();
-      let tasks = engine.getAllTasks();
-      if (scope.projectId)
-        tasks = tasks.filter((task) => task.projectId === scope.projectId);
-      if (scope.shootingDate)
-        tasks = tasks.filter(
-          (task) => task.shootingDate === scope.shootingDate,
-        );
-      if (scope.taskId)
-        tasks = tasks.filter((task) => task.id === scope.taskId);
-      if (scope.volumePath)
-        tasks = tasks.filter((task) =>
-          task.destinations.some(
-            (item) =>
-              inside(item.resolvedPath || item.path, scope.volumePath!) ||
-              inside(scope.volumePath!, item.resolvedPath || item.path),
-          ),
-        );
-      if (!tasks.length) throw new Error("范围内没有素材记录");
-      const changes: ArchiveChangeRecord[] = [];
-      let bytesVerified = 0,
-        healthyTasks = 0,
-        missingCopies = 0;
-      for (const task of tasks) {
-        if (scope.relativePath || scope.volumePath) {
-          const records = scope.relativePath
-            ? task.fileRecords.filter(
-                (file) => file.relativePath === scope.relativePath,
-              )
-            : task.fileRecords;
-          if (!records.length) continue;
-          let taskHealthy = true;
-          for (const record of records)
-            for (const destination of record.destinations) {
-              if (
-                scope.volumePath &&
-                !inside(destination.path, scope.volumePath)
-              )
-                continue;
-              const exists = await fs.access(destination.path).then(
-                  () => true,
-                  () => false,
-                ),
-                actual = exists
-                  ? await hashFile(destination.path, task.hashAlgorithm)
-                  : "",
-                kind = !exists
-                  ? "missing"
-                  : actual !== record.srcChecksum
-                    ? "modified"
-                    : "verified";
-              destination.verified = kind === "verified";
-              if (kind === "verified") bytesVerified += record.size;
-              else {
-                missingCopies++;
-                taskHealthy = false;
-              }
-              if (kind !== "verified" || scope.relativePath)
-                changes.push({
-                  id: randomUUID(),
-                  projectId: task.projectId || "",
-                  taskId: task.id,
-                  at: Date.now(),
-                  kind,
-                  path: destination.path,
-                  note: `${record.relativePath}：${kind}`,
-                });
+  handle("archive:verify-scope", async (input: ArchiveScope) => {
+    const scope = validateArchiveScope(input);
+    if (engine.hasActive() || proxyBusy) throw new Error("请等待当前任务结束");
+    const started = Date.now();
+    let tasks = engine.getAllTasks();
+    if (scope.projectId)
+      tasks = tasks.filter((task) => task.projectId === scope.projectId);
+    if (scope.shootingDate)
+      tasks = tasks.filter((task) => task.shootingDate === scope.shootingDate);
+    if (scope.taskId) tasks = tasks.filter((task) => task.id === scope.taskId);
+    if (scope.volumePath)
+      tasks = tasks.filter((task) =>
+        task.destinations.some(
+          (item) =>
+            inside(item.resolvedPath || item.path, scope.volumePath!) ||
+            inside(scope.volumePath!, item.resolvedPath || item.path),
+        ),
+      );
+    if (!tasks.length) throw new Error("范围内没有素材记录");
+    const changes: ArchiveChangeRecord[] = [];
+    let bytesVerified = 0,
+      healthyTasks = 0,
+      missingCopies = 0;
+    for (const task of tasks) {
+      if (scope.relativePath || scope.volumePath) {
+        const records = scope.relativePath
+          ? task.fileRecords.filter(
+              (file) => file.relativePath === scope.relativePath,
+            )
+          : task.fileRecords;
+        if (!records.length)
+          throw new Error("所选文件不在该素材卷的记录中，请重新选择");
+        if (records.some((record) => !record.srcChecksum))
+          throw new Error("所选记录尚未建立基线，请先完成接管校验。");
+        let taskHealthy = true,
+          checkedCopies = 0;
+        for (const record of records)
+          for (const destination of record.destinations) {
+            if (scope.volumePath && !inside(destination.path, scope.volumePath))
+              continue;
+            checkedCopies++;
+            operations.progress({
+              message: `正在读取 ${record.relativePath}`,
+              totalBytes: undefined,
+              completedBytes: bytesVerified,
+            });
+            const exists = await fs.access(destination.path).then(
+                () => true,
+                () => false,
+              ),
+              actual = exists
+                ? await hashFile(destination.path, task.hashAlgorithm)
+                : "",
+              kind = !exists
+                ? "missing"
+                : actual !== record.srcChecksum
+                  ? "modified"
+                  : "verified";
+            destination.verified = kind === "verified";
+            if (kind === "verified") bytesVerified += record.size;
+            else {
+              missingCopies++;
+              taskHealthy = false;
             }
-          if (taskHealthy) healthyTasks++;
-          for (const top of task.destinations) {
-            const root = top.resolvedPath || top.path,
-              copies = task.fileRecords.flatMap((item) =>
-                item.destinations.filter((copy) => inside(copy.path, root)),
-              );
-            top.verified =
-              copies.length > 0 && copies.every((copy) => copy.verified);
+            if (kind !== "verified" || scope.relativePath)
+              changes.push({
+                id: randomUUID(),
+                projectId: task.projectId || "",
+                taskId: task.id,
+                at: Date.now(),
+                kind,
+                path: destination.path,
+                note: `${record.relativePath}：${kind}`,
+              });
           }
-          changes.push({
-            id: randomUUID(),
-            projectId: task.projectId || "",
-            taskId: task.id,
-            at: Date.now(),
-            kind: taskHealthy ? "verified" : "damaged",
-            note: `${task.name} ${taskHealthy ? "复校验通过" : "复校验失败"}`,
-          });
-        } else {
-          await engine.reverifyTask(task.id);
-          if (task.status === "completed") healthyTasks++;
-          missingCopies += task.destinations.filter(
-            (item) => !item.verified,
-          ).length;
-          bytesVerified += task.fileRecords.reduce(
-            (sum, item) =>
-              sum +
-              item.size *
-                item.destinations.filter(
-                  (copy) =>
-                    copy.verified &&
-                    (!scope.volumePath || inside(copy.path, scope.volumePath)),
-                ).length,
-            0,
-          );
-          changes.push({
-            id: randomUUID(),
-            projectId: task.projectId || "",
-            taskId: task.id,
-            at: Date.now(),
-            kind: task.status === "completed" ? "verified" : "damaged",
-            note: `${task.name} ${task.status === "completed" ? "复校验通过" : "复校验失败"}`,
-          });
+        if (!checkedCopies)
+          throw new Error("所选范围没有可校验的文件副本，未扩大校验范围。");
+        if (taskHealthy) healthyTasks++;
+        for (const top of task.destinations) {
+          const root = top.resolvedPath || top.path,
+            copies = task.fileRecords.flatMap((item) =>
+              item.destinations.filter((copy) => inside(copy.path, root)),
+            );
+          top.verified =
+            copies.length > 0 && copies.every((copy) => copy.verified);
         }
-      }
-      const durationMs = Math.max(1, Date.now() - started),
-        failedTasks = tasks.length - healthyTasks,
-        record: ArchiveHealthRecord = {
+        changes.push({
           id: randomUUID(),
-          projectId: scope.projectId || `disk:${scope.volumePath || "all"}`,
-          checkedAt: Date.now(),
-          taskCount: tasks.length,
-          healthyTasks,
-          failedTasks,
-          missingCopies,
-          durationMs,
-          bytesVerified,
-          averageReadBps: Math.round(bytesVerified / (durationMs / 1000)),
-          risk:
-            missingCopies || failedTasks
-              ? missingCopies > 1 || failedTasks > 1
-                ? "critical"
-                : "attention"
-              : "healthy",
-          scope: scope.relativePath
-            ? "file"
-            : scope.taskId
-              ? "card"
-              : scope.shootingDate
-                ? "day"
-                : scope.volumePath
-                  ? "disk"
-                  : "project",
-          notes: changes
-            .filter((item) => item.kind !== "verified")
-            .map((item) => item.note),
-        };
-      healthRecords = [...healthRecords.slice(-499), record];
-      archiveChanges = [...archiveChanges, ...changes].slice(-10000);
-      await Promise.all([
-        store.write("archive-health.json", healthRecords),
-        store.write("archive-changes.json", archiveChanges),
-        persist(),
-      ]);
-      return { changes, record };
-    },
-  );
+          projectId: task.projectId || "",
+          taskId: task.id,
+          at: Date.now(),
+          kind: taskHealthy ? "verified" : "damaged",
+          note: `${task.name} ${taskHealthy ? "复校验通过" : "复校验失败"}`,
+        });
+      } else {
+        await engine.reverifyTask(task.id);
+        if (task.status === "completed") healthyTasks++;
+        missingCopies += task.destinations.filter(
+          (item) => !item.verified,
+        ).length;
+        bytesVerified += task.fileRecords.reduce(
+          (sum, item) =>
+            sum +
+            item.size *
+              item.destinations.filter(
+                (copy) =>
+                  copy.verified &&
+                  (!scope.volumePath || inside(copy.path, scope.volumePath)),
+              ).length,
+          0,
+        );
+        changes.push({
+          id: randomUUID(),
+          projectId: task.projectId || "",
+          taskId: task.id,
+          at: Date.now(),
+          kind: task.status === "completed" ? "verified" : "damaged",
+          note: `${task.name} ${task.status === "completed" ? "复校验通过" : "复校验失败"}`,
+        });
+      }
+    }
+    const durationMs = Math.max(1, Date.now() - started),
+      failedTasks = tasks.length - healthyTasks,
+      record: ArchiveHealthRecord = {
+        id: randomUUID(),
+        projectId: scope.projectId || `disk:${scope.volumePath || "all"}`,
+        checkedAt: Date.now(),
+        taskCount: tasks.length,
+        healthyTasks,
+        failedTasks,
+        missingCopies,
+        durationMs,
+        bytesVerified,
+        averageReadBps: Math.round(bytesVerified / (durationMs / 1000)),
+        risk:
+          missingCopies || failedTasks
+            ? missingCopies > 1 || failedTasks > 1
+              ? "critical"
+              : "attention"
+            : "healthy",
+        scope: scope.relativePath
+          ? "file"
+          : scope.taskId
+            ? "card"
+            : scope.shootingDate
+              ? "day"
+              : scope.volumePath
+                ? "disk"
+                : "project",
+        notes: changes
+          .filter((item) => item.kind !== "verified")
+          .map((item) => item.note),
+      };
+    healthRecords = [...healthRecords.slice(-499), record];
+    archiveChanges = [...archiveChanges, ...changes].slice(-10000);
+    await Promise.all([
+      store.write("archive-health.json", healthRecords),
+      store.write("archive-changes.json", archiveChanges),
+      persist(),
+    ]);
+    return { changes, record };
+  });
   handle("archive:audit-untracked", async (projectId: string, root: string) => {
     if (!path.isAbsolute(root)) throw new Error("请选择有效的归档根目录");
     const expected = new Set(
@@ -1565,10 +1774,8 @@ app.whenReady().then(async () => {
     await persist();
     return record;
   });
-  handle(
-    "archive:repair-copy",
-    async (taskId: string, destinationId: string) =>
-      withMaintenanceLock(`task:${taskId}`, async () => {
+  handle("archive:repair-copy", async (taskId: string, destinationId: string) =>
+    withMaintenanceLock(`task:${taskId}`, async () => {
       if (engine.hasActive() || proxyBusy)
         throw new Error("请等待当前任务结束");
       const task = engine.getTask(taskId);
@@ -1577,6 +1784,37 @@ app.whenReady().then(async () => {
         (destination) => destination.id === destinationId,
       );
       if (!target) throw new Error("目标副本不存在");
+      const repairFiles = task.fileRecords.filter((record) =>
+        record.destinations.some(
+          (copy) =>
+            inside(copy.path, target.resolvedPath || target.path) &&
+            !copy.verified,
+        ),
+      );
+      const sourceRoots = task.destinations
+        .filter((item) => item.id !== target.id && item.verified)
+        .map((item) => item.resolvedPath || item.path);
+      if (!repairFiles.length)
+        throw new Error("该副本没有待修复文件，请刷新记录。");
+      if (
+        !(await confirmOperation(
+          "从健康副本修复归档文件？",
+          "素材卷：" +
+            task.name +
+            "\n目标：" +
+            (target.resolvedPath || target.path) +
+            "\n候选来源：" +
+            (sourceRoots.join("\n") || "按逐文件校验记录查找") +
+            "\n目标身份：" +
+            (target.volumeUuid || target.volumeId || "待现场核验") +
+            "\n待修复：" +
+            repairFiles.length +
+            " 个文件 / " +
+            repairFiles.reduce((sum, file) => sum + file.size, 0) +
+            " 字节\n写入前复核来源哈希，原损坏文件另名保留。中途失败可能已有部分文件修复，未完成项仍须处理。",
+        ))
+      )
+        return null;
       const targetIdentity = await volumeIdentity(
         target.resolvedPath || target.path,
       );
@@ -1589,59 +1827,89 @@ app.whenReady().then(async () => {
         throw new Error("目标磁盘身份与任务记录不一致，已停止修复");
       let repaired = 0,
         preservedDamagedOriginals = 0;
-      for (const record of task.fileRecords) {
-        const targetRecord = record.destinations.find((entry) =>
-          inside(entry.path, target.resolvedPath || target.path),
-        );
-        if (!targetRecord || targetRecord.verified) continue;
-        const healthy = record.destinations.find(
-          (entry) => entry.verified && entry.path !== targetRecord.path,
-        );
-        if (!healthy)
-          throw new Error(`${record.relativePath} 没有可用于修复的健康副本`);
-        if ((await hashFile(healthy.path, task.hashAlgorithm)) !== record.srcChecksum)
-          throw new Error(`${record.relativePath} 的健康副本已发生变化，停止修复`);
-        const partial = `${targetRecord.path}.kocpy-repair-${randomUUID()}.partial`;
-        await fs.mkdir(path.dirname(targetRecord.path), { recursive: true });
-        await fs.copyFile(healthy.path, partial, fsConstants.COPYFILE_EXCL);
-        const metadata = await fs.stat(healthy.path);
-        await fs.chmod(partial, metadata.mode);
-        await fs.utimes(partial, metadata.atime, metadata.mtime);
-        await syncFileAndParent(partial);
-        if (
-          (await hashFile(partial, task.hashAlgorithm)) !== record.srcChecksum
-        ) {
-          await fs.unlink(partial).catch(() => {});
-          throw new Error(`${record.relativePath} 修复副本校验失败`);
-        }
-        const exists = await fs.access(targetRecord.path).then(
-          () => true,
-          () => false,
-        );
-        if (exists) {
-          await fs.rename(
-            targetRecord.path,
-            `${targetRecord.path}.kocpy-damaged-${Date.now()}`,
+      try {
+        for (const record of task.fileRecords) {
+          operations.progress({
+            message: `修复中 · 已完成 ${repaired}/${repairFiles.length} 个文件`,
+            currentFile: record.relativePath,
+          });
+          const targetRecord = record.destinations.find((entry) =>
+            inside(entry.path, target.resolvedPath || target.path),
           );
-          preservedDamagedOriginals++;
+          if (!targetRecord || targetRecord.verified) continue;
+          const healthy = record.destinations.find(
+            (entry) => entry.verified && entry.path !== targetRecord.path,
+          );
+          if (!healthy)
+            throw new Error(`${record.relativePath} 没有可用于修复的健康副本`);
+          if (
+            (await hashFile(healthy.path, task.hashAlgorithm)) !==
+            record.srcChecksum
+          )
+            throw new Error(
+              `${record.relativePath} 的健康副本已发生变化，停止修复`,
+            );
+          const partial = `${targetRecord.path}.kocpy-repair-${randomUUID()}.partial`;
+          await fs.mkdir(path.dirname(targetRecord.path), { recursive: true });
+          await fs.copyFile(healthy.path, partial, fsConstants.COPYFILE_EXCL);
+          const metadata = await fs.stat(healthy.path);
+          await fs.chmod(partial, metadata.mode);
+          await fs.utimes(partial, metadata.atime, metadata.mtime);
+          await syncFileAndParent(partial);
+          if (
+            (await hashFile(partial, task.hashAlgorithm)) !== record.srcChecksum
+          ) {
+            await fs.unlink(partial).catch(() => {});
+            throw new Error(`${record.relativePath} 修复副本校验失败`);
+          }
+          const exists = await fs.access(targetRecord.path).then(
+            () => true,
+            () => false,
+          );
+          if (exists) {
+            await fs.rename(
+              targetRecord.path,
+              `${targetRecord.path}.kocpy-damaged-${Date.now()}`,
+            );
+            preservedDamagedOriginals++;
+          }
+          await fs.rename(partial, targetRecord.path);
+          await syncFileAndParent(targetRecord.path);
+          targetRecord.verified = true;
+          targetRecord.checksum = record.srcChecksum;
+          repaired++;
         }
-        await fs.rename(partial, targetRecord.path);
-        await syncFileAndParent(targetRecord.path);
-        targetRecord.verified = true;
-        targetRecord.checksum = record.srcChecksum;
-        repaired++;
+        target.verified = task.fileRecords.every((record) => {
+          const copies = record.destinations.filter((entry) =>
+            inside(entry.path, target.resolvedPath || target.path),
+          );
+          return copies.length > 0 && copies.every((entry) => entry.verified);
+        });
+        target.error = undefined;
+        if (repaired) await engine.reverifyTask(task.id);
+        await Promise.all([persist(), catalog.upsertTask(task)]);
+        return { repaired, preservedDamagedOriginals };
+      } catch (error) {
+        target.verified = false;
+        target.error =
+          "修复未完成：" + repaired + " 个文件已修复；" + String(error);
+        archiveChanges.push({
+          id: randomUUID(),
+          projectId: task.projectId || "",
+          taskId: task.id,
+          at: Date.now(),
+          kind: "repaired",
+          path: target.resolvedPath || target.path,
+          note: target.error,
+        });
+        await Promise.all([
+          persist(),
+          catalog.upsertTask(task),
+          store.write("archive-changes.json", archiveChanges),
+        ]);
+        throw new Error(target.error);
       }
-      target.verified = task.fileRecords.every((record) => {
-        const copies = record.destinations.filter((entry) =>
-          inside(entry.path, target.resolvedPath || target.path),
-        );
-        return copies.length > 0 && copies.every((entry) => entry.verified);
-      });
-      target.error = undefined;
-      if (repaired) await engine.reverifyTask(task.id);
-      await Promise.all([persist(), catalog.upsertTask(task)]);
-      return { repaired, preservedDamagedOriginals };
-      }),
+    }),
   );
   handle("templates:list", () => projectTemplates);
   handle(
@@ -1730,7 +1998,7 @@ app.whenReady().then(async () => {
           speedBps = completedBytes / elapsed,
           remaining = Math.max(0, (totals.totalBytes || 0) - completedBytes);
         if (main && !main.isDestroyed())
-          main.webContents.send("existing:progress", {
+          emitExistingProgress({
             jobId,
             phase,
             message,
@@ -2011,8 +2279,7 @@ app.whenReady().then(async () => {
           unavailableSources.add(existingSourceKey(task.sourcePath));
         }
       }
-      const
-        rootsBefore = project.boundRoots || [],
+      const rootsBefore = project.boundRoots || [],
         uniqueRoots = deduplicateBoundRoots(rootsBefore),
         rootsDeduplicated = rootsBefore.length - uniqueRoots.length;
       if (apply) {
@@ -2022,10 +2289,7 @@ app.whenReady().then(async () => {
         ])
           engine.deleteTask(duplicateId);
         project.boundRoots = uniqueRoots;
-        await Promise.all([
-          store.write("projects.json", projects),
-          persist(),
-        ]);
+        await Promise.all([store.write("projects.json", projects), persist()]);
         await catalog.rebuild(engine.getAllTasks(), projects);
       }
       return {
@@ -2051,326 +2315,377 @@ app.whenReady().then(async () => {
     "existing:establish-baseline",
     async (taskId: string, jobId = randomUUID()) =>
       withMaintenanceLock(`task:${taskId}`, async () => {
-      const task = engine.getTask(taskId);
-      if (!task || !task.provenance || task.provenance === "kocpy-transfer")
-        throw new Error("接管记录不存在");
-      const totalFiles = task.fileRecords.reduce(
-          (sum, record) => sum + Math.max(1, record.destinations.length),
-          0,
-        ),
-        totalBytes = task.fileRecords.reduce(
-          (sum, record) =>
-            sum + record.size * Math.max(1, record.destinations.length),
-          0,
-        ),
-        startedAt = Date.now();
-      let completedFiles = 0,
-        completedBytes = 0,
-        lastEmittedAt = 0;
-      const emit = (
-        phase: "hashing" | "completed" | "failed",
-        message: string,
-        currentFile?: string,
-        force = false,
-      ) => {
-        const now = Date.now();
-        if (!force && now - lastEmittedAt < 120) return;
-        lastEmittedAt = now;
-        const speedBps =
-            completedBytes / Math.max(0.001, (now - startedAt) / 1000),
-          eta = speedBps
-            ? Math.max(0, totalBytes - completedBytes) / speedBps
-            : 0;
-        if (main && !main.isDestroyed())
-          main.webContents.send("existing:progress", {
-            jobId,
-            phase,
-            message,
-            totalFiles,
-            completedFiles,
-            totalBytes,
-            completedBytes,
-            totalCandidates: 1,
-            completedCandidates: phase === "completed" ? 1 : 0,
-            currentCandidate: task.name,
-            currentFile,
-            speedBps,
-            eta,
-          });
-      };
-      emit("hashing", "正在读取现存副本并建立首次哈希基线", undefined, true);
-      try {
-        for (const record of task.fileRecords) {
-          const copies = record.destinations.length
-            ? record.destinations
-            : [
-                {
-                  path: path.join(task.sourcePath, record.relativePath),
-                  checksum: "",
-                  verified: false,
-                },
-              ];
-          let baseline = "";
-          for (const copy of copies) {
-            const checksum = await hashFile(
-              copy.path,
-              task.hashAlgorithm,
-              undefined,
-              (count) => {
-                completedBytes += count;
-                emit(
-                  "hashing",
-                  "正在读取现存副本并计算哈希",
-                  record.relativePath,
-                );
-              },
-            );
-            baseline ||= checksum;
-            copy.checksum = checksum;
-            copy.verified = checksum === baseline;
-            completedFiles++;
-            emit("hashing", "现存副本读取完成", record.relativePath, true);
-          }
-          record.srcChecksum = baseline;
-        }
-        for (const destination of task.destinations) {
-          const root = destination.resolvedPath || destination.path;
-          const copies = task.fileRecords.flatMap((record) =>
-            record.destinations.filter((copy) => inside(copy.path, root)),
-          );
-          destination.verified =
-            copies.length > 0 && copies.every((copy) => copy.verified);
-          destination.verifiedBytes = destination.verified
-            ? task.totalBytes
-            : copies
-                .filter((copy) => copy.verified)
-                .reduce((sum, copy) => {
-                  const record = task.fileRecords.find((item) =>
-                    item.destinations.includes(copy),
+        const task = engine.getTask(taskId);
+        if (!task || !task.provenance || task.provenance === "kocpy-transfer")
+          throw new Error("接管记录不存在");
+        const totalFiles = task.fileRecords.reduce(
+            (sum, record) => sum + Math.max(1, record.destinations.length),
+            0,
+          ),
+          totalBytes = task.fileRecords.reduce(
+            (sum, record) =>
+              sum + record.size * Math.max(1, record.destinations.length),
+            0,
+          ),
+          startedAt = Date.now();
+        let completedFiles = 0,
+          completedBytes = 0,
+          lastEmittedAt = 0;
+        const emit = (
+          phase: "hashing" | "completed" | "failed",
+          message: string,
+          currentFile?: string,
+          force = false,
+        ) => {
+          const now = Date.now();
+          if (!force && now - lastEmittedAt < 120) return;
+          lastEmittedAt = now;
+          const speedBps =
+              completedBytes / Math.max(0.001, (now - startedAt) / 1000),
+            eta = speedBps
+              ? Math.max(0, totalBytes - completedBytes) / speedBps
+              : 0;
+          if (main && !main.isDestroyed())
+            emitExistingProgress({
+              jobId,
+              phase,
+              message,
+              totalFiles,
+              completedFiles,
+              totalBytes,
+              completedBytes,
+              totalCandidates: 1,
+              completedCandidates: phase === "completed" ? 1 : 0,
+              currentCandidate: task.name,
+              currentFile,
+              speedBps,
+              eta,
+            });
+        };
+        emit("hashing", "正在读取现存副本并建立首次哈希基线", undefined, true);
+        try {
+          for (const record of task.fileRecords) {
+            const copies = record.destinations.length
+              ? record.destinations
+              : [
+                  {
+                    path: path.join(task.sourcePath, record.relativePath),
+                    checksum: "",
+                    verified: false,
+                  },
+                ];
+            let baseline = "";
+            for (const copy of copies) {
+              const checksum = await hashFile(
+                copy.path,
+                task.hashAlgorithm,
+                undefined,
+                (count) => {
+                  completedBytes += count;
+                  emit(
+                    "hashing",
+                    "正在读取现存副本并计算哈希",
+                    record.relativePath,
                   );
-                  return sum + (record?.size || 0);
-                }, 0);
-          destination.verifyProgress = 100;
+                },
+              );
+              baseline ||= checksum;
+              copy.checksum = checksum;
+              copy.verified = checksum === baseline;
+              completedFiles++;
+              emit("hashing", "现存副本读取完成", record.relativePath, true);
+            }
+            record.srcChecksum = baseline;
+          }
+          for (const destination of task.destinations) {
+            const root = destination.resolvedPath || destination.path;
+            const copies = task.fileRecords.flatMap((record) =>
+              record.destinations.filter((copy) => inside(copy.path, root)),
+            );
+            destination.verified =
+              copies.length > 0 && copies.every((copy) => copy.verified);
+            destination.verifiedBytes = destination.verified
+              ? task.totalBytes
+              : copies
+                  .filter((copy) => copy.verified)
+                  .reduce((sum, copy) => {
+                    const record = task.fileRecords.find((item) =>
+                      item.destinations.includes(copy),
+                    );
+                    return sum + (record?.size || 0);
+                  }, 0);
+            destination.verifyProgress = 100;
+          }
+          if (task.destinations.some((destination) => !destination.verified))
+            throw new Error("不同现存副本内容不一致，无法建立统一基线");
+          task.provenance = "external-baseline";
+          task.confidence = "baseline";
+          task.status = "completed";
+          task.verifiedBytes = task.totalBytes;
+          task.verifyProgress = 100;
+          task.lastVerifiedAt = Date.now();
+          task.errorMessage = undefined;
+          task.verifyLog = [
+            ...task.verifyLog,
+            "已重新读取全部现存文件并建立首次哈希基线；不代表原始现场接收校验",
+          ].slice(-120);
+          await Promise.all([persist(), catalog.upsertTask(task)]);
+          completedBytes = totalBytes;
+          completedFiles = totalFiles;
+          emit("completed", "首次哈希基线建立完成", undefined, true);
+          return task;
+        } catch (error) {
+          task.status = "failed";
+          task.errorMessage = String(error).replace(/^Error: /, "");
+          await Promise.all([persist(), catalog.upsertTask(task)]);
+          emit("failed", task.errorMessage, undefined, true);
+          throw error;
         }
-        if (task.destinations.some((destination) => !destination.verified))
-          throw new Error("不同现存副本内容不一致，无法建立统一基线");
-        task.provenance = "external-baseline";
-        task.confidence = "baseline";
-        task.status = "completed";
-        task.verifiedBytes = task.totalBytes;
-        task.verifyProgress = 100;
-        task.lastVerifiedAt = Date.now();
-        task.errorMessage = undefined;
-        task.verifyLog = [
-          ...task.verifyLog,
-          "已重新读取全部现存文件并建立首次哈希基线；不代表原始现场接收校验",
-        ].slice(-120);
-        await Promise.all([persist(), catalog.upsertTask(task)]);
-        completedBytes = totalBytes;
-        completedFiles = totalFiles;
-        emit("completed", "首次哈希基线建立完成", undefined, true);
-        return task;
-      } catch (error) {
-        task.status = "failed";
-        task.errorMessage = String(error).replace(/^Error: /, "");
-        await Promise.all([persist(), catalog.upsertTask(task)]);
-        emit("failed", task.errorMessage, undefined, true);
-        throw error;
-      }
       }),
   );
   handle(
     "existing:repair-manifest-missing",
     async (taskId: string, jobId = randomUUID()) =>
       withMaintenanceLock(`task:${taskId}`, async () => {
-      const task = engine.getTask(taskId),
-        comparison = task?.externalManifest;
-      if (!task || !comparison || comparison.status !== "mismatch")
-        throw new Error("没有可修复的外部清单差异");
-      if (!comparison.missing.length)
-        throw new Error("这份素材卷没有缺失文件");
-      const chosen = await dialog.showOpenDialog({
-        title: "选择同一素材卷的健康副本根目录",
-        defaultPath: path.dirname(task.sourcePath),
-        properties: ["openDirectory"],
-        message:
-          "可选择素材卷根目录、对应素材子目录或它们的上级目录；Kocpy 只采用唯一且全量通过清单校验的路径映射",
-      });
-      if (chosen.canceled) return null;
-      const healthyRoot = await canonical(chosen.filePaths[0]),
-        targetRoot = await canonical(task.sourcePath);
-      if (healthyRoot === targetRoot)
-        throw new Error("健康副本不能与待修复目录相同");
+        const task = engine.getTask(taskId),
+          comparison = task?.externalManifest;
+        if (!task || !comparison || comparison.status !== "mismatch")
+          throw new Error("没有可修复的外部清单差异");
+        if (!comparison.missing.length)
+          throw new Error("这份素材卷没有缺失文件");
+        const chosen = await dialog.showOpenDialog({
+          title: "选择同一素材卷的健康副本根目录",
+          defaultPath: path.dirname(task.sourcePath),
+          properties: ["openDirectory"],
+          message:
+            "可选择素材卷根目录、对应素材子目录或它们的上级目录；Kocpy 只采用唯一且全量通过清单校验的路径映射",
+        });
+        if (chosen.canceled) return null;
+        const healthyRoot = await canonical(chosen.filePaths[0]),
+          targetRoot = await canonical(task.sourcePath);
+        if (healthyRoot === targetRoot)
+          throw new Error("健康副本不能与待修复目录相同");
 
-      let totalFiles = comparison.missing.length * 2,
-        totalBytes = Math.max(1, task.totalBytes * 2);
-      const startedAt = Date.now();
-      let completedFiles = 0,
-        completedBytes = 0,
-        lastEmittedAt = 0;
-      const emit = (
-        phase: "hashing" | "finalizing" | "completed" | "failed",
-        message: string,
-        currentFile?: string,
-        force = false,
-      ) => {
-        const now = Date.now();
-        if (!force && now - lastEmittedAt < 120) return;
-        lastEmittedAt = now;
-        const speedBps =
-            completedBytes / Math.max(0.001, (now - startedAt) / 1000),
-          eta = speedBps
-            ? Math.max(0, totalBytes - completedBytes) / speedBps
-            : 0;
-        if (main && !main.isDestroyed())
-          main.webContents.send("existing:progress", {
-            jobId,
-            phase,
-            message,
-            totalFiles,
-            completedFiles,
-            totalBytes,
-            completedBytes,
-            totalCandidates: 1,
-            completedCandidates: phase === "completed" ? 1 : 0,
-            currentCandidate: task.name,
-            currentFile,
-            speedBps,
-            eta,
-          });
-      };
-      emit("hashing", "正在预检健康副本，写入前逐文件核对清单", undefined, true);
-      try {
-        const result = await repairMissingManifestFiles(
-          targetRoot,
-          healthyRoot,
-          comparison.path,
-          comparison.missing,
-          {
-            onPlan: (files, bytes, mapping) => {
-              totalFiles = Math.max(1, files * 2);
-              totalBytes = Math.max(1, bytes * 2);
-              emit(
-                "hashing",
-                `已识别唯一映射：${mapping.sourceRoot} → ${mapping.manifestRoot || "."}；找到 ${files} 个文件，开始逐文件校验`,
-                undefined,
-                true,
-              );
-            },
-            onBytes: (count, file) => {
-              completedBytes += count;
-              emit("hashing", "正在校验并安全补回缺失文件", file);
-            },
-            onFile: (file) => {
-              completedFiles++;
-              emit("finalizing", "文件阶段完成", file, true);
-            },
-          },
+        let totalFiles = comparison.missing.length * 2,
+          totalBytes = Math.max(1, task.totalBytes * 2);
+        const startedAt = Date.now();
+        let completedFiles = 0,
+          completedBytes = 0,
+          lastEmittedAt = 0;
+        const emit = (
+          phase: "hashing" | "finalizing" | "completed" | "failed",
+          message: string,
+          currentFile?: string,
+          force = false,
+        ) => {
+          const now = Date.now();
+          if (!force && now - lastEmittedAt < 120) return;
+          lastEmittedAt = now;
+          const speedBps =
+              completedBytes / Math.max(0.001, (now - startedAt) / 1000),
+            eta = speedBps
+              ? Math.max(0, totalBytes - completedBytes) / speedBps
+              : 0;
+          if (main && !main.isDestroyed())
+            emitExistingProgress({
+              jobId,
+              phase,
+              message,
+              totalFiles,
+              completedFiles,
+              totalBytes,
+              completedBytes,
+              totalCandidates: 1,
+              completedCandidates: phase === "completed" ? 1 : 0,
+              currentCandidate: task.name,
+              currentFile,
+              speedBps,
+              eta,
+            });
+        };
+        emit(
+          "hashing",
+          "正在预检健康副本，写入前逐文件核对清单",
+          undefined,
+          true,
         );
-        task.verifyLog = [
-          ...task.verifyLog,
-          `已从健康副本映射 ${result.sourceRoot} → ${result.manifestRoot} 补回 ${result.files} 个文件（${result.bytes} 字节）；随后必须完整重校验外部清单`,
-        ].slice(-120);
-        await Promise.all([persist(), catalog.upsertTask(task)]);
-        emit("completed", `已补回 ${result.files} 个文件，准备完整重校验`, undefined, true);
-        return result;
-      } catch (error) {
-        emit("failed", String(error).replace(/^Error: /, ""), undefined, true);
-        throw error;
-      }
+        try {
+          const result = await repairMissingManifestFiles(
+            targetRoot,
+            healthyRoot,
+            comparison.path,
+            comparison.missing,
+            {
+              onPlan: (files, bytes, mapping) => {
+                totalFiles = Math.max(1, files * 2);
+                totalBytes = Math.max(1, bytes * 2);
+                emit(
+                  "hashing",
+                  `已识别唯一映射：${mapping.sourceRoot} → ${mapping.manifestRoot || "."}；找到 ${files} 个文件，开始逐文件校验`,
+                  undefined,
+                  true,
+                );
+              },
+              onBytes: (count, file) => {
+                completedBytes += count;
+                emit("hashing", "正在校验并安全补回缺失文件", file);
+              },
+              onFile: (file) => {
+                completedFiles++;
+                emit("finalizing", "文件阶段完成", file, true);
+              },
+            },
+          );
+          task.verifyLog = [
+            ...task.verifyLog,
+            `已从健康副本映射 ${result.sourceRoot} → ${result.manifestRoot} 补回 ${result.files} 个文件（${result.bytes} 字节）；随后必须完整重校验外部清单`,
+          ].slice(-120);
+          await Promise.all([persist(), catalog.upsertTask(task)]);
+          emit(
+            "completed",
+            `已补回 ${result.files} 个文件，准备完整重校验`,
+            undefined,
+            true,
+          );
+          return result;
+        } catch (error) {
+          emit(
+            "failed",
+            String(error).replace(/^Error: /, ""),
+            undefined,
+            true,
+          );
+          throw error;
+        }
       }),
   );
   handle(
     "existing:reverify-manifest",
     async (taskId: string, jobId = randomUUID()) =>
       withMaintenanceLock(`task:${taskId}`, async () => {
-      const task = engine.getTask(taskId);
-      if (!task?.projectId || !task.externalManifest)
-        throw new Error("接管素材卷或外部清单不存在");
-      const projects = (
-          await store.read<ProjectConfig[]>("projects.json", [])
-        ).map(normalizeProject),
-        project = projects.find((item) => item.id === task.projectId);
-      if (!project) throw new Error("项目不存在");
-      const preview = await previewExistingBackup(
-          task.sourcePath,
-          project,
-          "card",
-          task.shootingDate,
-        ),
-        totalFiles = Math.max(1, preview.files),
-        totalBytes = Math.max(1, preview.bytes),
-        startedAt = Date.now();
-      let completedFiles = 0,
-        completedBytes = 0,
-        lastEmittedAt = 0;
-      const emit = (
-        phase: "hashing" | "completed" | "failed",
-        message: string,
-        currentFile?: string,
-        force = false,
-      ) => {
-        const now = Date.now();
-        if (!force && now - lastEmittedAt < 120) return;
-        lastEmittedAt = now;
-        const speedBps =
-            completedBytes / Math.max(0.001, (now - startedAt) / 1000),
-          eta = speedBps
-            ? Math.max(0, totalBytes - completedBytes) / speedBps
-            : 0;
-        if (main && !main.isDestroyed())
-          main.webContents.send("existing:progress", {
-            jobId,
-            phase,
-            message,
-            totalFiles,
-            completedFiles,
-            totalBytes,
-            completedBytes,
-            totalCandidates: 1,
-            completedCandidates: phase === "completed" ? 1 : 0,
-            currentCandidate: task.name,
-            currentFile,
-            speedBps,
-            eta,
-          });
-      };
-      emit("hashing", "正在按外部清单完整重读并校验", undefined, true);
-      const previousComparison = task.externalManifest;
-      try {
-        const verified = await importExistingBackup(
-          project,
-          task.sourcePath,
-          "manifest-import",
-          {
-            shootingDate: task.shootingDate,
-            device: task.devices[0],
-            cameraPosition: task.cameraPosition,
-            card: task.name,
-          },
-          {
-            onBytes: (count, file) => {
-              completedBytes += count;
-              emit("hashing", "正在计算文件校验值", file);
+        const task = engine.getTask(taskId);
+        if (!task?.projectId || !task.externalManifest)
+          throw new Error("接管素材卷或外部清单不存在");
+        const projects = (
+            await store.read<ProjectConfig[]>("projects.json", [])
+          ).map(normalizeProject),
+          project = projects.find((item) => item.id === task.projectId);
+        if (!project) throw new Error("项目不存在");
+        const preview = await previewExistingBackup(
+            task.sourcePath,
+            project,
+            "card",
+            task.shootingDate,
+          ),
+          totalFiles = Math.max(1, preview.files),
+          totalBytes = Math.max(1, preview.bytes),
+          startedAt = Date.now();
+        let completedFiles = 0,
+          completedBytes = 0,
+          lastEmittedAt = 0;
+        const emit = (
+          phase: "hashing" | "completed" | "failed",
+          message: string,
+          currentFile?: string,
+          force = false,
+        ) => {
+          const now = Date.now();
+          if (!force && now - lastEmittedAt < 120) return;
+          lastEmittedAt = now;
+          const speedBps =
+              completedBytes / Math.max(0.001, (now - startedAt) / 1000),
+            eta = speedBps
+              ? Math.max(0, totalBytes - completedBytes) / speedBps
+              : 0;
+          if (main && !main.isDestroyed())
+            emitExistingProgress({
+              jobId,
+              phase,
+              message,
+              totalFiles,
+              completedFiles,
+              totalBytes,
+              completedBytes,
+              totalCandidates: 1,
+              completedCandidates: phase === "completed" ? 1 : 0,
+              currentCandidate: task.name,
+              currentFile,
+              speedBps,
+              eta,
+            });
+        };
+        emit("hashing", "正在按外部清单完整重读并校验", undefined, true);
+        const previousComparison = task.externalManifest;
+        try {
+          const verified = await importExistingBackup(
+            project,
+            task.sourcePath,
+            "manifest-import",
+            {
+              shootingDate: task.shootingDate,
+              device: task.devices[0],
+              cameraPosition: task.cameraPosition,
+              card: task.name,
             },
-            onFile: (file) => {
-              completedFiles++;
-              emit("hashing", "文件校验完成", file, true);
+            {
+              onBytes: (count, file) => {
+                completedBytes += count;
+                emit("hashing", "正在计算文件校验值", file);
+              },
+              onFile: (file) => {
+                completedFiles++;
+                emit("hashing", "文件校验完成", file, true);
+              },
             },
-          },
-        );
-        if (
-          verified.externalManifest &&
-          previousComparison.resolution?.type === "revised-missing"
-        )
-          verified.externalManifest.resolution = previousComparison.resolution;
-        if (verified.status !== "completed") {
+          );
           if (
             verified.externalManifest &&
-            previousComparison.resolution &&
-            sameManifestDifferences(previousComparison, verified.externalManifest)
+            previousComparison.resolution?.type === "revised-missing"
           )
-            verified.externalManifest.resolution = previousComparison.resolution;
+            verified.externalManifest.resolution =
+              previousComparison.resolution;
+          if (verified.status !== "completed") {
+            if (
+              verified.externalManifest &&
+              previousComparison.resolution &&
+              sameManifestDifferences(
+                previousComparison,
+                verified.externalManifest,
+              )
+            )
+              verified.externalManifest.resolution =
+                previousComparison.resolution;
+            const originalDestination = task.destinations[0],
+              verifiedDestination = verified.destinations[0];
+            verified.destinations[0] = {
+              ...originalDestination,
+              ...verifiedDestination,
+              id: originalDestination?.id || verifiedDestination.id,
+              volumeId: originalDestination?.volumeId,
+              volumeUuid: originalDestination?.volumeUuid,
+              volumeName: originalDestination?.volumeName,
+            };
+            const originalId = task.id,
+              originalCreatedAt = task.createdAt,
+              log = task.verifyLog;
+            Object.assign(task, verified, {
+              id: originalId,
+              createdAt: originalCreatedAt,
+              verifyLog: [...log, ...verified.verifyLog].slice(-120),
+            });
+            await Promise.all([persist(), catalog.upsertTask(task)]);
+            completedBytes = totalBytes;
+            completedFiles = totalFiles;
+            emit(
+              "completed",
+              verified.errorMessage
+                ? `完整核对完成，${verified.errorMessage}`
+                : "完整核对完成，外部清单仍有差异",
+              undefined,
+              true,
+            );
+            return task;
+          }
           const originalDestination = task.destinations[0],
             verifiedDestination = verified.destinations[0];
           verified.destinations[0] = {
@@ -2392,131 +2707,113 @@ app.whenReady().then(async () => {
           await Promise.all([persist(), catalog.upsertTask(task)]);
           completedBytes = totalBytes;
           completedFiles = totalFiles;
+          emit("completed", "外部清单完整校验通过", undefined, true);
+          return task;
+        } catch (error) {
           emit(
-            "completed",
-            verified.errorMessage
-              ? `完整核对完成，${verified.errorMessage}`
-              : "完整核对完成，外部清单仍有差异",
+            "failed",
+            String(error).replace(/^Error: /, ""),
             undefined,
             true,
           );
-          return task;
+          throw error;
         }
-        const originalDestination = task.destinations[0],
-          verifiedDestination = verified.destinations[0];
-        verified.destinations[0] = {
-          ...originalDestination,
-          ...verifiedDestination,
-          id: originalDestination?.id || verifiedDestination.id,
-          volumeId: originalDestination?.volumeId,
-          volumeUuid: originalDestination?.volumeUuid,
-          volumeName: originalDestination?.volumeName,
-        };
-        const originalId = task.id,
-          originalCreatedAt = task.createdAt,
-          log = task.verifyLog;
-        Object.assign(task, verified, {
-          id: originalId,
-          createdAt: originalCreatedAt,
-          verifyLog: [...log, ...verified.verifyLog].slice(-120),
-        });
-        await Promise.all([persist(), catalog.upsertTask(task)]);
-        completedBytes = totalBytes;
-        completedFiles = totalFiles;
-        emit("completed", "外部清单完整校验通过", undefined, true);
-        return task;
-      } catch (error) {
-        emit("failed", String(error).replace(/^Error: /, ""), undefined, true);
-        throw error;
-      }
       }),
   );
   handle("existing:accept-manifest-extra", async (taskId: string) =>
     withMaintenanceLock(`task:${taskId}`, async () => {
-    const task = engine.getTask(taskId),
-      comparison = task?.externalManifest;
-    if (!task || !comparison || comparison.status !== "mismatch")
-      throw new Error("没有可确认的外部清单差异");
-    if (manifestRequirementMet(task)) throw new Error("这项差异已经确认");
-    if (
-      !comparison.extra.length ||
-      comparison.missing.length ||
-      comparison.sizeMismatches.length ||
-      comparison.checksumMismatches.length
-    )
-      throw new Error("只有单纯的额外文件可以按当前基线确认");
-    if (
-      task.status !== "completed" ||
-      task.confidence !== "baseline" ||
-      !task.fileRecords.length ||
-      task.fileRecords.some(
-        (record) =>
-          !record.srcChecksum ||
-          !record.destinations.length ||
-          record.destinations.some((destination) => !destination.verified),
+      const task = engine.getTask(taskId),
+        comparison = task?.externalManifest;
+      if (!task || !comparison || comparison.status !== "mismatch")
+        throw new Error("没有可确认的外部清单差异");
+      if (manifestRequirementMet(task)) throw new Error("这项差异已经确认");
+      if (
+        !comparison.extra.length ||
+        comparison.missing.length ||
+        comparison.sizeMismatches.length ||
+        comparison.checksumMismatches.length
       )
-    )
-      throw new Error("请先完整读取现存文件并建立可信哈希基线");
-    comparison.resolution = {
-      type: "accepted-extra",
-      resolvedAt: Date.now(),
-      note: "用户确认额外文件属于有效素材；保留外部清单差异，并以 Kocpy 首次哈希基线作为当前可信状态",
-    };
-    task.verifyLog = [...task.verifyLog, comparison.resolution.note].slice(-120);
-    task.errorMessage = undefined;
-    await Promise.all([persist(), catalog.upsertTask(task)]);
-    return task;
+        throw new Error("只有单纯的额外文件可以按当前基线确认");
+      if (
+        task.status !== "completed" ||
+        task.confidence !== "baseline" ||
+        !task.fileRecords.length ||
+        task.fileRecords.some(
+          (record) =>
+            !record.srcChecksum ||
+            !record.destinations.length ||
+            record.destinations.some((destination) => !destination.verified),
+        )
+      )
+        throw new Error("请先完整读取现存文件并建立可信哈希基线");
+      comparison.resolution = {
+        type: "accepted-extra",
+        resolvedAt: Date.now(),
+        note: "用户确认额外文件属于有效素材；保留外部清单差异，并以 Kocpy 首次哈希基线作为当前可信状态",
+      };
+      task.verifyLog = [...task.verifyLog, comparison.resolution.note].slice(
+        -120,
+      );
+      task.errorMessage = undefined;
+      await Promise.all([persist(), catalog.upsertTask(task)]);
+      return task;
     }),
   );
   handle(
     "existing:revise-manifest-missing",
     async (taskId: string, note: string, confirmation: string) =>
       withMaintenanceLock(`task:${taskId}`, async () => {
-      const task = engine.getTask(taskId),
-        comparison = task?.externalManifest;
-      if (!task || !comparison || comparison.status !== "mismatch")
-        throw new Error("没有可修订的外部清单差异");
-      if (
-        !comparison.missing.length ||
-        comparison.extra.length ||
-        comparison.sizeMismatches.length ||
-        comparison.checksumMismatches.length
-      )
-        throw new Error("只有单纯缺失、没有其他清单异常时才允许修订 MHL");
-      if (confirmation.trim() !== "修改 MHL")
-        throw new Error("请输入“修改 MHL”完成重要确认");
-      note = note.trim();
-      if (note.length < 2 || note.length > 500)
-        throw new Error("请填写 2–500 个字符的素材剔除原因");
-      const targetRoot = await canonical(task.sourcePath),
-        manifestPath = await canonical(comparison.path);
-      if (!inside(manifestPath, targetRoot))
-        throw new Error("外部 MHL 不在当前素材卷目录内，拒绝修改");
-      const result = await reviseMhlMissingEntries(
-          manifestPath,
-          comparison.missing,
-          path.join(targetRoot, ".kocpy-manifest-history"),
-        ),
-        revised = await inspectExternalManifest(targetRoot);
-      if (!revised || revised.status === "mismatch" || revised.status === "unsupported")
-        throw new Error("MHL 已保存审计副本，但修订结果仍有差异，请重新完整核对");
-      revised.resolution = {
-        type: "revised-missing",
-        resolvedAt: Date.now(),
-        note,
-        excluded: result.excluded,
-        originalManifestSha256: result.originalManifestSha256,
-        revisedManifestSha256: result.revisedManifestSha256,
-        auditPath: result.auditPath,
-      };
-      task.externalManifest = revised;
-      task.errorMessage = "MHL 已按用户确认修订，等待完整重校验";
-      task.verifyLog = [
-        ...task.verifyLog,
-        `用户经重要确认从 MHL 排除 ${result.excluded.length} 个缺失记录；原因：${note}；原始清单 SHA-256 ${result.originalManifestSha256}；审计副本 ${result.auditPath}`,
-      ].slice(-120);
-      await Promise.all([persist(), catalog.upsertTask(task)]);
-      return result;
+        const task = engine.getTask(taskId),
+          comparison = task?.externalManifest;
+        if (!task || !comparison || comparison.status !== "mismatch")
+          throw new Error("没有可修订的外部清单差异");
+        if (
+          !comparison.missing.length ||
+          comparison.extra.length ||
+          comparison.sizeMismatches.length ||
+          comparison.checksumMismatches.length
+        )
+          throw new Error("只有单纯缺失、没有其他清单异常时才允许修订 MHL");
+        if (confirmation.trim() !== "修改 MHL")
+          throw new Error("请输入“修改 MHL”完成重要确认");
+        note = note.trim();
+        if (note.length < 2 || note.length > 500)
+          throw new Error("请填写 2–500 个字符的素材剔除原因");
+        const targetRoot = await canonical(task.sourcePath),
+          manifestPath = await canonical(comparison.path);
+        if (!inside(manifestPath, targetRoot))
+          throw new Error("外部 MHL 不在当前素材卷目录内，拒绝修改");
+        const result = await reviseMhlMissingEntries(
+            manifestPath,
+            comparison.missing,
+            path.join(targetRoot, ".kocpy-manifest-history"),
+          ),
+          revised = await inspectExternalManifest(targetRoot);
+        if (
+          !revised ||
+          revised.status === "mismatch" ||
+          revised.status === "unsupported"
+        )
+          throw new Error(
+            "MHL 已保存审计副本，但修订结果仍有差异，请重新完整核对",
+          );
+        revised.resolution = {
+          type: "revised-missing",
+          resolvedAt: Date.now(),
+          note,
+          excluded: result.excluded,
+          originalManifestSha256: result.originalManifestSha256,
+          revisedManifestSha256: result.revisedManifestSha256,
+          auditPath: result.auditPath,
+        };
+        task.externalManifest = revised;
+        task.errorMessage = "MHL 已按用户确认修订，等待完整重校验";
+        task.verifyLog = [
+          ...task.verifyLog,
+          `用户经重要确认从 MHL 排除 ${result.excluded.length} 个缺失记录；原因：${note}；原始清单 SHA-256 ${result.originalManifestSha256}；审计副本 ${result.auditPath}`,
+        ].slice(-120);
+        await Promise.all([persist(), catalog.upsertTask(task)]);
+        return result;
       }),
   );
   handle(
@@ -2528,9 +2825,10 @@ app.whenReady().then(async () => {
         ? await safeChild(task.sourcePath, relativePath)
         : task.sourcePath;
       if (
-        await fs
-          .access(itemPath)
-          .then(() => true, () => false)
+        await fs.access(itemPath).then(
+          () => true,
+          () => false,
+        )
       )
         shell.showItemInFolder(itemPath);
       else shell.showItemInFolder(path.dirname(itemPath));
@@ -2642,14 +2940,35 @@ app.whenReady().then(async () => {
       ).map(normalizeProject),
       project = projects.find((item) => item.id === projectId);
     if (!project) throw new Error("项目不存在");
-    const valid = new Set(
-      (project.checklists || [])
-        .filter((item) => item.phase === run.phase)
-        .map((item) => item.id),
+
+    if (
+      !["start", "close"].includes(run.phase) ||
+      !/^\d{4}-\d{2}-\d{2}$/.test(run.date || "")
+    )
+      throw new Error("请确认检查阶段与拍摄日期");
+    run.completed = validateChecklist(
+      (project.checklists || []).filter((item) => item.phase === run.phase),
+      run.completed || [],
+      run.operator || "",
     );
-    run.completed = [
-      ...new Set<string>((run.completed || []) as string[]),
-    ].filter((id) => valid.has(id));
+    if (run.phase === "close") {
+      const related = engine
+        .getAllTasks()
+        .filter((task) => task.projectId === projectId);
+      const status = projectCloseoutSummary(project, related, [run.date]);
+      if (
+        status.pending.length ||
+        status.unconfirmed.length ||
+        related.some(
+          (task) =>
+            task.shootingDate === run.date &&
+            !taskMeetsCopyRequirement(task, project.requiredCopies || 2),
+        )
+      )
+        throw new Error(
+          "该拍摄日仍有未达标素材或未确认的设备使用状态，请在项目详情处理后再签署收工。",
+        );
+    }
     run.id = run.id || randomUUID();
     run.signedAt = Date.now();
     project.checklistRuns = [
@@ -2676,11 +2995,21 @@ app.whenReady().then(async () => {
     return nasPresets;
   });
   handle("nas:delete", async (id: string) => {
+    if (
+      !(await confirmOperation(
+        "删除 NAS 预设？",
+        "仅移除连接路径，不删除 NAS 上任何文件。",
+      ))
+    )
+      return null;
     nasPresets = nasPresets.filter((item) => item.id !== id);
     await store.write("nas-presets.json", nasPresets);
     return nasPresets;
   });
   handle("nas:test", async (id: string) => {
+    const candidate = nasPresets.find((item) => item.id === id);
+    if (candidate && !(await assertDiagnosticTarget(candidate.path)))
+      return null;
     const preset = nasPresets.find((item) => item.id === id);
     if (!preset) throw new Error("NAS 预设不存在");
     const started = Date.now();
@@ -2751,6 +3080,13 @@ app.whenReady().then(async () => {
     return projectTemplates;
   });
   handle("templates:delete", async (id: string) => {
+    if (
+      !(await confirmOperation(
+        "删除自定义模板？",
+        "仅删除模板配置，不改变已建立的项目和素材。",
+      ))
+    )
+      return null;
     if (id.startsWith("builtin-"))
       throw new Error("系统模板不能删除，可以选择隐藏");
     projectTemplates = projectTemplates.filter((item) => item.id !== id);
@@ -2796,7 +3132,7 @@ app.whenReady().then(async () => {
       properties: ["openFile"],
       filters: [{ name: "Kocpy 项目模板", extensions: ["json"] }],
     });
-    if (chosen.canceled) return projectTemplates;
+    if (chosen.canceled) return null;
     const importPath = chosen.filePaths[0],
       stat = await fs.stat(importPath);
     if (stat.size > 2 * 1024 * 1024)
@@ -2839,9 +3175,9 @@ app.whenReady().then(async () => {
     "templates:preview-apply",
     async (templateId: string, projectId: string) => {
       const template = projectTemplates.find((item) => item.id === templateId),
-        project = (
-          await store.read<ProjectConfig[]>("projects.json", [])
-        ).find((item) => item.id === projectId);
+        project = (await store.read<ProjectConfig[]>("projects.json", [])).find(
+          (item) => item.id === projectId,
+        );
       if (!template) throw new Error("模板不存在");
       if (!project) throw new Error("项目不存在");
       const actionLabels: Record<string, string> = {
@@ -2857,8 +3193,18 @@ app.whenReady().then(async () => {
           {
             field: "devices",
             label: "设备、素材卷前缀与机位",
-            before: project.devices.join(" / "),
-            after: template.devices.join(" / "),
+            before: project.devices
+              .map(
+                (device) =>
+                  `${device} · 前缀 ${project.volumePrefixByDevice?.[device] || project.volumePrefix} · 机位 ${(project.devicePositions?.[device] || []).join(",") || "无"}`,
+              )
+              .join(" / "),
+            after: template.devices
+              .map(
+                (device) =>
+                  `${device} · 前缀 ${template.volumePrefixByDevice?.[device] || template.volumePrefix} · 机位 ${(template.devicePositions?.[device] || []).join(",") || "无"}`,
+              )
+              .join(" / "),
           },
           {
             field: "requiredCopies",
@@ -2906,10 +3252,12 @@ app.whenReady().then(async () => {
   );
   handle(
     "templates:apply",
-    async (templateId: string, projectId: string, selectedFields?: string[]) => {
-      const template = projectTemplates.find(
-        (item) => item.id === templateId,
-      );
+    async (
+      templateId: string,
+      projectId: string,
+      selectedFields?: string[],
+    ) => {
+      const template = projectTemplates.find((item) => item.id === templateId);
       if (!template) throw new Error("模板不存在");
       const projects = (
           await store.read<ProjectConfig[]>("projects.json", [])
@@ -2975,6 +3323,7 @@ app.whenReady().then(async () => {
         project = projects.find((item) => item.id === projectId);
       if (!project) throw new Error("项目不存在");
       if (!note.trim()) throw new Error("请输入交接内容");
+      if (!operator.trim()) throw new Error("请填写实际交接人姓名");
       project.handoffNotes = [
         ...(project.handoffNotes || []).slice(-199),
         {
@@ -3132,6 +3481,20 @@ app.whenReady().then(async () => {
     return result.filePath;
   });
   handle("workspace:cold-archive", async (projectId: string) => {
+    const selected = engine
+      .getAllTasks()
+      .filter((task) => task.projectId === projectId);
+    if (
+      !(await confirmOperation(
+        "导出并卸载项目历史记录？",
+        "范围：" +
+          selected.length +
+          " 个任务、" +
+          selected.reduce((count, task) => count + task.fileRecords.length, 0) +
+          " 条文件记录。\n先写入并回读校验归档包，成功后从热数据卸载。磁盘素材不变，请保存归档包以便恢复。",
+      ))
+    )
+      return null;
     if (engine.hasActive() || proxyBusy) throw new Error("请等待当前任务结束");
     const projects = (
         await store.read<ProjectConfig[]>("projects.json", [])
@@ -3204,11 +3567,11 @@ app.whenReady().then(async () => {
     if (archiveStat.size > 512 * 1024 * 1024)
       throw new Error("冷归档超过 512 MiB 安全限制");
     const parsed = JSON.parse(
-      (await gunzipAsync(await fs.readFile(chosen.filePaths[0]), {
-        maxOutputLength: 1024 * 1024 * 1024,
-      } as any)).toString(
-        "utf8",
-      ),
+      (
+        await gunzipAsync(await fs.readFile(chosen.filePaths[0]), {
+          maxOutputLength: 1024 * 1024 * 1024,
+        } as any)
+      ).toString("utf8"),
     );
     if (
       parsed.application !== "Kocpy" ||
@@ -3264,6 +3627,9 @@ app.whenReady().then(async () => {
   });
   handle("lan:stop", () => lanIndex.stop());
   handle("lan:status", () => lanIndex.status());
+  handle("lan:read", (address: string, token: string) =>
+    readLanProjectIndex(address, token),
+  );
   handle("system:reveal", (file: string) => shell.showItemInFolder(file));
   handle("updates:check", async () => {
     const response = await fetch(
@@ -3732,17 +4098,20 @@ app.whenReady().then(async () => {
           !manifestRequirementMet(task) ||
           destinationIndex < 0
         )
-          throw new Error("只有通过完整校验且没有未解决清单差异的副本才能导出 MHL");
+          throw new Error(
+            "只有通过完整校验且没有未解决清单差异的副本才能导出 MHL",
+          );
         await fs.writeFile(r.filePath, generateMhl(task, destinationIndex));
-      }
-      else if (format === "ascmhl") {
+      } else if (format === "ascmhl") {
         const destinationIndex = manifestDestinationIndex(task);
         if (
           task.status !== "completed" ||
           !manifestRequirementMet(task) ||
           destinationIndex < 0
         )
-          throw new Error("只有通过完整校验且没有未解决清单差异的副本才能导出 ASC MHL");
+          throw new Error(
+            "只有通过完整校验且没有未解决清单差异的副本才能导出 ASC MHL",
+          );
         for (const record of task.fileRecords)
           if (!record.ascMhlMd5) {
             const readable =
@@ -3944,7 +4313,8 @@ app.whenReady().then(async () => {
     if (!job) return false;
     if (job.status === "running")
       proxyController?.abort(new Error("用户取消代理任务"));
-    else if (job.status === "pending") job.status = "cancelled";
+    else if (["pending", "paused"].includes(job.status))
+      job.status = "cancelled";
     await persistProxyJobs();
     emitProxyJobs();
     return true;
@@ -3983,7 +4353,7 @@ app.whenReady().then(async () => {
   });
   handle("proxy:delete", async (id: string) => {
     const job = proxyJobs.find((j) => j.id === id);
-    if (!job || ["running", "pending"].includes(job.status))
+    if (!job || ["running", "pending", "paused"].includes(job.status))
       throw new Error("请先取消代理任务");
     proxyJobs = proxyJobs.filter((j) => j.id !== id);
     await persistProxyJobs();
@@ -3992,7 +4362,10 @@ app.whenReady().then(async () => {
   });
   handle(
     "proxy:export-delivery",
-    async (format: "resolve" | "premiere" | "fcpxml" | "json") => {
+    async (
+      format: "resolve" | "premiere" | "fcpxml" | "json",
+      jobIds?: string[],
+    ) => {
       if (!["resolve", "premiere", "fcpxml", "json"].includes(format))
         throw new Error("不支持的交付格式");
       const extension =
@@ -4004,15 +4377,25 @@ app.whenReady().then(async () => {
       if (!result.filePath) return null;
       await fs.writeFile(
         result.filePath,
-        generateDeliveryManifest(proxyJobs, format),
+        generateDeliveryManifest(
+          proxyJobs.filter(
+            (job) =>
+              job.status === "completed" &&
+              (!jobIds || jobIds.includes(job.id)),
+          ),
+          format,
+        ),
         "utf8",
       );
       return result.filePath;
     },
   );
-  handle("proxy:export-package", async () => {
+  handle("proxy:export-package", async (jobIds?: string[]) => {
     const completed = proxyJobs.filter(
-      (job) => job.status === "completed" && job.outputPath,
+      (job) =>
+        job.status === "completed" &&
+        job.outputPath &&
+        (!jobIds || jobIds.includes(job.id)),
     );
     if (!completed.length) throw new Error("没有可交付的已完成代理文件");
     const chosen = await dialog.showOpenDialog({
@@ -4072,10 +4455,18 @@ app.whenReady().then(async () => {
     return root;
   });
   engine.on("progress", (payload) => {
-    clearTimeout(persistTimer);
-    persistTimer = setTimeout(() => {
-      void persist().catch(() => {});
-    }, 1000);
+    if (operations.active)
+      operations.progress({
+        message: `${payload.status} · ${payload.currentFile || ""}`,
+        totalBytes: payload.totalBytes,
+        completedBytes: payload.verifiedBytes,
+        speedBps: payload.speedBps,
+      });
+    if (!persistTimer)
+      persistTimer = setTimeout(() => {
+        persistTimer = undefined;
+        void persist().catch(() => {});
+      }, 1000);
     if (main && !main.isDestroyed())
       main.webContents.send("tasks:progress", payload);
     if (
@@ -4084,12 +4475,16 @@ app.whenReady().then(async () => {
     )
       blocker = powerSaveBlocker.start("prevent-app-suspension");
   });
-  engine.on("settled", async (task: BackupTask) => {
+  engine.on("settled", async (task: BackupTask, context?: { kind: "reverify" }) => {
+    const allowCompletionActions = !operations.active && context?.kind !== "reverify";
     clearTimeout(persistTimer);
+    persistTimer = undefined;
     void persist().catch((e) =>
       dialog.showErrorBox("任务记录保存失败", String(e)),
     );
-    void catalog.upsertTask(task).catch(() => {});
+    void catalog.upsertTask(task).then(() => {
+      if (main && !main.isDestroyed()) main.webContents.send("workspace:changed");
+    }).catch((error) => dialog.showErrorBox("素材索引更新失败", "备份文件未因此删除。请在任务记录中核对结果，稍后重建素材索引。\n" + String(error)));
     if (blocker !== undefined) {
       powerSaveBlocker.stop(blocker);
       blocker = undefined;
@@ -4107,7 +4502,7 @@ app.whenReady().then(async () => {
           .notificationSound,
       }).show();
     }
-    if (task.status === "completed" && task.projectId)
+    if (task.status === "completed" && task.projectId && allowCompletionActions)
       void (async () => {
         const project = (
             await store.read<ProjectConfig[]>("projects.json", [])
@@ -4274,12 +4669,19 @@ app.whenReady().then(async () => {
 app.on("before-quit", (event) => {
   if (quitReady) return;
   event.preventDefault();
-  if (engine.hasActive() || proxyBusy) {
+  if (engine.hasActive() || proxyBusy || operations.active) {
     main?.show();
     dialog.showMessageBoxSync({
       type: "info",
       message: "仍有任务进行中",
-      detail: "请先在工作台取消备份任务，或等待代理生成完成后退出。",
+      detail: operations.active
+        ? operations
+            .list()
+            .filter((item) => item.status === "running")
+            .map((item) => item.name)
+            .join("、") +
+          "尚未完成。可关闭窗口在后台继续，提交阶段不支持强制取消，请等待结束后退出。"
+        : "请先安全取消备份或代理任务，或等待完成后退出。",
     });
     return;
   }
