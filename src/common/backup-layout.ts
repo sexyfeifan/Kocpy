@@ -8,15 +8,40 @@ export function sourceFolderName(sourcePath: string): string {
   return name;
 }
 
-export function normalBackupFolder(sourcePath: string, timestamp: string): string {
+export function normalBackupFolder(
+  sourcePath: string,
+  timestamp: string,
+): string {
   const name = sourceFolderName(sourcePath)
     .trim()
     .replace(/[<>:"/\\|?*\x00-\x1f]/g, "_")
     .slice(0, 100);
-  if (!name || name === "." || name === "..") throw new Error("素材文件夹名称无效");
+  if (!name || name === "." || name === "..")
+    throw new Error("素材文件夹名称无效");
   return `${name}_${timestamp}`;
 }
 
-export function previewBackupPath(destination: string, source: string, mirror: boolean): string {
+export function previewBackupPath(
+  destination: string,
+  source: string,
+  mirror: boolean,
+): string {
   return `${destination.replace(/\/+$/, "")}/${mirror ? sourceFolderName(source) : normalBackupFolder(source, "[开始时的时间戳]")}`;
+}
+
+/** Missing/invalid capacity is unknown, not a passed preflight. */
+export function capacityReadiness(
+  destinations: string[],
+  freeByPath: Record<string, number>,
+  required: number,
+) {
+  const checked = destinations.filter(
+    (location) =>
+      Number.isFinite(freeByPath[location]) && freeByPath[location] >= required,
+  ).length;
+  return {
+    checked,
+    total: destinations.length,
+    ready: destinations.length > 0 && checked === destinations.length,
+  };
 }

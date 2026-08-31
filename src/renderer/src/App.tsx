@@ -10,7 +10,7 @@ import {
   useRef,
   type ReactNode,
 } from "react";
-import { selectLiveTask, transferPhaseText } from "./task-state";
+import { selectLiveTask, transferPhaseText, transferTiming, transferProgressLabel } from "./task-state";
 import {
   LayoutDashboard,
   ArrowLeftRight,
@@ -1068,7 +1068,7 @@ export function App() {
                         </h2>
                         <p>
                           {current
-                            ? `${current.currentFile || "正在准备"} · ${Math.round(current.status === "verifying" ? current.verifyProgress || 0 : current.copyProgress || 0)}%`
+                            ? `${current.currentFile || "正在准备"} · ${transferProgressLabel(current, current.status === "verifying" ? "verify" : "copy")}`
                             : `最近完成 ${finished.length} 次校验备份，连接下一张素材卡即可继续。`}
                         </p>
                       </div>
@@ -2177,7 +2177,7 @@ export function App() {
                                     <span className="project-live-transfer">
                                       {task.status === "paused"
                                         ? "已暂停"
-                                        : `${task.status === "verifying" ? "校验" : "复制"} ${Math.round(task.status === "verifying" ? task.verifyProgress || 0 : task.copyProgress || 0)}% · ${bytes(task.status === "verifying" ? task.verifySpeedBps : task.speedBps)}/s`}
+                                        : `${transferPhaseText(task)} · ${transferProgressLabel(task, task.status === "verifying" ? "verify" : "copy")} · ${transferTiming(task).speed ? `${bytes(transferTiming(task).speed)}/s` : "测速中"}`}
                                     </span>
                                   )}
                                 </small>
@@ -2730,16 +2730,8 @@ export function App() {
                 </div>
                 <div>
                   <strong>
-                    {(
-                      selected.status === "verifying"
-                        ? selected.verifySpeedBps
-                        : selected.speedBps
-                    )
-                      ? bytes(
-                          selected.status === "verifying"
-                            ? selected.verifySpeedBps
-                            : selected.speedBps,
-                        ) + "/s"
+                    {transferTiming(selected).speed
+                      ? bytes(transferTiming(selected).speed) + "/s"
                       : "—"}
                   </strong>
                   <span>
@@ -2750,28 +2742,16 @@ export function App() {
                 </div>
                 <div>
                   <strong>
-                    {selected.startedAt && selected.completedAt
-                      ? duration(
-                          (selected.completedAt - selected.startedAt) / 1000,
-                        )
-                      : (
-                            selected.status === "verifying"
-                              ? selected.verifyEta
-                              : selected.eta
-                          )
-                        ? duration(
-                            selected.status === "verifying"
-                              ? selected.verifyEta
-                              : selected.eta,
-                          )
-                        : "—"}
+                    {transferTiming(selected).seconds > 0
+                      ? duration(transferTiming(selected).seconds)
+                      : "—"}
                   </strong>
-                  <span>{active(selected) ? "预计剩余" : "总用时"}</span>
+                  <span>{transferTiming(selected).label}</span>
                 </div>
               </div>
               <div className="phase-head">
-                <span>拷贝 {Math.round(selected.copyProgress || 0)}%</span>
-                <span>校验 {Math.round(selected.verifyProgress || 0)}%</span>
+                <span>复制 {transferProgressLabel(selected, "copy")}</span>
+                <span>校验 {transferProgressLabel(selected, "verify")}</span>
               </div>
               {active(selected) && (
                 <p className="muted small" role="status">
@@ -2948,12 +2928,12 @@ export function App() {
                   </div>
                   <div className="destination-status">
                     <span>
-                      拷贝 {Math.round(d.copyProgress || 0)}% · 校验{" "}
-                      {Math.round(d.verifyProgress || 0)}% ·{" "}
+                      复制 {transferProgressLabel(d, "copy")} · 校验{" "}
+                      {transferProgressLabel(d, "verify")} ·{" "}
                       {(
                         selected.status === "verifying"
                           ? d.verifySpeedBps
-                          : d.speedBps
+                          : selected.status === "running" ? d.speedBps : 0
                       )
                         ? `${bytes(selected.status === "verifying" ? d.verifySpeedBps : d.speedBps)}/s`
                         : `已保存 ${bytes(savedDestinationBytes(selected, d))} · 本次写入 ${bytes(d.bytesWritten)}`}
@@ -3025,7 +3005,7 @@ export function App() {
                       >
                         <Play size={14} />
                         {taskCommand?.id === selected.id
-                          ? "正在确认状态…"
+                          ? taskCommand.action === "pause" ? "正在暂停…" : "正在继续…"
                           : "继续"}
                       </Button>
                     ) : ["running", "verifying"].includes(selected.status) ? (
@@ -3036,7 +3016,7 @@ export function App() {
                       >
                         <Pause size={14} />
                         {taskCommand?.id === selected.id
-                          ? "正在确认状态…"
+                          ? taskCommand.action === "pause" ? "正在暂停…" : "正在继续…"
                           : "暂停"}
                       </Button>
                     ) : null}
@@ -4633,14 +4613,16 @@ function HelpPage({
       purpose: "从素材卡或文件夹向 1–4 个目的地复制，并逐目标独立回读校验。",
       steps: [
         "连接素材卡，点击“新建备份”并选择素材来源。",
-        "选择素材卡模式或拍摄项目，确认日期、设备和机位。",
-        "在设置目的地时选择普通备份或镜像备份；目的地统一选择存放副本的父目录。",
+        "默认普通备份，无需创建项目；需要拍摄日、设备和机位管理时再选择项目备份。",
+        "普通备份内选择按次保存（推荐）或保留源文件夹（镜像备份）；目的地统一选择存放副本的父目录。",
         "普通备份保存为“源文件夹名_时间戳”；镜像备份保留所选源文件夹这一层，不添加时间戳。开始前核对每个来源的最终路径。",
         "扫描统计中的数字是各类型的文件数，不是卷数；其他／附属文件也会备份。源和目的地均支持从 Finder 拖入文件夹。",
         "选择位于不同物理磁盘的目的地并开始；紫色表示拷贝，绿色表示独立校验。",
       ],
       tips: [
         "Kocpy 不会自动开始写入。",
+        "高级选项默认折叠，哈希与逐目标独立回读始终开启；容量未知显示待预检，不当作通过。",
+        "预计时间仅指当前阶段。暂停清空速度与预计时间，继续后重新采样；预检和测速不足时显示横线。字节100%仍需等待最终校验结论。",
         "任务详情和拍摄项目素材卷明细会实时更新速度与进度，无需关闭重开。暂停/继续会即时更新状态，当前小块读写或安全落盘可能需要收尾。",
         "全新文件边复制边计算源哈希，之后仍独立回读每个目标。完整备份含校验，与只复制的耗时不是同一指标。",
         "升级前创建的旧镜像任务恢复时保留旧目录落点，不会自动移动已备份文件；新建镜像任务才采用保留源文件夹的布局。",
@@ -5013,7 +4995,8 @@ function HelpPage({
       <section className="help-release-note">
         <RefreshCw size={20} />
         <div>
-          <strong>0.1.21：统一可信状态、收工判定与媒体运行时</strong>
+          <strong>0.1.22：普通备份与实时阶段反馈</strong>
+          <p>普通备份无需创建项目，按次保存与保留源文件夹分开选择。高级选项默认折叠，独立回读校验不变；容量未知显示待预检。暂停后清空速度和预计时间，继续后重新采样，阶段进度不提前四舍五入到100%。</p>
           <p>内容校验、首次基线与可计数副本分开说明。项目覆盖、收工检查、详情和报告共用判定；旧“允许额外文件”不豁免新的缺失、大小或哈希差异。旧记录的哈希事实保留，多目标缺少同次物理拓扑证据时不会自动视为独立副本，可重新校验在线目标更新证据。</p>
           <p>
             已声明使用的设备仍会检查现有素材；休息／未使用不能免除已记录素材的校验。不同卷 UUID 不再自动算成独立物理副本，旧记录保留原校验结果并提示独立性待复核。代理、交接与归档操作区统一间距，普通窗口限制过窄或过宽的比例；侧栏字号不缩小。内置媒体组件附完整源码与许可，帮助仍默认折叠。

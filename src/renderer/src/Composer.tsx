@@ -1,4 +1,5 @@
 import { previewProjectPath } from "../../common/project-layout";
+import { projectDates, shootingDateKey } from "../../common/shooting-dates";
 import {
   submitBatch,
   readableOperationError,
@@ -8,6 +9,7 @@ import { useState, useEffect, useRef, type DragEvent } from "react";
 import {
   previewBackupPath,
   sourceFolderName,
+  capacityReadiness,
 } from "../../common/backup-layout";
 import {
   Plus,
@@ -42,18 +44,6 @@ interface Source {
   scan?: Scan;
 }
 const CAMERA_POSITIONS = ["A", "B", "C", "D", "E"];
-const shootingDates = (start?: string, end?: string) => {
-  if (!start) return [today()];
-  const values: string[] = [],
-    finish = end || start;
-  for (
-    let date = new Date(`${start}T12:00:00`);
-    date <= new Date(`${finish}T12:00:00`) && values.length < 1000;
-    date.setDate(date.getDate() + 1)
-  )
-    values.push(date.toLocaleDateString("sv-SE"));
-  return values;
-};
 export function Composer({
   initial,
   volumes,
@@ -132,6 +122,7 @@ export function Composer({
       ? project.devicePositions[camera]
       : CAMERA_POSITIONS;
   const previewStamp = previewVolumeTimestamp(new Date(clock));
+  const capacity = capacityReadiness(dests, spaces, total);
   const previewPrefixRaw =
     name.trim() ||
     project?.volumePrefixByDevice?.[camera] ||
@@ -152,9 +143,9 @@ export function Composer({
       if (e.key !== "Tab") return;
       const all = [
         ...dialog.current!.querySelectorAll<HTMLElement>(
-          'button:not(:disabled),input:not(:disabled),select:not(:disabled),[tabindex="0"]',
+          'button:not(:disabled),input:not(:disabled),select:not(:disabled),summary,[tabindex="0"]',
         ),
-      ];
+      ].filter((element) => element.getClientRects().length > 0);
       const first = all[0],
         last = all[all.length - 1];
       if (e.shiftKey && document.activeElement === first) {
@@ -179,8 +170,8 @@ export function Composer({
       initial.project.devicePositions?.[firstDevice] || [];
     setMultiPosition(Boolean(configuredPositions.length));
     setCameraPosition(configuredPositions[0] || "A");
-    const start = initial.project.shootingDateStart || today();
-    const end = initial.project.shootingDateEnd || start;
+    const start = shootingDateKey(initial.project.shootingDateStart || initial.project.shootingDate || today());
+    const end = shootingDateKey(initial.project.shootingDateEnd || start);
     const now = today();
     setShootDate(now >= start && now <= end ? now : start);
   }, [initial.project]);
@@ -414,8 +405,8 @@ export function Composer({
     const p = projects.find((p) => p.id === id);
     if (p) {
       setDests(p.destinationPaths || []);
-      const start = p.shootingDateStart || today(),
-        end = p.shootingDateEnd || start,
+      const start = shootingDateKey(p.shootingDateStart || p.shootingDate || today()),
+        end = shootingDateKey(p.shootingDateEnd || start),
         now = today();
       let recent: {
         shootDate?: string;
@@ -530,8 +521,8 @@ export function Composer({
                   {[
                     [
                       "card",
-                      "素材卡备份",
-                      "每个源建立独立备份文件夹",
+                      "普通备份",
+                      "无需创建项目；备份素材卡或任意文件夹",
                       MemoryStick,
                     ],
                     [
@@ -851,7 +842,7 @@ export function Composer({
                         onChange={() => setMirror(false)}
                       />
                       <span>
-                        <strong>普通备份 · 按次保存</strong>
+                        <strong>按次保存（推荐）</strong>
                         <small>
                           目的地内创建“源文件夹名_时间戳”，内部文件名不变。
                         </small>
@@ -865,7 +856,7 @@ export function Composer({
                         onChange={() => setMirror(true)}
                       />
                       <span>
-                        <strong>镜像备份 · 保留源文件夹</strong>
+                        <strong>保留源文件夹（镜像备份）</strong>
                         <small>
                           目的地内保留所选源文件夹及其全部下层结构，不加时间戳；不删除目的地已有额外文件。
                         </small>
@@ -900,9 +891,16 @@ export function Composer({
                       <section>
                         <span>02 · 拍摄日期</span>
                         <div className="column-options">
-                          {shootingDates(
-                            project?.shootingDateStart,
-                            project?.shootingDateEnd,
+                          {(project
+                            ? projectDates(
+                                {
+                                  ...project,
+                                shootingDateStart:
+                                  project.shootingDateStart || project.shootingDate || today(),
+                                },
+                                [],
+                              )
+                            : [today()]
                           ).map((date) => (
                             <button
                               key={date}
@@ -1219,72 +1217,89 @@ export function Composer({
                     onChange={(e) => setName(e.target.value)}
                   />
                 </label>
-                <div className="form-grid">
-                  <label>
-                    哈希算法
-                    <select
-                      aria-label="任务哈希算法"
-                      value={algorithm}
-                      onChange={(e) =>
-                        setAlgorithm(e.target.value as Settings["defaultHash"])
-                      }
-                    >
-                      <option value="sha256">SHA-256（推荐）</option>
-                      <option value="md5">MD5</option>
-                      <option value="sha1">SHA-1</option>
-                    </select>
-                  </label>
-                  <label>
-                    同名文件处理
-                    <select
-                      aria-label="任务同名文件处理"
-                      value={duplicate}
-                      onChange={(e) =>
-                        setDuplicate(e.target.value as "skip" | "suffix")
-                      }
-                    >
-                      <option value="skip">哈希一致时跳过</option>
-                      <option value="suffix">内容不同时创建副本</option>
-                    </select>
-                  </label>
-                </div>
-                <div className="option-checks">
-                  {mode === "card" && (
-                    <p className="scan-summary">
-                      {mirror
-                        ? "镜像备份：保留源文件夹，不加时间戳"
-                        : "普通备份：源文件夹名_开始时的时间戳"}
-                      （返回上一步可更改）
-                    </p>
-                  )}
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={priority}
-                      onChange={(e) => setPriority(e.target.checked)}
-                    />
+                <details className="backup-advanced">
+                  <summary>
+                    高级选项{" "}
                     <span>
-                      优先执行
-                      <small>排在其他等待任务之前，不打断当前任务</small>
+                      {algorithm.toUpperCase()} · 逐文件回读校验始终开启
                     </span>
-                  </label>
-                  <div className="locked-option">
-                    <ShieldCheck size={17} />
-                    <span>
-                      逐文件哈希校验已开启
-                      <small>已存在的文件也会进行完整哈希比对</small>
-                    </span>
+                  </summary>
+                  <p className="muted small">
+                    默认即可安全开始。只在有明确交付要求时更改；不会覆盖已有的不同内容。
+                  </p>
+                  <div className="form-grid">
+                    <label>
+                      哈希算法
+                      <select
+                        aria-label="任务哈希算法"
+                        value={algorithm}
+                        onChange={(e) =>
+                          setAlgorithm(
+                            e.target.value as Settings["defaultHash"],
+                          )
+                        }
+                      >
+                        <option value="sha256">SHA-256（推荐）</option>
+                        <option value="md5">MD5</option>
+                        <option value="sha1">SHA-1</option>
+                      </select>
+                    </label>
+                    <label>
+                      同名文件处理
+                      <select
+                        aria-label="任务同名文件处理"
+                        value={duplicate}
+                        onChange={(e) =>
+                          setDuplicate(e.target.value as "skip" | "suffix")
+                        }
+                      >
+                        <option value="skip">哈希一致时跳过</option>
+                        <option value="suffix">内容不同时创建副本</option>
+                      </select>
+                    </label>
                   </div>
-                  <small className="muted">
-                    隐藏文件：{hidden ? "包含" : "排除"}
-                    （跟随偏好设置）；系统索引文件始终排除。
-                  </small>
+                  <div className="option-checks">
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={priority}
+                        onChange={(e) => setPriority(e.target.checked)}
+                      />
+                      <span>
+                        优先执行
+                        <small>排在其他等待任务之前，不打断当前任务</small>
+                      </span>
+                    </label>
+                    <div className="locked-option">
+                      <ShieldCheck size={17} />
+                      <span>
+                        逐文件哈希校验已开启
+                        <small>已存在的文件也会进行完整哈希比对</small>
+                      </span>
+                    </div>
+                    <small className="muted">
+                      隐藏文件：{hidden ? "包含" : "排除"}
+                      （跟随偏好设置）；系统索引文件始终排除。
+                    </small>
+                  </div>
+                </details>
+                <div className="notice">
+                  <ShieldCheck size={17} />
+                  <span>
+                    {algorithm.toUpperCase()} ·
+                    每个目的地都会重新读取并核对哈希。
+                    {mode === "card" &&
+                      (mirror
+                        ? " 保留源文件夹，不加时间戳。"
+                        : " 按次保存：源文件夹名_开始时的时间戳。")}
+                    隐藏文件：{hidden ? "包含" : "排除"}；系统索引文件始终排除。
+                  </span>
                 </div>
                 <div className="path-preview">
                   <span>
                     {mode === "project"
                       ? "开始备份后的完整路径"
-                      : "目的地目录预览"}
+                      : "最终保存路径（目的地为父目录）"}
                   </span>
                   {mode === "project" ? (
                     <div className="final-path-list">
@@ -1355,63 +1370,28 @@ export function Composer({
                         </small>
                       </span>
                     </div>
-                    <div
-                      className={
-                        dests.every(
-                          (destination) =>
-                            spaces[destination] === undefined ||
-                            spaces[destination] >= total,
-                        )
-                          ? "ready"
-                          : "warning"
-                      }
-                    >
-                      <Check size={15} />
-                      <span>
-                        <strong>目标空间</strong>
-                        <small>{dests.length} 个目的地已通过容量检查</small>
-                      </span>
-                    </div>
-                    <div
-                      className={
-                        new Set(
-                          dests
-                            .map(
-                              (destination) =>
-                                volumes.find(
-                                  (volume) =>
-                                    destination === volume.path ||
-                                    destination.startsWith(`${volume.path}/`),
-                                )?.identity?.id,
-                            )
-                            .filter(Boolean),
-                        ).size === dests.length
-                          ? "ready"
-                          : "warning"
-                      }
-                    >
-                      {new Set(
-                        dests
-                          .map(
-                            (destination) =>
-                              volumes.find(
-                                (volume) =>
-                                  destination === volume.path ||
-                                  destination.startsWith(`${volume.path}/`),
-                              )?.identity?.id,
-                          )
-                          .filter(Boolean),
-                      ).size === dests.length ? (
+                    <div className={capacity.ready ? "ready" : "warning"}>
+                      {capacity.ready ? (
                         <Check size={15} />
                       ) : (
                         <AlertTriangle size={15} />
                       )}
                       <span>
-                        <strong>物理磁盘</strong>
+                        <strong>目标空间</strong>
+                        <small>
+                          {capacity.checked} / {capacity.total}{" "}
+                          个目的地容量已核对；未取得容量的目录待引擎预检，未通过不向该目录复制素材
+                        </small>
+                      </span>
+                    </div>
+                    <div className="warning">
+                      <Info size={15} />
+                      <span>
+                        <strong>存储关系待核对</strong>
                         <small>
                           {dests.length > 1
-                            ? "项目副本必须位于不同物理盘"
-                            : "当前只有一个副本"}
+                            ? "目的地数量不等于独立副本数；完成校验后按系统存储关系保守计数"
+                            : "当前只有一个目的地；完成校验后才能计作副本"}
                         </small>
                       </span>
                     </div>
@@ -1428,7 +1408,7 @@ export function Composer({
                         <small>
                           {mode === "project"
                             ? `${shootDate.replace(/-/g, "")} · ${camera}${multiPosition ? ` · ${cameraPosition}` : ""}`
-                            : "素材卡独立备份"}
+                            : "普通备份，不需要项目配置"}
                         </small>
                       </span>
                     </div>
@@ -1493,7 +1473,7 @@ export function Composer({
                 <dd>
                   {
                     {
-                      card: "素材卡备份",
+                      card: "普通备份",
                       project: "项目备份",
                     }[mode]
                   }

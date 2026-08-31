@@ -111,7 +111,11 @@ describe("Real filesystem backup integrity", () => {
       if (!paused && event.status === "running" && event.physicalWrittenBytes > 0) {
         partial = event.completedFiles === 0 && event.copyProgress > 0 && event.copyProgress < 100;
         paused = true;
+        task.eta = 1800;
+        task.verifyEta = 900;
         engine.pauseTask(task.id);
+        expect(task.eta).toBe(0);
+        expect(task.verifyEta).toBe(0);
         setTimeout(() => engine.resumeTask(task.id), 25);
       }
     });
@@ -160,6 +164,16 @@ describe("Real filesystem backup integrity", () => {
     const stalled = meter.sample(1500);
     expect(stalled).toBeGreaterThan(0);
     expect(stalled).toBeLessThan(first);
+  });
+  it("starts a new speed window after a pause without counting paused time or stale bytes", () => {
+    const meter = new SpeedMeter(0);
+    meter.add(1024 * 1024);
+    expect(meter.sample(1000)).toBe(1024 * 1024);
+    meter.add(123);
+    meter.reset(61_000);
+    expect(meter.sample(61_100)).toBe(0);
+    meter.add(64 * 1024 * 1024);
+    expect(meter.sample(62_000)).toBe(64 * 1024 * 1024);
   });
   it("summarizes raw speed samples without hiding stalls", () => {
     const summary = summarizeSpeeds([10_000, 20_000, 0, 30_000, 0]);

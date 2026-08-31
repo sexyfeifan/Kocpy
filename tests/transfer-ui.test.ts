@@ -1,10 +1,28 @@
 import { describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
-import { normalBackupFolder, previewBackupPath, sourceFolderName } from "../src/common/backup-layout";
-import { selectLiveTask, transferPhaseText } from "../src/renderer/src/task-state";
+import { normalBackupFolder, previewBackupPath, sourceFolderName, capacityReadiness } from "../src/common/backup-layout";
+import { selectLiveTask, transferPhaseText, transferTiming, transferProgressLabel } from "../src/renderer/src/task-state";
 import type { BackupTask } from "../src/main/types";
 
 describe("backup layout and live detail", () => {
+  it("never marks missing, invalid or insufficient capacity as checked", () => {
+    expect(capacityReadiness(["/a", "/b"], { "/a": 200 }, 100)).toEqual({ checked: 1, total: 2, ready: false });
+    expect(capacityReadiness(["/a"], { "/a": NaN }, 100).ready).toBe(false);
+    expect(capacityReadiness(["/a"], { "/a": Infinity }, 100).ready).toBe(false);
+    expect(capacityReadiness(["/a"], { "/a": 99 }, 100).ready).toBe(false);
+    expect(capacityReadiness([], {}, 100).ready).toBe(false);
+    expect(capacityReadiness(["/a"], { "/a": 101 }, 100).ready).toBe(true);
+  });
+  it("hides stale ETA on stopped tasks and does not round unfinished phases to 100%", () => {
+    const task = { status: "paused", eta: 800, verifyEta: 600, speedBps: 99, copyProgress: 99.9, verifyProgress: 99.99 } as BackupTask;
+    expect(transferTiming(task)).toMatchObject({ speed: 0, seconds: 0, label: "已暂停" });
+    expect(transferProgressLabel(task, "copy")).toBe("99.9%");
+    expect(transferProgressLabel(task, "verify")).toBe("99.9%");
+    expect(transferProgressLabel({ ...task, copyProgress: 100 }, "copy")).toBe("100%");
+    expect(transferTiming({ ...task, status: "running", transferPhase: "scanning" })).toMatchObject({ seconds: 0, label: "预检中" });
+    expect(transferTiming({ ...task, status: "verifying", verifySpeedBps: 200 })).toMatchObject({ seconds: 600, speed: 200, label: "本阶段预计剩余" });
+    expect(transferTiming({ ...task, status: "failed", startedAt: 1000, completedAt: 7000 })).toMatchObject({ seconds: 6, speed: 0, label: "总用时" });
+  });
   it("previews the source folder inside the selected destination parent", () => {
     expect(previewBackupPath("/Volumes/backup/project/", "/Volumes/card/20260825_project/", true)).toBe("/Volumes/backup/project/20260825_project");
     expect(sourceFolderName("/Volumes/CARD/")).toBe("CARD");
@@ -33,6 +51,10 @@ describe("backup layout and live detail", () => {
     expect(composer).not.toContain("File & { path?: string }");
     expect(composer).toContain("{files} 个文件");
     expect(composer).toContain("不是素材卷数量");
+    expect(composer).toContain('<details className="backup-advanced">');
+    expect(composer).toContain("存储关系待核对");
+    expect(composer).not.toContain("个目的地已通过容量检查");
+    expect(composer).toContain("element.getClientRects().length > 0");
   });
 });
 

@@ -62,5 +62,7 @@ describe("renderer initial render (not a substitute for desktop acceptance)", ()
     );
     expect(composer).toContain("选择素材源");
     expect(composer).toContain("fieldset");
+    expect(composer).toMatch(/class="mode-card selected"[^>]*>[\s\S]*?<strong>普通备份<\/strong>/);
+    expect(composer).toContain("无需创建项目");
   });
 });

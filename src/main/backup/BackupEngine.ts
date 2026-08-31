@@ -94,6 +94,11 @@ export class SpeedMeter {
   private pending = 0;
   private smoothed = 0;
   constructor(private lastSample = Date.now()) {}
+  reset(now = Date.now()) {
+    this.pending = 0;
+    this.smoothed = 0;
+    this.lastSample = now;
+  }
   add(bytes: number) {
     this.pending += bytes;
   }
@@ -225,6 +230,7 @@ export class BackupEngine extends EventEmitter {
   private active = new Map<string, AbortController>();
   private paused = new Set<string>();
   private pausedPhase = new Map<string, "running" | "verifying">();
+  private telemetryResets = new Map<string, () => void>();
   private retryTargets = new Map<string, Set<string>>();
   private pauseWaiters = new Map<string, Array<() => void>>();
   private lastProgressEmit = new Map<string, number>();
@@ -434,6 +440,8 @@ export class BackupEngine extends EventEmitter {
     this.pausedPhase.set(id, task.status as "running" | "verifying");
     task.status = "paused";
     task.pausedAt = Date.now();
+    task.eta = 0;
+    task.verifyEta = 0;
     task.speedBps = 0;
     task.aggregateSpeedBps = 0;
     task.verifySpeedBps = 0;
@@ -454,6 +462,9 @@ export class BackupEngine extends EventEmitter {
     task.pausedAt = undefined;
     task.status = this.pausedPhase.get(id) || "running";
     this.pausedPhase.delete(id);
+    // Resume samples only new acknowledged bytes. Paused wall time must not
+    // depress the speed or preserve an obsolete remaining-time estimate.
+    this.telemetryResets.get(id)?.();
     this.record(task, "resumed", "info", "任务已从检查点继续");
     for (const wake of this.pauseWaiters.get(id) || []) wake();
     this.pauseWaiters.delete(id);
@@ -553,6 +564,9 @@ export class BackupEngine extends EventEmitter {
       task.errorMessage = e.message || String(e);
     } finally {
       this.active.delete(id);
+      this.telemetryResets.delete(id);
+      this.paused.delete(id);
+      this.pausedPhase.delete(id);
       task.currentFile = "";
       task.speedBps = 0;
       task.aggregateSpeedBps = 0;
@@ -856,6 +870,12 @@ export class BackupEngine extends EventEmitter {
         task.destinations.map((d) => [d.id, new SpeedMeter()]),
       );
     let displayedEta = 0;
+    this.telemetryResets.set(task.id, () => {
+      meter.reset();
+      for (const value of destinationMeters.values()) value.reset();
+      displayedEta = 0;
+      task.verifyEta = 0;
+    });
     const telemetry = setInterval(() => {
       if (task.status !== "verifying") return;
       task.verifySpeedBps = meter.sample();
@@ -867,7 +887,9 @@ export class BackupEngine extends EventEmitter {
         : 0;
       displayedEta = rawEta
         ? displayedEta
-          ? displayedEta * 0.9 + rawEta * 0.1
+          ? Math.abs(displayedEta - rawEta) > rawEta * 0.5
+            ? rawEta
+            : displayedEta * 0.65 + rawEta * 0.35
           : rawEta
         : 0;
       task.verifyEta = displayedEta;
@@ -947,6 +969,7 @@ export class BackupEngine extends EventEmitter {
       }
     } finally {
       clearInterval(telemetry);
+      this.telemetryResets.delete(task.id);
       task.verifySpeedBps = 0;
       task.verifyEta = 0;
       for (const d of task.destinations) d.verifySpeedBps = 0;
@@ -1008,6 +1031,7 @@ export class BackupEngine extends EventEmitter {
       verifyTotalFiles: 0,
       speedBps: 0,
       aggregateSpeedBps: 0,
+      eta: 0,
       verifySpeedBps: 0,
       verifyEta: 0,
       sourceReadSpeedBps: 0,
@@ -1058,6 +1082,11 @@ export class BackupEngine extends EventEmitter {
         task.destinations.map((d) => [d.id, new SpeedMeter()]),
       );
     let displayedEta = 0;
+    this.telemetryResets.set(id, () => {
+      for (const value of [meter, sourceHashMeter, sourceCopyMeter, ...destinationMeters.values()]) value.reset();
+      displayedEta = 0;
+      task.eta = 0;
+    });
     const telemetry = setInterval(() => {
       if (task.status !== "running") return;
       task.aggregateSpeedBps = meter.sample();
@@ -1087,7 +1116,9 @@ export class BackupEngine extends EventEmitter {
         : 0;
       displayedEta = rawEta
         ? displayedEta
-          ? displayedEta * 0.9 + rawEta * 0.1
+          ? Math.abs(displayedEta - rawEta) > rawEta * 0.5
+            ? rawEta
+            : displayedEta * 0.65 + rawEta * 0.35
           : rawEta
         : 0;
       task.eta = displayedEta;
@@ -1635,6 +1666,7 @@ export class BackupEngine extends EventEmitter {
       this.record(task, task.status, "error", task.errorMessage || "任务失败");
     } finally {
       clearInterval(telemetry);
+      this.telemetryResets.delete(id);
       this.retryTargets.delete(id);
       this.paused.delete(id);
       this.pausedPhase.delete(id);

@@ -1537,6 +1537,11 @@ small {
   border-color: #c1ae8825;
   background: #c1ae8808;
 }
+:root[data-theme="light"] .notice.amber {
+  color: #805115;
+  border-color: #aa792c55;
+  background: #b8860b0d;
+}
 .error-box {
   background: #ef999b0c;
   border-color: #ef999b33;
@@ -2360,6 +2365,26 @@ small {
   grid-template-columns: 1fr 1fr;
   gap: 15px;
 }
+.backup-advanced {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin: 0 0 20px;
+}
+.backup-advanced summary {
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text);
+}
+.backup-advanced summary span {
+  color: var(--muted);
+  font-size: 11px;
+  margin-left: 10px;
+}
+.backup-advanced[open] summary { margin-bottom: 16px; }
+.backup-advanced > p { line-height: 1.6; margin: 0 0 16px; }
+.backup-advanced .option-checks { margin-bottom: 0; }
 .project-form {
   padding: 17px;
   background: var(--panel);
