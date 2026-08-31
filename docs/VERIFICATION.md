@@ -13,6 +13,10 @@
 - 没有对用户素材盘执行复制、删除、修复、MHL 改写或实际任务重启；未替换系统中已安装的 Kocpy。
 - 本地 arm64 DMG SHA-256：`adc4683a34c9aa75f72e064bae633e2a8fd24d13e1c4938a64d5da8f340429b5`。
 - 本地 x64 DMG SHA-256：`c5ae5f333f4e298b11377c66011cd42e1c38bacbf72e888e95ea6007e1332e0d`。
+- GitHub 双架构构建均通过类型检查、测试与打包。最终发布采用 CI 产物，完整回下载后两份 DMG 均通过 `hdiutil verify`、版本／架构和包内代码比较；主进程、preload 和渲染资源与本地已验证构建一致。最终包的 arm64 原生和 x64 Rosetta 运行时均再次通过上述三算法、双目标、恢复、暂停／继续及复校验专项检查，挂载点已卸载。
+- 最终发布 arm64 DMG SHA-256：`ce251f543f24ed1e55012d7b8628be0fafa687fd9e30786cac5a464b60c66e97`。
+- 最终发布 x64 DMG SHA-256：`7102607cb1e0d4796fd1f6f7f5103accf8cdac4af9d90eb0638285a0fe66ee63`。
+- 最终摘要与 GitHub 资产摘要一致，Release 附 `Kocpy-0.1.19-SHA256SUMS.txt`。Downloads 中同版本的两份包同步为最终发布产物；初始本地构建仍保留于构建目录，不作为最终下载包。
 - 无 Developer ID 签名、公证；没有执行本轮真实拔盘、睡眠、断电、SMB/NAS 或全盘长期压力测试，不宣称所有现场风险已排除。
 
 ## 0.1.18 历史结果
