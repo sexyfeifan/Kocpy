@@ -1,3 +1,5 @@
+import { RecoveryDialog } from "./RecoveryDialog";
+import { recoveryAdvice } from "../../common/recovery";
 import { LifecycleControls } from "./LifecycleControls";
 import { OperationCenter, useModalStack } from "./Interaction";
 import { readableOperationError, didComplete } from "../../common/interaction";
@@ -323,6 +325,10 @@ const taskTrustState = (task: BackupTask) => {
 export function App() {
   useModalStack();
   const [workspaceRevision, setWorkspaceRevision] = useState(0);
+  const [recoveryId, setRecoveryId] = useState<string | null>(null);
+  const [maintenanceProjectId, setMaintenanceProjectId] = useState<
+    string | undefined
+  >();
   const [notices, setNotices] = useState<
     Array<{ message: string; error: boolean }>
   >([]);
@@ -893,7 +899,7 @@ export function App() {
           <img src="./icon.png" alt="Kocpy 图标" />
           <div>
             <strong>
-              Kocpy<span>0.1.18</span>
+              Kocpy<span>0.1.19</span>
             </strong>
             <small>素材工作台</small>
           </div>
@@ -950,7 +956,7 @@ export function App() {
                   ? `可升级 ${updateInfo.latest}`
                   : "检查更新"}
               </span>
-              <b>v0.1.18</b>
+              <b>v0.1.19</b>
             </button>
             <div className="sidebar-author-links">
               <span>
@@ -1009,21 +1015,22 @@ export function App() {
             >
               <RefreshCw size={16} />
             </Button>
+            {page !== "help" && (
+              <Button
+                kind="icon"
+                title="本页使用说明"
+                onClick={() => {
+                  sessionStorage.setItem("kocpy-help-context", page);
+                  go("help");
+                }}
+              >
+                <CircleHelp size={17} />
+              </Button>
+            )}
           </div>
         </header>
         <main className="page-content">
           <OperationCenter />
-          {page !== "help" && (
-            <Button
-              kind="subtle"
-              onClick={() => {
-                sessionStorage.setItem("kocpy-help-context", page);
-                go("help");
-              }}
-            >
-              本页使用说明
-            </Button>
-          )}
           {notices.length > 0 && (
             <details className="notification-history">
               <summary>操作消息（{notices.length}）</summary>
@@ -1544,7 +1551,11 @@ export function App() {
                             </span>
                             <div>
                               <strong>{task.name}</strong>
-                              <p>{diagnosis}</p>
+                              <p>
+                                {task.errorMessage
+                                  ? recoveryAdvice(task.errorMessage).title
+                                  : diagnosis}
+                              </p>
                               <small>
                                 {task.currentFile ||
                                   task.errorMessage ||
@@ -1578,33 +1589,13 @@ export function App() {
                                   <Play size={13} />
                                   从当前位置继续
                                 </Button>
-                              ) : successfulTargets > 0 &&
-                                failedTargets.length > 0 ? (
-                                <Button
-                                  kind="primary"
-                                  onClick={() =>
-                                    void act(
-                                      () =>
-                                        api.retryFailedDestinations(task.id),
-                                      "仅失败目标已加入重试队列",
-                                    )
-                                  }
-                                >
-                                  <HardDrive size={13} />
-                                  仅重试失败目标
-                                </Button>
                               ) : (
                                 <Button
                                   kind="primary"
-                                  onClick={() =>
-                                    void act(
-                                      () => api.startTask(task.id),
-                                      "已重新扫描并加入恢复队列",
-                                    )
-                                  }
+                                  onClick={() => setRecoveryId(task.id)}
                                 >
-                                  <RefreshCw size={13} />
-                                  扫描并复用断点
+                                  <RefreshCw size={14} />
+                                  检查并恢复
                                 </Button>
                               )}
                               {task.totalFiles > 0 && (
@@ -1864,54 +1855,54 @@ export function App() {
                               </div>
                             );
                           })()}
-                          <div className="row between">
+                          <div className="project-card-actions">
+                            <Button
+                              kind="primary"
+                              onClick={() => setComposer({ project: p })}
+                            >
+                              <Plus size={16} />
+                              <span>新建备份</span>
+                            </Button>
+                            <Button
+                              kind="subtle"
+                              onClick={() =>
+                                setProjectDetailId(
+                                  projectDetailId === p.id ? null : p.id,
+                                )
+                              }
+                            >
+                              <Activity size={16} />
+                              <span>项目详情</span>
+                            </Button>
+                            <Button
+                              kind="subtle"
+                              onClick={() =>
+                                void act(async () => {
+                                  const root = await api.selectDirectory();
+                                  if (!root) return;
+                                  setExistingImport({
+                                    project: p,
+                                    preview: await api.previewExistingBackup(
+                                      root,
+                                      p.id,
+                                    ),
+                                  });
+                                })
+                              }
+                            >
+                              <FolderPlus size={16} />
+                              <span>接管既有备份</span>
+                            </Button>
                             <Button
                               kind="subtle"
                               onClick={() => {
+                                setMaintenanceProjectId(p.id);
                                 go("maintenance");
                               }}
                             >
-                              模板与交接
+                              <Layers size={16} />
+                              <span>模板与交接</span>
                             </Button>
-                            <div className="row">
-                              <Button
-                                kind="subtle"
-                                onClick={() =>
-                                  setProjectDetailId(
-                                    projectDetailId === p.id ? null : p.id,
-                                  )
-                                }
-                              >
-                                <Activity size={14} />
-                                项目详情
-                              </Button>
-                              <Button
-                                kind="subtle"
-                                onClick={() =>
-                                  void act(async () => {
-                                    const root = await api.selectDirectory();
-                                    if (!root) return;
-                                    setExistingImport({
-                                      project: p,
-                                      preview: await api.previewExistingBackup(
-                                        root,
-                                        p.id,
-                                      ),
-                                    });
-                                  })
-                                }
-                              >
-                                <FolderPlus size={14} />
-                                接管既有备份
-                              </Button>
-                              <Button
-                                kind="subtle"
-                                onClick={() => setComposer({ project: p })}
-                              >
-                                使用此项目
-                                <ArrowRight size={14} />
-                              </Button>
-                            </div>
                           </div>
                         </section>
                       ))}
@@ -2631,6 +2622,7 @@ export function App() {
               )}
               {page === "maintenance" && (
                 <MaintenancePage
+                  initialProjectId={maintenanceProjectId}
                   tasks={tasks}
                   projects={projects}
                   refreshProjects={refresh}
@@ -2733,6 +2725,34 @@ export function App() {
           />
         )}
       </div>
+      {recoveryId && tasks.find((t) => t.id === recoveryId) && (
+        <RecoveryDialog
+          key={recoveryId}
+          task={tasks.find((t) => t.id === recoveryId)!}
+          onClose={() => setRecoveryId(null)}
+          onRecovered={async () => {
+            await refresh();
+            notify("未通过目标已加入安全重试队列；请关注后续复制与校验结果。");
+          }}
+          onNewTask={(source) => {
+            const task = tasks.find((t) => t.id === recoveryId);
+            setRecoveryId(null);
+            setDetail(null);
+            setComposer({
+              source,
+              project: projects.find((p) => p.id === task?.projectId),
+            });
+          }}
+          onExternal={() => {
+            const task = tasks.find((t) => t.id === recoveryId)!;
+            setRecoveryId(null);
+            setDetail(null);
+            task.externalManifest
+              ? setManifestIssue(task)
+              : setExistingBaseline(task);
+          }}
+        />
+      )}
       {composer && (
         <Composer
           initial={composer}
@@ -2881,9 +2901,26 @@ export function App() {
                 </div>
               )}
               {selected.errorMessage && (
-                <div className="error-box">
-                  <AlertTriangle size={17} />
-                  {selected.errorMessage}
+                <div className="error-box task-recovery-callout">
+                  <AlertTriangle size={18} />
+                  <div>
+                    <strong>
+                      {recoveryAdvice(selected.errorMessage).title}
+                    </strong>
+                    <p>{selected.errorMessage}</p>
+                    <small>
+                      保留已有副本与断点。先检查连接和原因，不跳过校验。
+                    </small>
+                  </div>
+                  <Button
+                    kind="subtle"
+                    onClick={() => {
+                      setRecoveryId(selected.id);
+                      setDetail(null);
+                    }}
+                  >
+                    检查并恢复
+                  </Button>
                 </div>
               )}
               <h3 className="detail-label">素材来源</h3>
@@ -3130,18 +3167,13 @@ export function App() {
                     {selected.status !== "completed" && (
                       <Button
                         kind="subtle"
-                        onClick={() =>
-                          void act(() =>
-                            selected.destinations.some((d) => d.verified)
-                              ? api.retryFailedDestinations(selected.id)
-                              : api.startTask(selected.id),
-                          )
-                        }
+                        onClick={() => {
+                          setRecoveryId(selected.id);
+                          setDetail(null);
+                        }}
                       >
                         <RefreshCw size={14} />
-                        {selected.destinations.some((d) => d.verified)
-                          ? "重试失败目标"
-                          : "重新执行"}
+                        检查并恢复
                       </Button>
                     )}
                     {selected.fileRecords.length > 0 && (
@@ -3221,7 +3253,7 @@ export function App() {
                 disabled={Boolean(
                   (confirm.requiredText &&
                     confirmInput !== confirm.requiredText) ||
-                    (confirm.acknowledgement && !confirmAcknowledged),
+                  (confirm.acknowledgement && !confirmAcknowledged),
                 )}
                 onClick={() => {
                   const action = confirm.run;
@@ -4655,7 +4687,7 @@ function HelpPage({
     {
       id: "interaction-safety",
       icon: ShieldCheck,
-      title: "0.1.18：操作范围、后台任务与安全确认",
+      title: "操作范围、后台任务与安全确认",
       purpose: "理解取消、进度、基线与安全结论；管理检查表、提醒和 NAS。",
       steps: [
         "接管范围改变后等待新预览，滚动核对全部候选卷；仅导入结构不会建立基线。",
@@ -4741,13 +4773,16 @@ function HelpPage({
       purpose: "处理异常退出、离线磁盘、断点文件和未完成校验。",
       steps: [
         "重新连接原素材卡与原目标磁盘。",
-        "确认卷名和卷身份匹配。",
-        "按提示选择从检查点继续、只重试失败目标或重新校验。",
+        "失败任务点击“检查并恢复”，再点击“只读检查连接与身份”，核对记录身份、当前 UUID、路径、实际挂载点和可用空间。",
+        "身份一致且路径可访问时，勾选确认后“重试未通过目标”；写入前仍会再次检查身份、空间和断点。",
+        "身份暂时无法读取时先处理连接或权限；确认换盘或格式化后应另建任务，不能覆盖旧 UUID。暂停任务仍可从安全检查点继续。",
         "恢复后检查成功目标是否仍保持通过。",
       ],
       tips: [
+        "UUID 查询失败不表示已经换盘。0.1.19 修复了子目录查询失败被误报为 UUID 变化的问题。",
         "同一路径换成另一块磁盘时会拒绝继续。",
         "失败目标修复不会重新写入已成功目标。",
+        "只读检查不是素材校验。接管素材请走基线或清单处理；没有完整哈希基线的任务不能通过复校验获得安全状态。",
       ],
       page: "recovery",
     },
@@ -5030,7 +5065,7 @@ function HelpPage({
       <section className="panel help-start">
         <div>
           <span className="mini-label">
-            <BookOpen size={13} /> KOCPY 0.1.18 · QUICK START
+            <BookOpen size={13} /> KOCPY 0.1.19 · QUICK START
           </span>
           <h2>软件使用说明</h2>
           <p>
@@ -5055,10 +5090,10 @@ function HelpPage({
       <section className="help-release-note">
         <RefreshCw size={20} />
         <div>
-          <strong>0.1.18：范围明确、状态可追踪、操作可确认</strong>
+          <strong>0.1.19：磁盘身份核对与安全恢复引导</strong>
           <p>
-            范围选择不会隐式扩大；批量任务重试不重复创建。检查表逐项确认，交接记录实际操作人。后台操作保留进度与结果，素材库分页、报告可选历史日期，提醒和
-            NAS 可管理；帮助默认折叠。
+            本页帮助收进顶栏问号，项目卡片操作统一排列。失败任务可进入“检查并恢复”，只读检查原身份与当前挂载卷，确认后仅重试未通过目标。身份查询失败不等于换盘；不会改写旧
+            UUID 或绕过校验。帮助仍默认折叠。
           </p>
         </div>
       </section>
@@ -5118,11 +5153,13 @@ function HelpPage({
 }
 
 function MaintenancePage({
+  initialProjectId,
   tasks,
   projects,
   refreshProjects,
   notify,
 }: {
+  initialProjectId?: string;
   tasks: BackupTask[];
   projects: ProjectConfig[];
   refreshProjects: () => Promise<void>;
@@ -5135,7 +5172,11 @@ function MaintenancePage({
     [busy, setBusy] = useState<string | null>(null),
     [handoff, setHandoff] = useState(""),
     [handoffOperator, setHandoffOperator] = useState(""),
-    [handoffProject, setHandoffProject] = useState(projects[0]?.id || ""),
+    [handoffProject, setHandoffProject] = useState(
+      projects.find((p) => p.id === initialProjectId)?.id ||
+        projects[0]?.id ||
+        "",
+    ),
     [outcome, setOutcome] = useState(""),
     [templateEditor, setTemplateEditor] = useState<Partial<
       import("./api").ProjectTemplate
@@ -5512,6 +5553,13 @@ function MaintenancePage({
                     <select
                       id={`template-project-${template.id}`}
                       aria-label="应用模板到项目"
+                      defaultValue={
+                        projects.find(
+                          (project) => project.id === initialProjectId,
+                        )?.id ||
+                        projects[0]?.id ||
+                        ""
+                      }
                     >
                       {projects.map((project) => (
                         <option key={project.id} value={project.id}>
@@ -5669,6 +5717,7 @@ function MaintenancePage({
         </div>
       </section>
       <LifecycleControls
+        initialProjectId={initialProjectId}
         projects={projects}
         tasks={tasks}
         notify={notify}
@@ -6549,7 +6598,7 @@ function SettingsPage({
         <img src="./icon.png" alt="Kocpy 图标" />
         <div>
           <h3>
-            Kocpy <span>0.1.18</span>
+            Kocpy <span>0.1.19</span>
           </h3>
           <p>从现场接卡、项目归档到交付报告，为每一份创作保留可靠副本。</p>
           <small>本地优先 · 独立校验 · 项目全周期记录 · @sexyfeifan</small>
@@ -6724,9 +6773,7 @@ function ProxyDialog({
                 value={preset}
                 onChange={(e) => {
                   const value = e.target.value as
-                    | "review"
-                    | "editorial"
-                    | "offline";
+                    "review" | "editorial" | "offline";
                   setPreset(value);
                   if (value === "editorial") {
                     setFormat("prores");

@@ -1284,6 +1284,9 @@ small {
 }
 .project-card {
   padding: 23px;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
 }
 .project-card-tools {
   position: relative;
@@ -1323,22 +1326,28 @@ small {
 .project-action-menu button.danger {
   color: var(--danger);
 }
-.project-card > .row:last-child {
-  align-items: start;
-  gap: 8px;
-}
-.project-card > .row:last-child > .row {
+.project-card-actions {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
-  flex: 1;
+  margin-top: auto;
+  padding-top: 16px;
 }
-.project-card > .row:last-child > .row .btn {
+.project-card-actions .btn {
   width: 100%;
   justify-content: center;
   min-width: 0;
-  white-space: normal;
-  line-height: 1.25;
+  height: 40px;
+  padding: 0 10px;
+  gap: 8px;
+  font-size: 12px;
+  white-space: nowrap;
+  line-height: 1;
+}
+.project-card-actions .btn svg {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
 }
 .import-candidates {
   display: grid;
@@ -3592,10 +3601,9 @@ small {
 }
 .template-device-list > div {
   display: grid;
-  grid-template-columns: minmax(90px, 0.7fr) minmax(140px, 1fr) minmax(
-      140px,
-      1fr
-    ) auto;
+  grid-template-columns:
+    minmax(90px, 0.7fr) minmax(140px, 1fr) minmax(140px, 1fr)
+    auto;
   align-items: end;
   gap: 9px;
   padding: 11px;
@@ -4806,4 +4814,142 @@ small {
   .nas-preset-row {
     flex-direction: column;
   }
+}
+
+/* Cards keep a useful minimum width instead of squeezing four actions. */
+.projects-grid {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 330px), 1fr));
+}
+.project-action-menu button {
+  font-size: 12px;
+}
+.task-recovery-callout {
+  align-items: flex-start;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.task-recovery-callout > div {
+  flex: 1;
+  min-width: 220px;
+}
+.task-recovery-callout p {
+  margin: 7px 0;
+  overflow-wrap: anywhere;
+}
+.task-recovery-callout small {
+  color: var(--sub);
+}
+.recovery-dialog {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  box-shadow: var(--shadow);
+  width: min(820px, calc(100vw - 48px));
+  max-height: calc(100vh - 48px);
+}
+.recovery-dialog .modal-body {
+  flex: 1;
+  min-height: 0;
+  padding: 24px;
+  overflow-y: auto;
+  font-size: 13px;
+}
+.recovery-dialog .modal-header p {
+  color: var(--muted);
+  margin: 8px 0 0;
+}
+.recovery-explanation {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  color: var(--amber);
+}
+.recovery-explanation > svg {
+  flex-shrink: 0;
+}
+.recovery-explanation p {
+  color: var(--sub);
+  overflow-wrap: anywhere;
+  line-height: 1.7;
+  margin: 8px 0;
+}
+.recovery-steps {
+  padding-left: 22px;
+  line-height: 1.9;
+  margin: 14px 0;
+}
+.recovery-steps li {
+  padding-left: 5px;
+  margin: 8px 0;
+}
+.recovery-dialog .muted {
+  line-height: 1.8;
+}
+.recovery-checks {
+  margin-top: 18px;
+}
+.recovery-checks article {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+  margin: 12px 0;
+  background: var(--panel);
+}
+.recovery-checks article.needs-attention {
+  border-color: var(--amber);
+}
+.recovery-checks header {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-wrap: wrap;
+}
+.recovery-checks header span {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--muted);
+}
+.recovery-checks p {
+  overflow-wrap: anywhere;
+  line-height: 1.7;
+}
+.recovery-checks dl {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr);
+  gap: 8px 14px;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.recovery-checks dt {
+  color: var(--muted);
+}
+.recovery-checks dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono, monospace);
+}
+.recovery-confirm {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  line-height: 1.8;
+  padding: 12px 0;
+}
+.recovery-confirm input {
+  margin-top: 5px;
+  flex-shrink: 0;
+}
+.recovery-dialog .modal-footer {
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.recovery-dialog .modal-footer > .row {
+  flex-wrap: wrap;
+}
+.recovery-dialog .modal-header {
+  flex-shrink: 0;
 }

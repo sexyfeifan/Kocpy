@@ -135,6 +135,10 @@ export interface API {
   resumeTask(id: string): Promise<void>;
   reverifyTask(id: string): Promise<BackupTask>;
   retryFailedDestinations(id: string): Promise<void>;
+  inspectTaskRecovery(
+    id: string,
+  ): Promise<import("../../common/recovery").RecoveryReport>;
+  recoverTask(id: string): Promise<boolean>;
   deleteTask(id: string): Promise<void>;
   setPriority(id: string, value: boolean): Promise<void>;
   scanSource(path: string, includeHidden?: boolean): Promise<Scan>;

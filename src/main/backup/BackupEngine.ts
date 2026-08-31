@@ -1,4 +1,5 @@
 import { normalizePositions } from "../../common/interaction";
+import { assertVolumeIdentity } from "../../common/volume-identity";
 import { EventEmitter } from "node:events";
 import { promises as fs, constants, createReadStream } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
@@ -489,19 +490,26 @@ export class BackupEngine extends EventEmitter {
     label: string,
   ) {
     const identity = await volumeIdentity(location);
-    if (expectedUuid && expectedUuid !== identity.uuid)
-      throw new Error(`${label}磁盘 UUID 已变化，已停止操作`);
-    if (!expectedUuid && expectedId && expectedId !== identity.id)
-      throw new Error(`${label}磁盘身份已变化，已停止操作`);
+    assertVolumeIdentity(expectedUuid, expectedId, identity, label);
     return identity;
   }
   async reverifyTask(id: string) {
     const task = this.tasks.get(id);
     if (!task) throw new Error("任务不存在");
-    if (this.active.has(id)) throw new Error("任务正在执行");
+    if (this.active.size || this.queue.length)
+      throw new Error("请先完成当前传输队列，再重新校验");
+    if (
+      !task.totalFiles ||
+      task.fileRecords.length !== task.totalFiles ||
+      task.fileRecords.some((record) => !record.srcChecksum)
+    )
+      throw new Error(
+        "尚无完整文件哈希基线，不能标记复校验通过。请先完成备份；接管素材请建立首次基线或核对外部清单。",
+      );
     const controller = new AbortController();
     this.active.set(id, controller);
     task.status = "verifying";
+    task.errorMessage = undefined;
     task.verifyProgress = 0;
     task.verifiedBytes = 0;
     task.verifyCompletedFiles = 0;
@@ -516,13 +524,21 @@ export class BackupEngine extends EventEmitter {
     }
     this.emitProgress(task);
     try {
-      for (const destination of task.destinations)
-        await this.assertRecordedVolume(
-          destination.resolvedPath || destination.path,
-          destination.volumeUuid,
-          destination.volumeId,
-          `${destination.label} `,
-        );
+      for (const destination of task.destinations) {
+        try {
+          await this.assertRecordedVolume(
+            destination.resolvedPath || destination.path,
+            destination.volumeUuid,
+            destination.volumeId,
+            `${destination.label} `,
+          );
+          destination.available = true;
+        } catch (error: any) {
+          destination.available = false;
+          destination.error = error.message || String(error);
+          throw error;
+        }
+      }
       await this.verifyRecords(task, controller.signal);
       if (task.destinations.some((d) => !d.verified))
         throw new Error("部分目的地未通过重新校验");
@@ -541,6 +557,7 @@ export class BackupEngine extends EventEmitter {
       task.verifyEta = 0;
       this.emitProgress(task);
       this.emit("settled", task, { kind: "reverify" });
+      this.processQueue();
     }
     return task;
   }
@@ -1135,19 +1152,12 @@ export class BackupEngine extends EventEmitter {
           }
       }
       const sourceIdentity = await volumeIdentity(src);
-      if (
-        task.sourceVolumeUuid &&
-        task.sourceVolumeUuid !== sourceIdentity.uuid
-      )
-        throw new Error(
-          "素材源磁盘 UUID 已变化，请新建任务以避免误读同名挂载点",
-        );
-      if (
-        !task.sourceVolumeUuid &&
-        task.sourceVolumeId &&
-        task.sourceVolumeId !== sourceIdentity.id
-      )
-        throw new Error("素材源磁盘身份已变化，请新建任务以避免误读同名挂载点");
+      assertVolumeIdentity(
+        task.sourceVolumeUuid,
+        task.sourceVolumeId,
+        sourceIdentity,
+        "素材源 ",
+      );
       task.sourceVolumeId = sourceIdentity.id;
       task.sourceVolumeUuid = sourceIdentity.uuid;
       task.sourceVolumeName = sourceIdentity.name;
@@ -1180,10 +1190,12 @@ export class BackupEngine extends EventEmitter {
           if (dests[i].startsWith("/Volumes/"))
             await fs.access("/Volumes/" + dests[i].split("/")[2]);
           const identity = await volumeIdentity(dests[i]);
-          if (d.volumeUuid && d.volumeUuid !== identity.uuid)
-            throw new Error("磁盘 UUID 与任务记录不一致");
-          if (!d.volumeUuid && d.volumeId && d.volumeId !== identity.id)
-            throw new Error("磁盘身份与任务记录不一致");
+          assertVolumeIdentity(
+            d.volumeUuid,
+            d.volumeId,
+            identity,
+            `${d.label} `,
+          );
           d.volumeId = identity.id;
           d.volumeUuid = identity.uuid;
           d.volumeName = identity.name;

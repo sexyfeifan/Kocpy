@@ -5,6 +5,8 @@ import {
   type ArchiveScope,
 } from "../common/interaction";
 import { OperationRegistry } from "./operations";
+import { inspectTaskRecovery } from "./recovery";
+import { assertVolumeIdentity } from "../common/volume-identity";
 import {
   app,
   BrowserWindow,
@@ -418,6 +420,7 @@ const guardedCommands = new Set([
   "tasks:start",
   "tasks:resume",
   "tasks:retry-failed",
+  "tasks:recover",
   "tasks:reverify",
   "proxy:enqueue",
   "proxy:resume",
@@ -1084,6 +1087,21 @@ app.whenReady().then(async () => {
     return result;
   });
   handle("tasks:retry-failed", async (id: string) => {
+    engine.retryFailedDestinations(id);
+    await persist();
+    return true;
+  });
+  handle("tasks:inspect-recovery", async (id: string) => {
+    const task = engine.getTask(id);
+    if (!task) throw new Error("任务不存在");
+    return inspectTaskRecovery(task);
+  });
+  handle("tasks:recover", async (id: string) => {
+    const task = engine.getTask(id);
+    if (!task) throw new Error("任务不存在");
+    const report = await inspectTaskRecovery(task);
+    if (!report.canRetry)
+      throw new Error("当前尚不满足安全重试条件，请重新检查并处理标出的项目。");
     engine.retryFailedDestinations(id);
     await persist();
     return true;
@@ -1818,13 +1836,12 @@ app.whenReady().then(async () => {
       const targetIdentity = await volumeIdentity(
         target.resolvedPath || target.path,
       );
-      if (
-        (target.volumeUuid && targetIdentity.uuid !== target.volumeUuid) ||
-        (!target.volumeUuid &&
-          target.volumeId &&
-          targetIdentity.id !== target.volumeId)
-      )
-        throw new Error("目标磁盘身份与任务记录不一致，已停止修复");
+      assertVolumeIdentity(
+        target.volumeUuid,
+        target.volumeId,
+        targetIdentity,
+        "修复目标 ",
+      );
       let repaired = 0,
         preservedDamagedOriginals = 0;
       try {
@@ -4475,121 +4492,139 @@ app.whenReady().then(async () => {
     )
       blocker = powerSaveBlocker.start("prevent-app-suspension");
   });
-  engine.on("settled", async (task: BackupTask, context?: { kind: "reverify" }) => {
-    const allowCompletionActions = !operations.active && context?.kind !== "reverify";
-    clearTimeout(persistTimer);
-    persistTimer = undefined;
-    void persist().catch((e) =>
-      dialog.showErrorBox("任务记录保存失败", String(e)),
-    );
-    void catalog.upsertTask(task).then(() => {
-      if (main && !main.isDestroyed()) main.webContents.send("workspace:changed");
-    }).catch((error) => dialog.showErrorBox("素材索引更新失败", "备份文件未因此删除。请在任务记录中核对结果，稍后重建素材索引。\n" + String(error)));
-    if (blocker !== undefined) {
-      powerSaveBlocker.stop(blocker);
-      blocker = undefined;
-    }
-    if (main && !main.isDestroyed())
-      main.webContents.send("tasks:settled", task);
-    if (task.status === "completed" && Notification.isSupported()) {
-      const passed = task.destinations.filter(
-        (destination) => destination.verified,
-      ).length;
-      new Notification({
-        title: "备份与校验完成",
-        body: `${task.name} · ${task.totalFiles} 个文件 · ${passed} 个目标通过校验`,
-        silent: !(await store.read("settings.json", defaultSettings))
-          .notificationSound,
-      }).show();
-    }
-    if (task.status === "completed" && task.projectId && allowCompletionActions)
-      void (async () => {
-        const project = (
-            await store.read<ProjectConfig[]>("projects.json", [])
-          ).find((item) => item.id === task.projectId),
-          actions = project?.completionActions || [];
-        if (!actions.length) return;
-        const output = path.join(
-          app.getPath("userData"),
-          "completed-actions",
-          project!.projectFolderName || project!.name,
-          task.name,
+  engine.on(
+    "settled",
+    async (task: BackupTask, context?: { kind: "reverify" }) => {
+      const allowCompletionActions =
+        !operations.active && context?.kind !== "reverify";
+      clearTimeout(persistTimer);
+      persistTimer = undefined;
+      void persist().catch((e) =>
+        dialog.showErrorBox("任务记录保存失败", String(e)),
+      );
+      void catalog
+        .upsertTask(task)
+        .then(() => {
+          if (main && !main.isDestroyed())
+            main.webContents.send("workspace:changed");
+        })
+        .catch((error) =>
+          dialog.showErrorBox(
+            "素材索引更新失败",
+            "备份文件未因此删除。请在任务记录中核对结果，稍后重建素材索引。\n" +
+              String(error),
+          ),
         );
-        await fs.mkdir(output, { recursive: true });
-        if (actions.includes("report")) {
-          const pdf = await htmlToPdf(
-            await generateReport(task, { includeThumbnails: true }),
+      if (blocker !== undefined) {
+        powerSaveBlocker.stop(blocker);
+        blocker = undefined;
+      }
+      if (main && !main.isDestroyed())
+        main.webContents.send("tasks:settled", task);
+      if (task.status === "completed" && Notification.isSupported()) {
+        const passed = task.destinations.filter(
+          (destination) => destination.verified,
+        ).length;
+        new Notification({
+          title: "备份与校验完成",
+          body: `${task.name} · ${task.totalFiles} 个文件 · ${passed} 个目标通过校验`,
+          silent: !(await store.read("settings.json", defaultSettings))
+            .notificationSound,
+        }).show();
+      }
+      if (
+        task.status === "completed" &&
+        task.projectId &&
+        allowCompletionActions
+      )
+        void (async () => {
+          const project = (
+              await store.read<ProjectConfig[]>("projects.json", [])
+            ).find((item) => item.id === task.projectId),
+            actions = project?.completionActions || [];
+          if (!actions.length) return;
+          const output = path.join(
+            app.getPath("userData"),
+            "completed-actions",
+            project!.projectFolderName || project!.name,
+            task.name,
           );
-          await fs.writeFile(
-            path.join(output, `${task.name}_校验报告.pdf`),
-            pdf,
-          );
-        }
-        if (actions.includes("delivery"))
-          await fs.writeFile(
-            path.join(output, `${task.name}_交付清单.json`),
-            JSON.stringify(
-              {
-                application: "Kocpy",
-                version: app.getVersion(),
-                task,
-                generatedAt: Date.now(),
-              },
-              null,
-              2,
-            ),
-          );
-        if (actions.includes("proxy")) {
-          const proxyOut = path.join(output, "Proxies");
-          await fs.mkdir(proxyOut, { recursive: true });
-          const video = /\.(mov|mp4|mxf|mts|m2ts|avi|mkv|r3d|braw)$/i;
-          const jobs: ProxyJob[] = [];
-          for (const record of task.fileRecords.filter((item) =>
-            video.test(item.relativePath),
-          )) {
-            const copy = record.destinations.find((item) => item.verified);
-            if (!copy) continue;
-            jobs.push({
-              id: randomUUID(),
-              input: copy.path,
-              name: path.basename(copy.path),
-              outputDir: proxyOut,
-              format: "h264",
-              resolution: "1080p",
-              container: "mp4",
-              preset: "review",
-              namingTemplate: "{name}_proxy_{resolution}",
-              sourceTaskId: task.id,
-              sourceRelativePath: record.relativePath,
-              status: "pending",
-              progress: 0,
-              createdAt: Date.now(),
-            });
+          await fs.mkdir(output, { recursive: true });
+          if (actions.includes("report")) {
+            const pdf = await htmlToPdf(
+              await generateReport(task, { includeThumbnails: true }),
+            );
+            await fs.writeFile(
+              path.join(output, `${task.name}_校验报告.pdf`),
+              pdf,
+            );
           }
-          proxyJobs.push(...jobs);
-          await persistProxyJobs();
-          emitProxyJobs();
-          void processProxyQueue();
-        }
-        if (
-          actions.includes("eject") &&
-          task.destinations.every((item) => item.verified) &&
-          manifestRequirementMet(task)
-        )
-          await ejectVolume(task.sourcePath).catch(() => {});
-      })().catch((error) => {
-        task.faultTimeline = [
-          ...(task.faultTimeline || []),
-          {
-            at: Date.now(),
-            phase: "completion-action",
-            level: "error",
-            message: String(error),
-          },
-        ];
-        void persist();
-      });
-  });
+          if (actions.includes("delivery"))
+            await fs.writeFile(
+              path.join(output, `${task.name}_交付清单.json`),
+              JSON.stringify(
+                {
+                  application: "Kocpy",
+                  version: app.getVersion(),
+                  task,
+                  generatedAt: Date.now(),
+                },
+                null,
+                2,
+              ),
+            );
+          if (actions.includes("proxy")) {
+            const proxyOut = path.join(output, "Proxies");
+            await fs.mkdir(proxyOut, { recursive: true });
+            const video = /\.(mov|mp4|mxf|mts|m2ts|avi|mkv|r3d|braw)$/i;
+            const jobs: ProxyJob[] = [];
+            for (const record of task.fileRecords.filter((item) =>
+              video.test(item.relativePath),
+            )) {
+              const copy = record.destinations.find((item) => item.verified);
+              if (!copy) continue;
+              jobs.push({
+                id: randomUUID(),
+                input: copy.path,
+                name: path.basename(copy.path),
+                outputDir: proxyOut,
+                format: "h264",
+                resolution: "1080p",
+                container: "mp4",
+                preset: "review",
+                namingTemplate: "{name}_proxy_{resolution}",
+                sourceTaskId: task.id,
+                sourceRelativePath: record.relativePath,
+                status: "pending",
+                progress: 0,
+                createdAt: Date.now(),
+              });
+            }
+            proxyJobs.push(...jobs);
+            await persistProxyJobs();
+            emitProxyJobs();
+            void processProxyQueue();
+          }
+          if (
+            actions.includes("eject") &&
+            task.destinations.every((item) => item.verified) &&
+            manifestRequirementMet(task)
+          )
+            await ejectVolume(task.sourcePath).catch(() => {});
+        })().catch((error) => {
+          task.faultTimeline = [
+            ...(task.faultTimeline || []),
+            {
+              at: Date.now(),
+              phase: "completion-action",
+              level: "error",
+              message: String(error),
+            },
+          ];
+          void persist();
+        });
+    },
+  );
   Menu.setApplicationMenu(
     Menu.buildFromTemplate([
       {

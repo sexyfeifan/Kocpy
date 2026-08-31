@@ -27,6 +27,8 @@ contextBridge.exposeInMainWorld("api", {
   resumeTask: call("tasks:resume"),
   reverifyTask: call("tasks:reverify"),
   retryFailedDestinations: call("tasks:retry-failed"),
+  inspectTaskRecovery: call("tasks:inspect-recovery"),
+  recoverTask: call("tasks:recover"),
   deleteTask: call("tasks:delete"),
   setPriority: call("tasks:priority"),
   scanSource: call("source:scan"),

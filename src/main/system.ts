@@ -2,6 +2,7 @@ import { promises as fs, constants } from "node:fs";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import path from "node:path";
+import type { VolumeIdentity } from "../common/volume-identity";
 const exec = promisify(execFile);
 export function isTimeMachineVolume(
   name: string,
@@ -18,32 +19,74 @@ export function isTimeMachineVolume(
     )
   );
 }
-export async function volumeIdentity(dir: string) {
-  const stat = await fs.stat(dir);
-  let output = "";
-  try {
-    output = (
-      await exec("/usr/sbin/diskutil", ["info", dir], { timeout: 6000 })
-    ).stdout;
-  } catch {
-    /* Network mounts may not be represented by diskutil. */
+export function parseDfMount(output: string) {
+  for (const line of output.split("\n").reverse()) {
+    const match = line.match(/^(.+?)\s+\d+\s+\d+\s+\d+\s+\d+%\s+(.+)$/);
+    if (match)
+      return { filesystem: match[1].trim(), mountPoint: match[2].trim() };
   }
-  const field = (name: string) =>
-    output.match(new RegExp(`^\\s*${name}:\\s*(.+)$`, "mi"))?.[1]?.trim();
-  const uuid = field("Volume UUID") || field("Disk / Partition UUID");
-  const deviceNode = field("Device Node");
-  const fileSystem = field("File System Personality") || field("Type (Bundle)");
-  const name =
-    field("Volume Name") ||
-    (dir === "/" ? "Macintosh HD" : dir.split("/").filter(Boolean).pop()) ||
-    dir;
+  throw new Error("无法确定路径所属的挂载卷，请检查磁盘连接后重试");
+}
+export function diskPlistField(output: string, key: string) {
+  return output
+    .match(new RegExp(`<key>${key}</key>\\s*<string>([^<]*)</string>`))?.[1]
+    ?.replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, "&");
+}
+export async function volumeIdentity(dir: string): Promise<VolumeIdentity> {
+  const resolved = await fs.realpath(dir),
+    stat = await fs.stat(resolved);
+  const mount = parseDfMount(
+    (await exec("/bin/df", ["-P", resolved], { timeout: 6000 })).stdout,
+  );
+  if ((await fs.stat(mount.mountPoint)).dev !== stat.dev)
+    throw new Error("路径所属磁盘在检查期间发生变化，请重新检查连接");
+  let output = "";
+  const localDisk =
+    process.platform === "darwin" && /^\/dev\/disk\d/.test(mount.filesystem);
+  if (localDisk) {
+    try {
+      // diskutil accepts the device / mount point, NOT an arbitrary child directory.
+      output = (
+        await exec("/usr/sbin/diskutil", ["info", "-plist", mount.filesystem], {
+          timeout: 6000,
+        })
+      ).stdout;
+    } catch {
+      throw new Error(
+        "磁盘身份暂时无法读取，已安全停止。请检查连接并重新检查；不能据此判定 UUID 已变化。",
+      );
+    }
+  }
+  const uuid =
+    diskPlistField(output, "VolumeUUID") || diskPlistField(output, "DiskUUID");
+  if (localDisk && !uuid)
+    throw new Error(
+      "磁盘身份查询未返回 UUID，已安全停止。请重新检查连接，不要将未知身份视为原磁盘。",
+    );
+  if (
+    (await fs.stat(resolved)).dev !== stat.dev ||
+    (await fs.stat(mount.mountPoint)).dev !== stat.dev
+  )
+    throw new Error("磁盘在身份检查期间已断开或更换，请重新检查连接");
+  const reportedMount = diskPlistField(output, "MountPoint");
+  if (reportedMount && (await fs.stat(reportedMount)).dev !== stat.dev)
+    throw new Error("磁盘查询结果与当前路径不一致，已安全停止");
+  const deviceNode = diskPlistField(output, "DeviceNode");
   return {
-    id: uuid || deviceNode || String(stat.dev),
+    id: uuid || String(stat.dev),
     uuid,
     deviceNode,
-    name,
+    name:
+      diskPlistField(output, "VolumeName") ||
+      path.basename(mount.mountPoint) ||
+      "Macintosh HD",
     device: String(stat.dev),
-    fileSystem,
+    mountPoint: mount.mountPoint,
+    fileSystem: diskPlistField(output, "FilesystemType"),
   };
 }
 export async function driveInfo(dir: string) {

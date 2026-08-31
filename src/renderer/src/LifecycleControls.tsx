@@ -15,17 +15,23 @@ import {
   type ArchiveScope,
 } from "../../common/interaction";
 export function LifecycleControls({
+  initialProjectId,
   projects,
   tasks,
   notify,
   refreshProjects,
 }: {
+  initialProjectId?: string;
   projects: ProjectConfig[];
   tasks: BackupTask[];
   notify: (message: string, error?: boolean) => void;
   refreshProjects: () => Promise<void>;
 }) {
-  const [projectId, setProjectId] = useState(projects[0]?.id || "");
+  const [projectId, setProjectId] = useState(
+    projects.find((p) => p.id === initialProjectId)?.id ||
+      projects[0]?.id ||
+      "",
+  );
   const [date, setDate] = useState(today()),
     [phase, setPhase] = useState<"start" | "close">("start");
   const [checked, setChecked] = useState<string[]>([]),
