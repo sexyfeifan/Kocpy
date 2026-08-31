@@ -30,6 +30,14 @@ describe("backup layout and live detail", () => {
     expect(() => sourceFolderName("/")).toThrow();
     expect(normalBackupFolder("/Volumes/card/素材", "20260831123456")).toBe("素材_20260831123456");
   });
+  it("keeps the running bar on the same non-rounding progress formatter as the detail", () => {
+    const app = readFileSync("src/renderer/src/App.tsx", "utf8");
+    const bar = app.slice(app.indexOf('className="running-bar"'), app.indexOf('{existingImport &&'));
+    expect(bar).toContain("transferProgressLabel(");
+    expect(bar).not.toContain("Math.round(");
+    expect(transferProgressLabel({ copyProgress: 64.9 }, "copy")).toBe("64%");
+    expect(transferProgressLabel({ verifyProgress: 99.999 }, "verify")).toBe("99.9%");
+  });
   it("uses live progress, status, speed and destinations while keeping fetched file records", () => {
     const records = [{ name: "clip.mov" }] as BackupTask["fileRecords"];
     const snapshot = { id: "one", status: "running", copyProgress: 1, speedBps: 10, lastCheckpointAt: 1, fileRecords: records } as BackupTask;

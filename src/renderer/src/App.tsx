@@ -2583,12 +2583,10 @@ export function App() {
             </div>
             <span>
               {current.status === "verifying" ? "校验" : "拷贝"}{" "}
-              {Math.round(
-                current.status === "verifying"
-                  ? current.verifyProgress || 0
-                  : current.copyProgress || 0,
+              {transferProgressLabel(
+                current,
+                current.status === "verifying" ? "verify" : "copy",
               )}
-              %
             </span>
             <ChevronRight size={15} />
           </button>
