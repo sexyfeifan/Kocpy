@@ -1,29 +1,42 @@
-name: Build and Release
+name: Build and Stage Release
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
 permissions:
-  contents: write
+  contents: read
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 jobs:
   macos:
-    runs-on: macos-14
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
     env:
       HAS_APPLE_SIGNING: ${{ secrets.CSC_LINK != '' }}
     strategy:
       fail-fast: false
       matrix:
-        arch: [arm64, x64]
+        include:
+          - arch: arm64
+            runner: macos-15
+            appdir: mac-arm64
+          - arch: x64
+            runner: macos-15-intel
+            appdir: mac
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
       - run: npm ci
-      - run: npm run typecheck && npm test
+      - name: Verify source provenance, type safety and regressions
+        run: npm run verify:media && npm run typecheck && npm test
       - name: Build unsigned DMG
         if: env.HAS_APPLE_SIGNING != 'true'
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
         run: npm run build && npx electron-builder --mac --${{ matrix.arch }} --publish never -c.mac.notarize=false
       - name: Build signed and notarized DMG
         if: env.HAS_APPLE_SIGNING == 'true'
@@ -34,23 +47,39 @@ jobs:
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: npm run build && npx electron-builder --mac --${{ matrix.arch }} --publish never
+      - name: Verify packaged native runtime with isolated synthetic media
+        env:
+          ELECTRON_RUN_AS_NODE: "1"
+        run: |
+          mkdir -p work
+          npx esbuild scripts/verify-transfer-runtime.ts --bundle --platform=node --format=cjs --outfile=work/verify-transfer-runtime.cjs
+          npx esbuild scripts/verify-media-features.ts --bundle --platform=node --format=cjs --outfile=work/verify-media-features.cjs
+          "release/${{ matrix.appdir }}/Kocpy.app/Contents/MacOS/Kocpy" work/verify-transfer-runtime.cjs
+          "release/${{ matrix.appdir }}/Kocpy.app/Contents/MacOS/Kocpy" work/verify-media-features.cjs
       - uses: actions/upload-artifact@v5
         with:
           name: Kocpy-${{ matrix.arch }}
           path: release/Kocpy-*.dmg
-      - name: Publish GitHub release asset
-        if: startsWith(github.ref, 'refs/tags/')
+          if-no-files-found: error
+  stage:
+    needs: macos
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - uses: actions/download-artifact@v5
+        with:
+          pattern: Kocpy-*
+          path: release
+          merge-multiple: true
+      - name: Stage both installers, exact media source and checksums
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release view "${GITHUB_REF_NAME}" >/dev/null || gh release create "${GITHUB_REF_NAME}" --title "Kocpy ${GITHUB_REF_NAME#v}" --generate-notes || gh release view "${GITHUB_REF_NAME}" >/dev/null
-          # 已发布并提供摘要的安装包保持不变，不以重建产物覆盖。
-          for asset in release/Kocpy-*.dmg; do
-            asset_name="$(basename "$asset")"
-            existing="$(gh release view "${GITHUB_REF_NAME}" --json assets --jq ".assets[] | select(.name == \"${asset_name}\") | .name")"
-            if [ -n "$existing" ]; then
-              echo "Preserving existing release asset: $asset_name"
-            else
-              gh release upload "${GITHUB_REF_NAME}" "$asset"
-            fi
-          done
+        run: node scripts/stage-release.mjs "${GITHUB_REF_NAME}" release

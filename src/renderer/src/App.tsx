@@ -108,8 +108,11 @@ import {
   projectDeviceCells,
   verifiedPhysicalCopyCount,
   taskMeetsCopyRequirement,
+  manifestRequirementMet,
 } from "../../main/project-closeout";
 import { taskMediaKind } from "../../main/media-kind";
+import { copyEvidenceSummary } from "../../common/copy-evidence";
+import { APP_VERSION } from "../../common/version";
 
 type Page =
   | "overview"
@@ -899,7 +902,7 @@ export function App() {
           <img src="./icon.png" alt="Kocpy 图标" />
           <div>
             <strong>
-              Kocpy<span>0.1.19</span>
+              Kocpy<span>{APP_VERSION}</span>
             </strong>
             <small>素材工作台</small>
           </div>
@@ -956,7 +959,7 @@ export function App() {
                   ? `可升级 ${updateInfo.latest}`
                   : "检查更新"}
               </span>
-              <b>v0.1.19</b>
+              <b>v{APP_VERSION}</b>
             </button>
             <div className="sidebar-author-links">
               <span>
@@ -1322,8 +1325,8 @@ export function App() {
                               go("projects");
                             }}
                           >
-                            <FolderKanban size={17} />
-                            <span>
+                            <FolderKanban size={18} />
+                            <span className="closeout-project-copy">
                               <strong>{project.name}</strong>
                               <small>
                                 {summary.pending.length
@@ -1342,6 +1345,7 @@ export function App() {
                               }
                             >
                               {summary.complete} / {summary.total}
+                              <small>单元达标</small>
                             </b>
                             <ChevronRight size={14} />
                           </button>
@@ -2002,9 +2006,9 @@ export function App() {
                             {
                               projectDetailTasks.filter(
                                 (task) =>
-                                  task.status === "completed" &&
-                                  verifiedPhysicalCopyCount(task) >=
-                                    (projectDetail.requiredCopies || 2),
+                                  taskMeetsCopyRequirement(
+                                    task, projectDetail.requiredCopies || 2,
+                                  ),
                               ).length
                             }{" "}
                             / {projectDetailTasks.length}
@@ -2883,20 +2887,24 @@ export function App() {
               </div>
               <p className="current-file mono">
                 {selected.currentFile ||
-                  (selected.status === "completed"
+                  (selected.status === "completed" && manifestRequirementMet(selected)
                     ? "所有文件已完成拷贝与哈希比对"
                     : "等待或任务已停止")}
               </p>
-              {selected.status === "completed" && (
+              {selected.status === "completed" && manifestRequirementMet(selected) && (
                 <div className="completion-conclusion">
                   <CheckCircle2 size={17} />
                   <div>
                     <strong>
                       {selected.destinations.filter((d) => d.verified).length}{" "}
                       个目标通过校验 · {verifiedPhysicalCopyCount(selected)}{" "}
-                      份物理独立副本
+                      份可计数副本
                     </strong>
-                    <span>可以导出报告、定位副本或安全推出素材所在设备。</span>
+                    <span>
+                      {copyEvidenceSummary(selected.destinations).independencePending
+                        ? "物理独立性证据不足，未将不同卷 UUID 自动计作多份独立副本。重新校验可更新在线副本的存储关系；旧校验记录仍保留。"
+                        : "副本计数按已记录的系统存储关系保守判定；校验完成不等于可以格式化原卡。"}
+                    </span>
                   </div>
                 </div>
               )}
@@ -4801,6 +4809,9 @@ function HelpPage({
       ],
       tips: [
         "同一磁盘的多个文件夹只计算一份安全副本。",
+        "不同卷 UUID 不等于物理独立。校验后按同次系统拓扑计数；NAS、未知阵列或旧记录没有证据时不自动增加第二份。",
+        "旧任务显示独立性证据不足不等于文件损坏。连接原目标重新校验可更新关系，原哈希记录保留；存储拓扑不能证明机箱、供电或灾备独立。",
+        "休息／未使用只解释空白单元，已有素材仍按校验、清单和副本要求检查。",
         "“当天未发现素材 · 待确认”不等于漏备份，也不等于当天未使用。",
         "项目模板可自定义名称、说明、设备、机位、素材卷前缀、副本标准、命名规则、检查表、制作人员和完成动作；应用前可逐项预览并选择覆盖范围。",
         "进行中和已归档项目都能从卡片右上角菜单删除内部记录。删除前必须勾选风险确认并准确输入项目名称；活动备份或代理任务会阻止删除。",
@@ -4838,6 +4849,7 @@ function HelpPage({
       tips: [
         "代理始终写入独立目录，不修改原素材。",
         "暂停会清理不完整输出，继续时安全重建。",
+        "内置 FFmpeg 9.0.1 与 x264 的完整许可证、对应源码、构建脚本和摘要随应用资源及同版 Release 提供，无需另装组件。",
       ],
       page: "processing",
     },
@@ -5065,7 +5077,7 @@ function HelpPage({
       <section className="panel help-start">
         <div>
           <span className="mini-label">
-            <BookOpen size={13} /> KOCPY 0.1.19 · QUICK START
+            <BookOpen size={13} /> KOCPY {APP_VERSION} · QUICK START
           </span>
           <h2>软件使用说明</h2>
           <p>
@@ -5090,10 +5102,9 @@ function HelpPage({
       <section className="help-release-note">
         <RefreshCw size={20} />
         <div>
-          <strong>0.1.19：磁盘身份核对与安全恢复引导</strong>
+          <strong>0.1.20：收工判定、媒体运行时与界面一致性</strong>
           <p>
-            本页帮助收进顶栏问号，项目卡片操作统一排列。失败任务可进入“检查并恢复”，只读检查原身份与当前挂载卷，确认后仅重试未通过目标。身份查询失败不等于换盘；不会改写旧
-            UUID 或绕过校验。帮助仍默认折叠。
+            已声明使用的设备仍会检查现有素材；休息／未使用不能免除已记录素材的校验。不同卷 UUID 不再自动算成独立物理副本，旧记录保留原校验结果并提示独立性待复核。代理、交接与归档操作区统一间距，普通窗口限制过窄或过宽的比例；侧栏字号不缩小。内置媒体组件附完整源码与许可，帮助仍默认折叠。
           </p>
         </div>
       </section>
@@ -5662,29 +5673,38 @@ function MaintenancePage({
           />
         )}
         <div className="handoff-row">
-          <input
-            aria-label="交接操作人"
-            placeholder="实际交接人姓名"
-            value={handoffOperator}
-            onChange={(event) => setHandoffOperator(event.target.value)}
-          />
-          <select
-            id="handoff-project"
-            aria-label="交接项目"
-            value={handoffProject}
-            onChange={(event) => setHandoffProject(event.target.value)}
-          >
-            {projects.map((project) => (
-              <option key={project.id} value={project.id}>
-                {project.name}
-              </option>
-            ))}
-          </select>
-          <input
-            value={handoff}
-            onChange={(event) => setHandoff(event.target.value)}
-            placeholder="记录磁盘交接、异常说明或下一班注意事项"
-          />
+          <label>
+            交接人
+            <input
+              aria-label="交接操作人"
+              placeholder="实际交接人姓名"
+              value={handoffOperator}
+              onChange={(event) => setHandoffOperator(event.target.value)}
+            />
+          </label>
+          <label>
+            交接项目
+            <select
+              id="handoff-project"
+              aria-label="交接项目"
+              value={handoffProject}
+              onChange={(event) => setHandoffProject(event.target.value)}
+            >
+              {projects.map((project) => (
+                <option key={project.id} value={project.id}>
+                  {project.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="handoff-note">
+            交接说明
+            <input
+              value={handoff}
+              onChange={(event) => setHandoff(event.target.value)}
+              placeholder="记录磁盘交接、异常说明或下一班注意事项"
+            />
+          </label>
           <Button
             kind="primary"
             disabled={
@@ -6004,7 +6024,7 @@ function DiagnosticsPage({
   );
 }
 
-function ProxyQueue({
+export function ProxyQueue({
   jobs,
   act,
   refresh,
@@ -6022,34 +6042,37 @@ function ProxyQueue({
     .filter((job) => job.status === "completed")
     .map((job) => job.id);
   return (
-    <section className="panel">
-      <label>
-        队列与交付范围
-        <select
-          value={sourceTask}
-          onChange={(e) => {
-            setSourceTask(e.target.value);
-            setQueueLimit(100);
-          }}
-        >
-          <option value="">全部已记录素材</option>
-          {[
-            ...new Map(
-              jobs
-                .filter((job) => job.sourceTaskId)
-                .map((job) => [job.sourceTaskId, job.name]),
-            ).entries(),
-          ].map(([id, name]) => (
-            <option key={id} value={id}>
-              {name} · {id?.slice(0, 8)}
-            </option>
-          ))}
-        </select>
-      </label>
-      <p className="muted small">
-        以下导出仅包含当前范围已完成的 {exportIds.length}{" "}
-        个代理；排队中不代表完成。
-      </p>
+    <section className="panel proxy-queue-panel">
+      <div className="proxy-scope-toolbar">
+        <label>
+          队列与交付范围
+          <select
+            aria-describedby="proxy-scope-help"
+            value={sourceTask}
+            onChange={(e) => {
+              setSourceTask(e.target.value);
+              setQueueLimit(100);
+            }}
+          >
+            <option value="">全部已记录素材</option>
+            {[
+              ...new Map(
+                jobs
+                  .filter((job) => job.sourceTaskId)
+                  .map((job) => [job.sourceTaskId, job.name]),
+              ).entries(),
+            ].map(([id, name]) => (
+              <option key={id} value={id}>
+                {name} · {id?.slice(0, 8)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <p id="proxy-scope-help" className="muted small">
+          以下导出仅包含当前范围已完成的 {exportIds.length}{" "}
+          个代理；排队中不代表完成。
+        </p>
+      </div>
       <div className="section-title">
         <div>
           <h2>
@@ -6066,63 +6089,61 @@ function ProxyQueue({
             队列按顺序处理，保留原素材关联并检查帧率、时间码与音轨
           </span>
         </div>
-        <div className="row">
-          <Button
-            kind="primary"
-            onClick={() =>
-              void act(async () => {
-                const folder = await api.exportProxyPackage(exportIds);
-                if (folder) await api.reveal(folder);
-                return folder;
-              }, "完整交付目录与检查报告已生成")
-            }
-          >
-            <PackageCheck size={14} />
-            生成交付目录
-          </Button>
-          <Button
-            kind="subtle"
-            onClick={() =>
-              void act(async () => {
-                const file = await api.exportProxyDelivery(
-                  "resolve",
-                  exportIds,
-                );
-                if (file) await api.reveal(file);
-                return file;
-              }, "Resolve 交付清单已导出")
-            }
-          >
-            Resolve CSV
-          </Button>
-          <Button
-            kind="subtle"
-            onClick={() =>
-              void act(async () => {
-                const file = await api.exportProxyDelivery(
-                  "premiere",
-                  exportIds,
-                );
-                if (file) await api.reveal(file);
-                return file;
-              }, "Premiere 交付清单已导出")
-            }
-          >
-            Premiere CSV
-          </Button>
-          <Button
-            kind="subtle"
-            onClick={() =>
-              void act(async () => {
-                const file = await api.exportProxyDelivery("fcpxml", exportIds);
-                if (file) await api.reveal(file);
-                return file;
-              }, "Final Cut XML 已导出")
-            }
-          >
-            Final Cut XML
-          </Button>
-        </div>
+      </div>
+      <div
+        className="proxy-delivery-actions"
+        role="group"
+        aria-label="交付导出"
+      >
+        <Button
+          kind="primary"
+          onClick={() =>
+            void act(async () => {
+              const folder = await api.exportProxyPackage(exportIds);
+              if (folder) await api.reveal(folder);
+              return folder;
+            }, "完整交付目录与检查报告已生成")
+          }
+        >
+          <PackageCheck size={14} />
+          生成交付目录
+        </Button>
+        <Button
+          kind="subtle"
+          onClick={() =>
+            void act(async () => {
+              const file = await api.exportProxyDelivery("resolve", exportIds);
+              if (file) await api.reveal(file);
+              return file;
+            }, "Resolve 交付清单已导出")
+          }
+        >
+          Resolve CSV
+        </Button>
+        <Button
+          kind="subtle"
+          onClick={() =>
+            void act(async () => {
+              const file = await api.exportProxyDelivery("premiere", exportIds);
+              if (file) await api.reveal(file);
+              return file;
+            }, "Premiere 交付清单已导出")
+          }
+        >
+          Premiere CSV
+        </Button>
+        <Button
+          kind="subtle"
+          onClick={() =>
+            void act(async () => {
+              const file = await api.exportProxyDelivery("fcpxml", exportIds);
+              if (file) await api.reveal(file);
+              return file;
+            }, "Final Cut XML 已导出")
+          }
+        >
+          Final Cut XML
+        </Button>
       </div>
       {rows.length > queueLimit && (
         <Button onClick={() => setQueueLimit((value) => value + 100)}>
@@ -6598,7 +6619,7 @@ function SettingsPage({
         <img src="./icon.png" alt="Kocpy 图标" />
         <div>
           <h3>
-            Kocpy <span>0.1.19</span>
+            Kocpy <span>{APP_VERSION}</span>
           </h3>
           <p>从现场接卡、项目归档到交付报告，为每一份创作保留可靠副本。</p>
           <small>本地优先 · 独立校验 · 项目全周期记录 · @sexyfeifan</small>

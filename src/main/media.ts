@@ -18,7 +18,7 @@ export async function inspectMedia(input: string, cacheDir: string) {
     catch (e: any) { stderr = e.stderr || e.message; await fs.unlink(thumbnail).catch(() => {}); }
   }
   if (!stderr) {
-    try { await exec(ffmpegPath(), ["-nostdin", "-i", input, "-f", "null", "-t", "0", "-"], { maxBuffer: 4 * 1024 * 1024 }); }
+    try { stderr = (await exec(ffmpegPath(), ["-nostdin", "-i", input, "-f", "null", "-t", "0", "-"], { maxBuffer: 4 * 1024 * 1024 })).stderr; }
     catch (e: any) { stderr = e.stderr || ""; }
   }
   const duration = stderr.match(/Duration:\s*([^,]+)/)?.[1]?.trim();

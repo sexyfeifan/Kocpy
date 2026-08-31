@@ -81,6 +81,7 @@ export interface Destination {
   volumeId?: string;
   volumeUuid?: string;
   volumeName?: string;
+  storageEvidence?: import("../common/copy-evidence").StorageEvidence;
   available?: boolean;
   error?: string;
   speedHistory?: Array<{ at: number; copy: number; verify: number }>;

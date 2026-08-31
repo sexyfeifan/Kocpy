@@ -2,6 +2,8 @@ import * as fs from "fs";
 import type { BackupTask, ProjectConfig } from "../types";
 import { formatBytes } from "../report-builder";
 import { projectShootingDates } from "../project-path";
+import { APP_VERSION } from "../../common/version";
+import { copyEvidenceSummary } from "../../common/copy-evidence";
 import {
   manifestRequirementMet,
   projectCellStatus,
@@ -215,7 +217,7 @@ export async function generateReport(
 <div class="header">
   <div>
     <h1>Kocpy</h1>
-    <p>VERIFIED MEDIA TRANSFER REPORT · v0.1.14</p>
+    <p>VERIFIED MEDIA TRANSFER REPORT · v${APP_VERSION}</p>
     <p style="margin-top:8px;font-size:12px;color:#aaa">生成时间：${new Date().toLocaleString("zh-CN")}</p>
   </div>
   <div class="badge">${statusLabel}</div>
@@ -224,7 +226,7 @@ export async function generateReport(
 <div class="summary">
   <div><strong>${task.totalFiles}</strong><span>FILES / 文件</span></div>
   <div><strong>${formatBytes(task.totalBytes)}</strong><span>SOURCE / 源数据</span></div>
-  <div><strong>${verifiedPhysicalCopyCount(task)} / ${task.destinations.length}</strong><span>PHYSICAL COPIES / 物理独立副本</span></div>
+  <div><strong>${verifiedPhysicalCopyCount(task)} / ${task.destinations.length}</strong><span>COUNTABLE COPIES / 可计数副本</span></div>
   <div><strong>${duration}</strong><span>DURATION / 总用时</span></div>
 </div>
 
@@ -232,6 +234,7 @@ ${eventRows ? `<div class="section"><h2>任务事件时间线</h2><table><thead>
 
 <div class="section">
   <h2>任务信息</h2>
+  <p>${copyEvidenceSummary(task.destinations).independencePending ? "物理独立性证据不足：旧记录、未知拓扑或不同检查批次不合并计数。重新校验在线目标可更新存储关系。" : "副本计数依据已记录的系统存储关系；不同目录或卷 UUID 不自动代表不同物理磁盘，也不代表机箱、供电或灾备独立。"} 校验完成不等于可以格式化原卡。</p>
   <div class="info-grid">
     <span class="label">任务名称</span><span class="value">${esc(task.name)}</span>
     <span class="label">任务编号</span><span class="value">${esc(task.id)}</span>

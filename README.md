@@ -8,9 +8,9 @@
 
 ![Kocpy 工作台](docs/screenshots/dashboard.png)
 
-当前代码版本：**0.1.19** · [完整使用手册](docs/USER_GUIDE.md) · [0.1.19 更新说明](docs/RELEASE_NOTES_0.1.19.md) · [已公开发布版本](https://github.com/sexyfeifan/Kocpy/releases/latest)
+当前代码版本：**0.1.20** · [完整使用手册](docs/USER_GUIDE.md) · [0.1.20 更新说明](docs/RELEASE_NOTES_0.1.20.md) · [已公开发布版本](https://github.com/sexyfeifan/Kocpy/releases/latest)
 
-0.1.19 修复子目录磁盘身份查询导致的 UUID 变化误报，新增“只读检查 → 核对身份 → 确认重试”的恢复引导；顶栏问号提供本页帮助，项目卡片统一按钮图标与布局。同步修复复校验旧状态、缺失哈希基线保护及项目模板入口选择。已发布与本地构建状态以实际附件为准；测试范围及验收限制见 [验证记录](docs/VERIFICATION.md)。
+0.1.20 修复收工风险漏报，区分校验目标与有存储关系证据的副本；更新双架构媒体运行时及完整对应源码分发，修复媒体信息和代理取消问题，整理代理／归档／交接布局并约束窗口比例。已公开安装包以 Release 实际附件为准，草稿不是公开发行；测试范围及限制见 [验证记录](docs/VERIFICATION.md)。
 
 ## 中文
 
@@ -52,7 +52,7 @@ Kocpy 将素材卡接收、多目标备份、逐目标回读校验、项目归�
 
 ### 项目全周期看板
 
-项目页按“拍摄日期 × 设备/机位”展示整个执行周期：每一天每台设备是否已经备份、素材卷数量、文件数量、素材容量、已校验数量，以及项目总任务、总文件和总素材量。项目可设置 1–4 份收工副本标准，并标记休息日或当天未使用的设备，避免空白单元格被误判为漏备份。副本按物理卷 UUID 去重，同一磁盘上的多个文件夹只计算为一份；工作台同时显示尚未完成的日期与设备。
+项目页按“拍摄日期 × 设备/机位”展示素材卷、文件、容量和副本状态。可设置 1–4 份收工标准；休息／未使用只解释空白单元，不掩盖已有素材的风险。同盘目录或分区不重复计算；不同 UUID 本身也不证明物理独立。校验后依据同次系统存储拓扑保守计数，旧记录或未知阵列／网络关系不自动增加第二份。连接原目标重新校验可更新证据，原哈希记录仍保留。
 
 既有备份可按单张素材卡、单日所有机位或整个项目接管。Kocpy 会复用项目命名规则识别日期、设备、项目机位和任意名称的素材卷；接管任务与原生任务共同进入项目矩阵，缺少历史机位元数据的旧任务会明确显示为“未标机位”。
 
@@ -130,8 +130,8 @@ Kocpy 支持真实深色与浅色外观，任务、项目、偏好、缩略图�
 
 从 [GitHub Releases](https://github.com/sexyfeifan/Kocpy/releases) 下载对应架构：
 
-- `Kocpy-0.1.19-arm64.dmg`：Apple Silicon Mac
-- `Kocpy-0.1.19-x64.dmg`：Intel Mac
+- `Kocpy-0.1.20-arm64.dmg`：Apple Silicon Mac
+- `Kocpy-0.1.20-x64.dmg`：Intel Mac
 
 当前代码对应上述版本；远端可下载版本以 Release 实际附件为准。
 
@@ -147,7 +147,7 @@ xattr -dr com.apple.quarantine "/Applications/Kocpy.app"
 
 Kocpy is a local-first macOS workspace for verified media offload and production archiving. It copies one source to up to four destinations, reads every copy back for checksum verification, resumes interrupted large files, tracks physical volumes, and produces task, shooting-day, and full-project reports. Its Recovery Center can retry only failed destinations while preserving successful copies and their verification records.
 
-Project mode organizes media by project, shooting date, camera, optional A–E camera position, and timestamped card volume. The project dashboard applies a configurable closeout rule based on physically distinct volume identities, with explicit rest-day and unused-camera exceptions. Complete records can be exported as PDF, JSON, CSV, or a self-contained archive bundle with MHL manifests and SHA-256 checksums.
+Project mode organizes media by project, date, camera, optional camera position, and card volume. Closeout distinguishes verified targets from independent-copy evidence: different UUIDs alone do not prove different disks. Only contemporaneous known storage topology adds independent copies; unknown relationships are conservative. Rest/unused exceptions apply only to empty cells, never recorded media risks. Records export as PDF, JSON, CSV, or an archive with MHL and SHA-256 checksums.
 
 Kocpy also includes media thumbnails and metadata, H.264/ProRes proxy queues, Resolve CSV export, light/dark appearance, update checks, and architecture-specific DMGs for Apple Silicon and Intel Macs. An in-app guide documents every module with steps, safety notes, and direct links. Media and records stay on the Mac unless the user explicitly selects a report mirror folder.
 
@@ -165,7 +165,7 @@ Version 0.1.16 extends guarded internal-record deletion to active projects, whil
 
 Kocpy は、macOS 向けのローカル優先メディアバックアップ／プロジェクト管理アプリです。1つの素材ソースを最大4つの保存先へコピーし、各コピーを独立して読み戻してチェックサム検証します。大容量ファイルの再開、物理ボリューム識別、容量事前確認に加え、成功済みコピーを保持したまま失敗した保存先だけを再試行できます。
 
-プロジェクトモードでは、プロジェクト、撮影日、カメラ、任意の A–E カメラ位置、タイムスタンプ付き素材巻の階層で整理します。必要コピー数は物理ボリューム UUID ごとに数え、同じディスク上の複数フォルダを重複カウントしません。詳細データは PDF／JSON／CSV、MHL と `SHA256SUMS.txt` を含む一括アーカイブとして書き出せます。
+プロジェクト、撮影日、カメラ、任意のカメラ位置、素材巻で整理します。UUID が異なるだけでは物理的独立性を認定せず、同時に確認したストレージ構成に基づき保守的に数えます。不明な関係は独立コピーを増やさず、休止指定も既存素材のリスクを隠しません。PDF／JSON／CSV、MHL と SHA-256 を含むアーカイブを書き出せます。
 
 素材サムネイルとメタデータ、H.264／ProRes プロキシキュー、Resolve CSV、ライト／ダーク表示、更新確認、Apple Silicon／Intel 用 DMG も備えています。アプリ内ガイドでは、各機能の手順、注意事項、画面への直接リンクを確認できます。素材と記録は、ユーザーが明示的にレポート同期先を選ばない限り Mac 内に保持されます。
 
@@ -183,6 +183,6 @@ Kocpy は、macOS 向けのローカル優先メディアバックアップ／�
 
 ## License
 
-Kocpy source code is available under the MIT License. Bundled FFmpeg binaries retain their respective licenses.
+Kocpy source code is available under the MIT License. The separately invoked FFmpeg 9.0.1/x264 runtime is GPL-2.0-or-later. Complete notices, pinned corresponding source archives and build scripts are bundled under the app's `Contents/Resources/ffmpeg` directory and provided alongside installers in each new Release. See [media notices](resources/ffmpeg/NOTICE.md). This does not claim App Store approval or patent clearance.
 
 0.1.18 adds explicit maintenance scopes, retry-safe batch submission, shared path previews, editable camera positions, item-by-item checklists, background operation history, paginated media browsing, scoped exports, and NAS/LAN controls. Desktop acceptance limits are documented; independent destination verification remains mandatory.

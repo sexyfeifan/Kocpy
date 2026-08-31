@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "ffmpeg": {
+    "version": "9.0.1",
+    "archive": "ffmpeg-9.0.1.tar.xz",
+    "directory": "ffmpeg-9.0.1",
+    "url": "https://ffmpeg.org/releases/ffmpeg-9.0.1.tar.xz",
+    "sha256": "cf38e0e28c7e5605942c4a77755349b0145804a397af37eb1fb4c77cb237f635",
+    "verifiedSigningKey": "FCF986EA15E6E293A5644F10B4322F04D67658D8"
+  },
+  "x264": {
+    "version": "b35605ace3ddf7c1a5d67a2eb553f034aef41d55",
+    "archive": "x264-b35605ace3ddf7c1a5d67a2eb553f034aef41d55.tar.bz2",
+    "directory": "x264-b35605ace3ddf7c1a5d67a2eb553f034aef41d55",
+    "url": "https://code.videolan.org/videolan/x264/-/archive/b35605ace3ddf7c1a5d67a2eb553f034aef41d55/x264-b35605ace3ddf7c1a5d67a2eb553f034aef41d55.tar.bz2",
+    "sha256": "6eeb82934e69fd51e043bd8c5b0d152839638d1ce7aa4eea65a3fedcf83ff224"
+  },
+  "nasm": {
+    "version": "2.16.03",
+    "archive": "nasm-2.16.03.tar.xz",
+    "directory": "nasm-2.16.03",
+    "url": "https://www.nasm.us/pub/nasm/releasebuilds/2.16.03/nasm-2.16.03.tar.xz",
+    "sha256": "1412a1c760bbd05db026b6c0d1657affd6631cd0a63cddb6f73cc6d4aa616148"
+  }
+}

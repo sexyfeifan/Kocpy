@@ -1,5 +1,13 @@
 import { useEffect, useState } from "react";
 import {
+  Check,
+  Download,
+  FolderOpen,
+  RefreshCw,
+  Save,
+  ScanLine,
+} from "lucide-react";
+import {
   api,
   today,
   type ProjectConfig,
@@ -147,7 +155,7 @@ export function LifecycleControls({
       <section className="panel">
         <h2>检查表、提醒与变化审计</h2>
         <fieldset className="interaction-fieldset" disabled={busy}>
-          <div className="lifecycle-tools">
+          <div className="lifecycle-tools checklist-fields">
             <label>
               当前项目
               <select
@@ -216,36 +224,41 @@ export function LifecycleControls({
               </p>
             )}
           </div>
-          <Button
-            kind="primary"
-            disabled={
-              !project ||
-              !operator.trim() ||
-              !items.length ||
-              items.some((item) => item.required && !checked.includes(item.id))
-            }
-            onClick={() =>
-              void run(
-                () =>
-                  api.signProjectChecklist(projectId, {
-                    date,
-                    phase,
-                    completed: checked,
-                    operator: operator.trim(),
-                    signature: operator.trim(),
-                  }),
-                "检查表已签署",
-              ).then((ok) => {
-                if (ok) setChecked([]);
-              })
-            }
-          >
-            确认以上项目并签署
-          </Button>
-          <p className="muted small">
-            逐项确认后才可签署；收工时后台还会检查素材副本。失败时保留填写内容。
-          </p>
-          <details>
+          <div className="checklist-signoff">
+            <Button
+              kind="primary"
+              disabled={
+                !project ||
+                !operator.trim() ||
+                !items.length ||
+                items.some(
+                  (item) => item.required && !checked.includes(item.id),
+                )
+              }
+              onClick={() =>
+                void run(
+                  () =>
+                    api.signProjectChecklist(projectId, {
+                      date,
+                      phase,
+                      completed: checked,
+                      operator: operator.trim(),
+                      signature: operator.trim(),
+                    }),
+                  "检查表已签署",
+                ).then((ok) => {
+                  if (ok) setChecked([]);
+                })
+              }
+            >
+              <Check size={14} />
+              确认以上项目并签署
+            </Button>
+            <p className="muted small">
+              逐项确认后才可签署；收工时后台还会检查素材副本。失败时保留填写内容。
+            </p>
+          </div>
+          <details className="checklist-history">
             <summary>
               查看签署记录（{project?.checklistRuns?.length || 0}）
             </summary>
@@ -256,7 +269,7 @@ export function LifecycleControls({
               </p>
             ))}
           </details>
-          <div className="lifecycle-tools">
+          <div className="lifecycle-tools reminder-tools">
             <label>
               复校验间隔（天）
               <input
@@ -272,6 +285,7 @@ export function LifecycleControls({
               />
             </label>
             <Button disabled={!project} onClick={() => void setReminder()}>
+              <Save size={14} />
               保存 / 更新提醒
             </Button>
             <Button
@@ -283,6 +297,7 @@ export function LifecycleControls({
                 )
               }
             >
+              <Download size={14} />
               导出该项目变化报告
             </Button>
           </div>
@@ -342,7 +357,7 @@ export function LifecycleControls({
           。先确认范围，再重新读取已有副本；不会把空选择扩大到整个项目。
         </p>
         <fieldset className="interaction-fieldset" disabled={busy}>
-          <div className="lifecycle-tools">
+          <div className="lifecycle-tools archive-scope-fields">
             <label>
               范围
               <select
@@ -407,24 +422,36 @@ export function LifecycleControls({
                 />
               </label>
             )}
-            <label>
-              磁盘 / 扫描根目录
-              <input
-                value={root}
-                onChange={(e) => setRoot(e.target.value)}
-                placeholder="/Volumes/归档盘"
-              />
-            </label>
-            <Button
-              onClick={() =>
-                void api
-                  .selectDirectory()
-                  .then((value) => value && setRoot(value))
-                  .catch((error) => notify(readableOperationError(error), true))
-              }
-            >
-              选择目录
-            </Button>
+            <div className="archive-root-field lifecycle-field">
+              <label htmlFor="archive-root">磁盘 / 扫描根目录</label>
+              <span className="directory-picker">
+                <input
+                  id="archive-root"
+                  value={root}
+                  onChange={(e) => setRoot(e.target.value)}
+                  placeholder="/Volumes/归档盘"
+                />
+                <Button
+                  onClick={() =>
+                    void api
+                      .selectDirectory()
+                      .then((value) => value && setRoot(value))
+                      .catch((error) =>
+                        notify(readableOperationError(error), true),
+                      )
+                  }
+                >
+                  <FolderOpen size={14} />
+                  选择目录
+                </Button>
+              </span>
+            </div>
+          </div>
+          <div
+            className="lifecycle-actions"
+            role="group"
+            aria-label="归档检查操作"
+          >
             <Button
               kind="primary"
               disabled={
@@ -450,6 +477,7 @@ export function LifecycleControls({
                 )
               }
             >
+              <RefreshCw size={14} />
               确认范围并复校验
             </Button>
             <Button
@@ -461,6 +489,7 @@ export function LifecycleControls({
                 )
               }
             >
+              <ScanLine size={14} />
               扫描未记录文件
             </Button>
           </div>

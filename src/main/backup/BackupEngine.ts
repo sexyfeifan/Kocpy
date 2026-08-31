@@ -14,6 +14,7 @@ import type {
 } from "../types";
 import { canonical, inside, scan, segment, safeChild } from "./safety";
 import { volumeIdentity } from "../system";
+import { refreshStorageEvidence } from "../storage-topology";
 import { inspectMedia, isThumbnailMedia } from "../media";
 import { makeProjectFolderName, renderProjectCardPath } from "../project-path";
 import { mediaBreakdownFromFiles } from "../media-kind";
@@ -540,6 +541,8 @@ export class BackupEngine extends EventEmitter {
         }
       }
       await this.verifyRecords(task, controller.signal);
+      await refreshStorageEvidence(task.destinations);
+      controller.signal.throwIfAborted();
       if (task.destinations.some((d) => !d.verified))
         throw new Error("部分目的地未通过重新校验");
       task.status = "completed";
@@ -1583,6 +1586,7 @@ export class BackupEngine extends EventEmitter {
           d.performance = summarizeSpeeds(d.copySpeedSamples || []);
       }
       await this.verifyRecords(task, signal, retryTargetIds);
+      await refreshStorageEvidence(task.destinations);
       signal.throwIfAborted();
       if (task.destinations.some((d) => !d.verified))
         throw new Error(

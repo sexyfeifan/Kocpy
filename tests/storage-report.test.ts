@@ -275,6 +275,13 @@ describe("Persistence and reports", () => {
     );
     expect(cell.complete).toBe(false);
     task.destinations[1].volumeUuid = "second-volume";
+    // Different volume UUIDs alone are not proof of different physical media.
+    expect(verifiedPhysicalCopyCount(task)).toBe(1);
+    task.destinations.forEach((destination, index) => {
+      destination.storageEvidence = { assessmentId: "same-inspection", checkedAt: 1,
+        kind: "local-physical", volumeUuid: destination.volumeUuid,
+        domains: [`disk${index}`], reason: "synthetic topology" };
+    });
     expect(verifiedPhysicalCopyCount(task)).toBe(2);
   });
   it("keeps configured camera positions as separate closeout cells", () => {
@@ -292,6 +299,9 @@ describe("Persistence and reports", () => {
     task.destinations.forEach((destination, index) => {
       destination.verified = true;
       destination.volumeUuid = `volume-${index}`;
+      destination.storageEvidence = { assessmentId: "same-inspection", checkedAt: 1,
+        kind: "local-physical", volumeUuid: destination.volumeUuid,
+        domains: [`disk${index}`], reason: "synthetic topology" };
     });
     const configuredProject = {
       id: "p",

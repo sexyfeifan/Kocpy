@@ -39,6 +39,7 @@ import { Storage, defaultSettings } from "./storage";
 import { listVolumes, driveInfo, ejectVolume, volumeIdentity } from "./system";
 import { makeProxy } from "./proxy";
 import { mainWindowLayout } from "./window-layout";
+import { installMainWindowConstraints } from "./window-constraints";
 import { inspectMedia, isThumbnailMedia, pruneMediaCache } from "./media";
 import {
   generateReport,
@@ -755,6 +756,7 @@ function createWindow() {
     },
   });
   main.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  installMainWindowConstraints(main, screen);
   main.webContents.on("will-navigate", (event) => event.preventDefault());
   main.once("ready-to-show", () => main?.show());
   main.on("close", (event) => {
@@ -1021,7 +1023,7 @@ app.whenReady().then(async () => {
         ).size < required
       )
         throw new Error(
-          `项目要求 ${required} 份物理独立副本，请选择位于不同磁盘的目的地`,
+          `项目要求 ${required} 份独立副本，请先选择至少 ${required} 个不同卷的目的地；卷 UUID 不同仍不代表物理独立，收工时按存储关系核对`,
         );
     }
     const task = engine.createTask(config);

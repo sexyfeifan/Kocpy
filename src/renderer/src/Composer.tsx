@@ -296,7 +296,7 @@ export function Composer({
         if (mode === "project" && !project) throw new Error("请选择拍摄项目");
         if (mode === "project" && project) {
           const required = project.requiredCopies || 2;
-          const physical = new Set(
+          const knownVolumes = new Set(
             dests.map(
               (destination) =>
                 volumes.find(
@@ -312,9 +312,9 @@ export function Composer({
                 destination,
             ),
           );
-          if (dests.length < required || physical.size < required)
+          if (dests.length < required || knownVolumes.size < required)
             throw new Error(
-              `项目要求 ${required} 份物理独立副本，请增加位于不同磁盘的目的地`,
+              `项目要求 ${required} 份独立副本，请至少选择 ${required} 个不同卷。不同卷仍可能在同一块物理磁盘；完成后按存储关系核对收工要求。`,
             );
         }
         const space: Record<string, number> = {};

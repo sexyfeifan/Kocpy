@@ -8,8 +8,33 @@ import { makeProxy } from "../src/main/proxy";
 import { ffmpegPath } from "../src/main/ffmpeg";
 import { generateDeliveryManifest } from "../src/main/delivery";
 import { BackupEngine } from "../src/main/backup/BackupEngine";
+import { inspectMedia } from "../src/main/media";
 const exec = promisify(execFile);
 const ffmpeg = ffmpegPath();
+it("reads metadata from successful probing and produces an audio waveform", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "kocpy-media-metadata-"));
+  try {
+    const input = path.join(root, "audio-video.mp4");
+    await exec(ffmpeg, ["-f", "lavfi", "-i", "testsrc2=size=320x180:rate=24", "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000", "-t", "2", "-c:v", "libx264", "-c:a", "aac", input]);
+    const result = await inspectMedia(input, path.join(root, "cache"));
+    expect(result.duration).toContain("00:00:02");
+    expect(result.frameRate).toBe("24");
+    expect(result.audio).toContain("aac");
+    expect(result.thumbnailPath).toBeTruthy();
+    expect(result.waveformPath).toBeTruthy();
+    expect((await fs.stat(result.waveformPath!)).size).toBeGreaterThan(0);
+  } finally { await fs.rm(root, { recursive: true, force: true }); }
+});
+it("does not launch or publish an already cancelled proxy job", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "kocpy-proxy-pre-cancel-"));
+  try {
+    const input = path.join(root, "source.mp4"), output = path.join(root, "proxies");
+    await exec(ffmpeg, ["-f", "lavfi", "-i", "testsrc2=size=160x90:rate=24", "-t", "0.5", "-c:v", "libx264", input]);
+    const controller = new AbortController(); controller.abort(new Error("cancel before start"));
+    await expect(makeProxy(input, output, "h264", "720p", { signal: controller.signal })).rejects.toThrow("cancel before start");
+    expect(await fs.readdir(output).catch(() => [])).toEqual([]);
+  } finally { await fs.rm(root, { recursive: true, force: true }); }
+});
 it("attaches a generated thumbnail to the verified backup file record", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "kocpy-backup-thumb-"));
   try {

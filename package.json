@@ -1,6 +1,6 @@
 {
   "name": "kocpy",
-  "version": "0.1.19",
+  "version": "0.1.20",
   "description": "Kocpy 专业素材工作台 · 多目的地备份、独立校验与项目归档",
   "main": "out/main/index.js",
   "productName": "Kocpy",
@@ -12,6 +12,13 @@
     "build": "electron-vite build",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "verify:media": "node scripts/verify-media-runtime.mjs",
+    "prepack": "npm run verify:media",
+    "predist": "npm run verify:media",
+    "prepack:arm64": "npm run verify:media",
+    "prepack:x64": "npm run verify:media",
+    "predist:arm64": "npm run verify:media",
+    "predist:x64": "npm run verify:media",
     "pack": "npm run build && electron-builder --mac --arm64 --dir -c.mac.notarize=false",
     "dist": "npm run build && electron-builder --mac --arm64 --x64 -c.mac.notarize=false",
     "pack:arm64": "npm run build && electron-builder --mac --arm64 --dir -c.mac.notarize=false",
@@ -44,6 +51,8 @@
     "vitest": "^4.1.11"
   },
   "build": {
+    "beforePack": "scripts/before-pack.cjs",
+    "afterPack": "scripts/after-pack.cjs",
     "appId": "com.kocpy.studio",
     "productName": "Kocpy",
     "directories": {
@@ -70,7 +79,11 @@
         "to": "ffmpeg",
         "filter": [
           "ffmpeg-darwin-*",
-          "LICENSE-*"
+          "build-info-*.json",
+          "NOTICE.md",
+          "FFmpeg-*",
+          "x264-COPYING",
+          "sources/**/*"
         ]
       }
     ]

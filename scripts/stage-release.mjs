@@ -1,0 +1,33 @@
+// Aggregate only this workflow's accepted artifacts. Never publish or overwrite.
+import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { promises as fs } from "node:fs";
+import path from "node:path";
+import { createHash } from "node:crypto";
+import { verifyMediaRuntime } from "./verify-media-runtime.mjs";
+const run = (command, args) => execFileSync(command, args, { encoding: "utf8" }).trim();
+const version = JSON.parse(await fs.readFile("package.json", "utf8")).version;
+const tag = process.argv[2], directory = path.resolve(process.argv[3] || "release");
+assert.equal(tag, `v${version}`, "Tag and package version must agree");
+assert.equal(run("git", ["rev-parse", `${tag}^{commit}`]), run("git", ["rev-parse", "HEAD"]), "Build the tagged commit");
+await verifyMediaRuntime();
+const assets = ["arm64", "x64"].map((arch) => `Kocpy-${version}-${arch}.dmg`);
+for (const name of assets) assert((await fs.stat(path.join(directory, name))).size > 1024 * 1024);
+const sourceName = `Kocpy-${version}-media-corresponding-source.tar.gz`;
+const sourcePath = path.join(directory, sourceName);
+// Fixed allowlist; no private documents, working files or application records.
+execFileSync("tar", ["-czf", sourcePath, "-C", "resources/ffmpeg", "sources", "NOTICE.md", "FFmpeg-COPYING.GPLv2", "FFmpeg-COPYING.LGPLv2.1", "FFmpeg-LICENSE.md", "x264-COPYING", "build-info-arm64.json", "build-info-x64.json"]);
+assets.push(sourceName);
+const checksums = [];
+for (const name of assets) checksums.push(`${createHash("sha256").update(await fs.readFile(path.join(directory, name))).digest("hex")}  ${name}`);
+await fs.writeFile(path.join(directory, "SHA256SUMS.txt"), checksums.join("\n") + "\n");
+assets.push("SHA256SUMS.txt");
+const releases = JSON.parse(run("gh", ["release", "list", "--limit", "100", "--json", "tagName,isDraft"]));
+assert(!releases.some((release) => release.tagName === tag), "Release already exists; stop for verification, never overwrite");
+const notes = `docs/RELEASE_NOTES_${version}.md`;
+await fs.access(notes);
+run("gh", ["release", "create", tag, "--verify-tag", "--draft", "--title", `Kocpy ${version}`, "--notes-file", notes, ...assets.map((name) => path.join(directory, name))]);
+const staged = JSON.parse(run("gh", ["release", "view", tag, "--json", "isDraft,assets"]));
+assert(staged.isDraft);
+assert.deepEqual(staged.assets.map((asset) => asset.name).sort(), assets.sort());
+console.log(`Draft ${tag} staged. Verify exact downloaded assets and actual GUI before publishing.`);
