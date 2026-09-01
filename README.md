@@ -8,9 +8,9 @@
 
 ![Kocpy 工作台](docs/screenshots/dashboard.png)
 
-当前代码版本：**0.1.24** · [完整使用手册](docs/USER_GUIDE.md) · [0.1.24 更新说明](docs/RELEASE_NOTES_0.1.24.md) · [已公开发布版本](https://github.com/sexyfeifan/Kocpy/releases/latest)
+当前代码版本：**0.1.25** · [完整使用手册](docs/USER_GUIDE.md) · [0.1.25 更新说明](docs/RELEASE_NOTES_0.1.25.md) · [已公开发布版本](https://github.com/sexyfeifan/Kocpy/releases/latest)
 
-0.1.24 加固历史素材接管：逐卷预览日期、设备、机位和卷名，未解决映射不能落库；开始与写入前后均以扫描摘要确认目录未变化。完整哈希相同的路径可明确关联为同一逻辑卷，卷 UUID 与保守物理副本结论分开保存。接管、刷新、基线、清单修复／修订／复校验及重定位都追加审计事件，旧路径和旧结论不被覆盖。已公开安装包以 Release 实际附件为准，草稿不是公开发行；测试范围及限制见 [验证记录](docs/VERIFICATION.md)。
+0.1.25 收拢全应用 GUI 设计系统：按钮、表单、表格、状态、空页面、弹窗和检查器使用统一尺寸与语义；普通弹窗和危险确认共享键盘焦点栈，关闭后回到原操作位置。侧栏保持固定字号和图标比例，最小窗口通过独立滚动保留全部操作；深色、浅色和长路径均使用完整主题变量。0.1.24 的专业接管、映射门禁和追加式审计安全标准保持不变。已公开安装包以 Release 实际附件为准，草稿不是公开发行；测试范围及限制见 [验证记录](docs/VERIFICATION.md)。
 
 ## 中文
 
@@ -132,8 +132,8 @@ Kocpy 支持真实深色与浅色外观，任务、项目、偏好、缩略图�
 
 从 [GitHub Releases](https://github.com/sexyfeifan/Kocpy/releases) 下载对应架构：
 
-- `Kocpy-0.1.24-arm64.dmg`：Apple Silicon Mac
-- `Kocpy-0.1.24-x64.dmg`：Intel Mac
+- `Kocpy-0.1.25-arm64.dmg`：Apple Silicon Mac
+- `Kocpy-0.1.25-x64.dmg`：Intel Mac
 
 当前代码对应上述版本；远端可下载版本以 Release 实际附件为准。
 
