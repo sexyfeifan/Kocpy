@@ -1,4 +1,12 @@
-# Kocpy 0.1.28 architecture
+# Kocpy 0.1.29 architecture
+
+## Archive evidence authority
+
+Workspace schema 2 adds one sealed archive-evidence domain beside tasks and projects. It contains health records, hash-chained changes, reminders and full verification runs under its own revision, commit time and SHA-256 digest; the enclosing workspace digest protects the same snapshot again. Archive evidence and any task verification-state changes are published by one serialized workspace commit. The three historical archive JSON files remain repairable compatibility mirrors and are imported only during the one-time schema-1 upgrade.
+
+Each verification run freezes operator, scope, baseline digest and per-task evidence. A task is verified from a clone: recorded destinations are checked for current volume identity, every selected file is read and hashed, and only a successful authority commit updates the live engine. Offline, identity-unknown, missing and modified states remain distinct and produce audit changes. A reminder advances its next due date only after a completed project run; notification changes only `lastNotifiedAt`.
+
+Archive repair rehashes the chosen healthy source, rechecks the target volume identity, publishes through a unique same-directory temporary file, preserves any existing damaged target under a non-colliding name, and rehashes the published file. A recovery journal is updated at preservation and publication boundaries. Completed and partial outcomes enter the authority before the journal is removed, and a successful repair is followed by whole-card reverification. Project archive reports bind the evidence revision/digest, runs, health, changes, reminders and unresolved issues under a report SHA-256.
 
 ## Workspace authority and commit boundary
 
