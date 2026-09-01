@@ -96,6 +96,7 @@ import {
   type ExistingImportPreview,
   type ExistingCandidateDecision,
   type ExistingImportProgress,
+  type CompletionActionKind,
 } from "./api";
 import { Composer } from "./Composer";
 import { ProjectEditor } from "./ProjectEditor";
@@ -218,6 +219,19 @@ const performanceText = (performance?: TransferPerformance) =>
   performance?.samples
     ? `平均 ${bytes(performance.average)}/s · P95 ${bytes(performance.p95)}/s · 峰值 ${bytes(performance.peak)}/s${performance.stalls ? ` · ${performance.stalls} 次停顿` : ""}`
     : "样本不足";
+const completionActionLabels: Record<CompletionActionKind, string> = {
+  report: "生成校验报告",
+  delivery: "生成交付清单",
+  proxy: "加入代理队列",
+  eject: "安全推出源盘",
+};
+const completionActionStatus = {
+  suggested: "等待确认",
+  running: "正在执行",
+  completed: "已完成",
+  failed: "执行失败",
+  skipped: "本任务已跳过",
+} as const;
 function TaskBadge({ task }: { task: BackupTask }) {
   const trust = taskTrustState(task);
   return (
@@ -238,6 +252,7 @@ export function App() {
     Array<{ message: string; error: boolean }>
   >([]);
   const [taskLimit, setTaskLimit] = useState(100);
+  const [completionOperator, setCompletionOperator] = useState("");
   const [dailyPlanOperator, setDailyPlanOperator] = useState("");
   const [dailyPlanDate, setDailyPlanDate] = useState(today());
   const [temporaryDailyDevice, setTemporaryDailyDevice] = useState("");
@@ -433,7 +448,8 @@ export function App() {
     }
     let disposed = false;
     void api
-      .getTask(detail)
+      .getCompletionPlan(detail)
+      .then(() => api.getTask(detail))
       .then((task) => {
         if (!disposed) setDetailTask(task);
       })
@@ -444,6 +460,9 @@ export function App() {
       disposed = true;
     };
   }, [detail, notify, workspaceRevision]);
+  useEffect(() => {
+    if (detail) setCompletionOperator(settings.operator || "");
+  }, [detail, settings.operator]);
   useEffect(() => {
     document.documentElement.dataset.theme = settings.theme;
   }, [settings.theme]);
@@ -3009,6 +3028,131 @@ export function App() {
                   </div>
                 </div>
               )}
+              {selected.status === "completed" &&
+                !!selected.completionActionRecords?.length && (
+                  <section className="completion-actions" aria-label="完成动作建议">
+                    <div className="completion-actions-heading">
+                      <div>
+                        <strong>完成动作建议</strong>
+                        <p>
+                          仅在你确认后执行；失败或重复触发不会改变备份与校验结论，也不会修改 MHL。
+                        </p>
+                      </div>
+                      <label>
+                        本次操作人
+                        <input
+                          value={completionOperator}
+                          placeholder="填写实际操作人"
+                          maxLength={120}
+                          onChange={(event) =>
+                            setCompletionOperator(event.target.value)
+                          }
+                        />
+                      </label>
+                    </div>
+                    <div className="completion-action-list">
+                      {selected.completionActionRecords.map((record) => (
+                        <div
+                          className={`completion-action ${record.status}`}
+                          key={record.key}
+                        >
+                          <div>
+                            <strong>{completionActionLabels[record.action]}</strong>
+                            <span>{completionActionStatus[record.status]}</span>
+                            <small>
+                              规则依据：
+                              {record.ruleSnapshotId
+                                ? `${record.ruleSnapshotId.slice(0, 12)}…`
+                                : "旧项目规则"}
+                              {record.attempts.length
+                                ? ` · ${record.attempts.length} 次授权记录`
+                                : " · 尚未授权"}
+                            </small>
+                            {record.result && <p>{record.result}</p>}
+                            {record.error && (
+                              <p className="red-text">
+                                {record.error}。请先核对现有产物或设备状态，再显式重试。
+                              </p>
+                            )}
+                          </div>
+                          <div className="completion-action-buttons">
+                            {record.outputPaths?.map((output) => (
+                              <Button
+                                kind="icon"
+                                title="在 Finder 中显示产物"
+                                key={output}
+                                onClick={() => void act(() => api.reveal(output))}
+                              >
+                                <FolderOpen size={15} />
+                              </Button>
+                            ))}
+                            {!['completed', 'skipped'].includes(record.status) && (
+                              <>
+                                <Button
+                                  kind="subtle"
+                                  disabled={
+                                    record.status === "running" ||
+                                    !completionOperator.trim()
+                                  }
+                                  onClick={() =>
+                                    void act(async () => {
+                                      try {
+                                        return await api.runCompletionAction(
+                                          selected.id,
+                                          record.action,
+                                          completionOperator,
+                                        );
+                                      } finally {
+                                        const latest = await api
+                                          .getTask(selected.id)
+                                          .catch(() => null);
+                                        if (latest) setDetailTask(latest);
+                                        await refresh().catch(() => undefined);
+                                      }
+                                    }, `${completionActionLabels[record.action]}完成`)
+                                  }
+                                >
+                                  {record.status === "running" ? (
+                                    <LoaderCircle size={14} className="spin" />
+                                  ) : (
+                                    <Play size={14} />
+                                  )}
+                                  {record.status === "failed" ? "重新执行" : "确认执行"}
+                                </Button>
+                                <Button
+                                  kind="subtle"
+                                  disabled={
+                                    record.status === "running" ||
+                                    !completionOperator.trim()
+                                  }
+                                  onClick={() =>
+                                    void act(async () => {
+                                      try {
+                                        return await api.skipCompletionAction(
+                                          selected.id,
+                                          record.action,
+                                          completionOperator,
+                                        );
+                                      } finally {
+                                        const latest = await api
+                                          .getTask(selected.id)
+                                          .catch(() => null);
+                                        if (latest) setDetailTask(latest);
+                                        await refresh().catch(() => undefined);
+                                      }
+                                    })
+                                  }
+                                >
+                                  本任务跳过
+                                </Button>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                )}
               {selected.errorMessage && (
                 <div className="error-box task-recovery-callout" role="alert">
                   <AlertTriangle size={18} />
@@ -5053,6 +5197,7 @@ function HelpPage({
       ],
       tips: [
         "Kocpy 不会自动开始写入。",
+        "“疑似重复”只依据相对路径和字节数，不等于重新读取哈希；历史卷建议会列出卷身份依据，点击应用也只填写草稿，仍需最终确认。",
         "高级选项默认折叠，哈希与逐目标独立回读始终开启；容量未知显示待预检，不当作通过。",
         "预计时间仅指当前阶段。暂停清空速度与预计时间，继续后重新采样；预检和测速不足时显示横线。字节100%仍需等待最终校验结论。",
         "任务详情和拍摄项目素材卷明细会实时更新速度与进度，无需关闭重开。暂停/继续会即时更新状态，当前小块读写或安全落盘可能需要收尾。",
@@ -5143,7 +5288,9 @@ function HelpPage({
         "“当天未发现素材 · 待确认”不等于漏备份，也不等于当天未使用。",
         "同一素材卷失败重试或恢复仍按一个逻辑素材卷统计；明细中的尝试次数不增加收工分母。",
         "交接记录冻结当时规则版本和收工摘要；之后修改项目规则不会倒改历史交接。规则记录是本地审计证据，不是第三方数字签名。",
-        "项目模板可自定义名称、说明、设备、机位、素材卷前缀、副本标准、命名规则、检查表、制作人员和完成动作；应用前可逐项预览并选择覆盖范围。",
+        "项目模板可自定义名称、说明、设备、机位、素材卷前缀、副本标准、命名规则、检查表、制作人员和完成动作建议；应用前可逐项预览并选择覆盖范围。",
+        "任务完成只建立动作建议，不会后台生成文件、加入代理或推出磁盘。进入任务详情填写操作人并逐项确认；重复执行不会覆盖产物或重复入队。",
+        "完成动作失败会保留错误和授权尝试；重启中断不会算作成功。安全推出每次都重新核对源盘身份和占用，不能永久授权。",
         "进行中和已归档项目都能从卡片右上角菜单删除内部记录。删除前必须勾选风险确认并准确输入项目名称；活动备份或代理任务会阻止删除。",
         "删除项目只清理 Kocpy 内部的项目配置、任务索引、代理记录和归档维护历史；不会删除素材、备份目录、报告、MHL 或已导出的冷归档文件。",
       ],
@@ -5171,7 +5318,7 @@ function HelpPage({
       steps: [
         "在素材库选择一个或多个已校验视频。",
         "选择审片、剪辑或离线预设，并设置尺寸、封装和命名规则。ProRes Proxy 只允许 MOV。",
-        "需要复用参数时输入名称保存自定义预设；项目也可设置完成后自动加入代理队列。",
+        "需要复用参数时输入名称保存自定义预设；项目可设置完成后建议加入代理队列，但仍需在任务详情逐项授权。",
         "入队后参数与源哈希被冻结；转码前完整重读源文件，在队列中可暂停、继续、取消或重试。",
         "完成后检查输出 SHA-256，以及时长、帧率、时间码、音轨、旋转和色彩提示。未知字段不会自动算作通过。",
         "优先使用“生成交付目录”，让 Kocpy 在发布前重新校验输出并生成媒体、清单和检查报告。",
@@ -5436,15 +5583,15 @@ function HelpPage({
       <section className="help-release-note">
         <RefreshCw size={20} />
         <div>
-          <strong>0.1.29：长期归档证据与安全修复</strong>
+          <strong>0.1.30：可解释建议与安全完成动作</strong>
           <p>
-            复校验记录操作人、范围、基线摘要、逐素材卷结论、离线／身份未知目标和真实读取量；任务状态与证据在同一权威工作区修订中提交。
+            历史素材卡建议会显示卷身份或目录结构依据；相同路径与字节数只标为疑似重复，不冒充已重新读取内容哈希。应用建议只填写草稿，不会开始写入。
           </p>
           <p>
-            周期提醒只负责通知，不会冒充已经读取磁盘或推进成功日期。变化记录形成摘要链，项目归档证据报告带可复算 SHA-256。
+            项目完成动作只建立待确认建议。填写操作人并逐项确认后才生成报告、交付、代理或推出源盘；每项保存规则快照、稳定幂等键、尝试、结果与错误。
           </p>
           <p>
-            修复会重新哈希健康来源、确认目标磁盘身份、保留损坏原件，并在原子发布后完整回读；任何中断都保留恢复事件，不会把部分完成显示成全部通过。
+            产物不覆盖已有文件，代理不重复入队，推出失败不静默成功。完成动作不会修订 MHL、接受清单差异、删除素材或改变备份校验结论。
           </p>
         </div>
       </section>
@@ -6030,7 +6177,7 @@ function MaintenancePage({
                                 eject: "推出",
                               })[item],
                           )
-                          .join(" / ") || "无自动动作"}
+                          .join(" / ") || "无完成建议"}
                       </span>
                     </div>
                     <code>{template.namingRule}</code>

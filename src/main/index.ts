@@ -56,6 +56,8 @@ import type {
   ArchiveVerificationRun,
   ArchiveVerificationTaskResult,
   BackupTask,
+  CompletionActionKind,
+  CompletionActionRecord,
   ExistingAuditEvent,
   ExistingCandidateDecision,
   NasPreset,
@@ -66,6 +68,16 @@ import type {
   TaskConfig,
   ProxyJob,
 } from "./types";
+import {
+  beginCompletionAction,
+  ensureCompletionActionPlan,
+  failCompletionAction,
+  finishCompletionAction,
+  publishNewArtifact,
+  recoverInterruptedCompletionActions,
+  sha256Bytes,
+  skipCompletionAction,
+} from "./completion-automation";
 import {
   archiveResultDigest,
   archiveTaskBaselineDigest,
@@ -700,9 +712,11 @@ const guardedCommands = new Set([
   "proxy:resume",
   "proxy:retry",
   "volumes:eject",
+  "completion:run",
+  "completion:skip",
 ]);
 const changeChannels =
-  /^(tasks:(create|delete|reverify|retry-failed)|projects:(save|delete$|claim-volume|sign-checklist|add-handoff|daily-plan)|existing:(import|reanalyze|establish|repair|reverify|accept|revise)|archive:(verify|repair|move|audit)|workspace:(import|cold-archive|restore-cold)|templates:(apply|save|delete|import|hide)|catalog:rebuild|library:relink)/;
+  /^(tasks:(create|delete|reverify|retry-failed)|completion:(run|skip)|projects:(save|delete$|claim-volume|sign-checklist|add-handoff|daily-plan)|existing:(import|reanalyze|establish|repair|reverify|accept|revise)|archive:(verify|repair|move|audit)|workspace:(import|cold-archive|restore-cold)|templates:(apply|save|delete|import|hide)|catalog:rebuild|library:relink)/;
 const serialCreates = new Map<string, Promise<unknown>>();
 let commandInFlight = 0;
 async function confirmOperation(message: string, detail: string) {
@@ -871,6 +885,251 @@ async function htmlToPdf(html: Buffer | string) {
     });
   } finally {
     report.destroy();
+  }
+}
+const completionActionLabel: Record<CompletionActionKind, string> = {
+  report: "生成校验报告",
+  delivery: "生成交付清单",
+  proxy: "加入代理队列",
+  eject: "安全推出源盘",
+};
+async function recoverPublishedCompletionArtifact(
+  record: CompletionActionRecord,
+) {
+  if (record.outputPaths?.length !== 1 || !record.outputSha256) return false;
+  const output = record.outputPaths[0],
+    expected = record.outputSha256[output];
+  if (!expected) return false;
+  const actual = await hashFile(output, "sha256").catch(() => undefined);
+  if (!actual) return false;
+  if (actual !== expected)
+    throw new Error(
+      `上次计划产物已存在但摘要不一致，Kocpy 未覆盖：${output}`,
+    );
+  finishCompletionAction(record, {
+    result: `已核对上次中断前发布的产物：${output}`,
+    outputPaths: [output],
+    outputSha256: { [output]: expected },
+  });
+  return true;
+}
+async function executeCompletionAction(
+  task: BackupTask,
+  action: CompletionActionKind,
+  operator: string,
+) {
+  const project = (await readProjects()).find(
+    (item) => item.id === task.projectId,
+  );
+  ensureCompletionActionPlan(task, project);
+  const started = beginCompletionAction(task, action, operator),
+    record = started.record;
+  if (!started.shouldRun) return record;
+  await persist(true);
+  try {
+    if (
+      (action === "report" || action === "delivery") &&
+      (await recoverPublishedCompletionArtifact(record))
+    ) {
+      await persist(true);
+      return record;
+    }
+    const outputRoot = path.join(
+      app.getPath("userData"),
+      "completed-actions",
+      segment(project?.projectFolderName || project?.name || "未归属项目"),
+      segment(task.name),
+    );
+    if (action === "report" || action === "delivery") {
+      const suffix = record.key.slice(0, 10),
+        target = path.join(
+          outputRoot,
+          action === "report"
+            ? `${segment(task.name)}_${suffix}_校验报告.pdf`
+            : `${segment(task.name)}_${suffix}_交付清单.json`,
+        ),
+        value =
+          action === "report"
+            ? await htmlToPdf(
+                await generateReport(task, { includeThumbnails: true }),
+              )
+            : Buffer.from(
+                JSON.stringify(
+                  {
+                    schema: 1,
+                    application: "Kocpy",
+                    version: app.getVersion(),
+                    generatedAt: new Date(
+                      record.attempts.at(-1)!.authorizedAt,
+                    ).toISOString(),
+                    authorization: {
+                      action,
+                      key: record.key,
+                      operator,
+                      ruleSnapshotId: record.ruleSnapshotId,
+                    },
+                    task,
+                  },
+                  null,
+                  2,
+                ) + "\n",
+                "utf8",
+              ),
+        digest = sha256Bytes(value);
+      record.outputPaths = [target];
+      record.outputSha256 = { [target]: digest };
+      await persist(true);
+      await publishNewArtifact(target, value);
+      finishCompletionAction(record, {
+        result: `${completionActionLabel[action]}完成：${target}`,
+        outputPaths: [target],
+        outputSha256: { [target]: digest },
+      });
+    } else if (action === "proxy") {
+      const proxyOut = path.join(outputRoot, "Proxies"),
+        video = /\.(mov|mp4|mxf|mts|m2ts|avi|mkv|r3d|braw)$/i,
+        eligible = task.fileRecords.filter((item) => video.test(item.relativePath)),
+        jobs: ProxyJob[] = [];
+      for (const file of eligible) {
+        const automationKey = `${record.key}:${file.relativePath}`;
+        if (proxyJobs.some((job) => job.automationKey === automationKey)) continue;
+        const copy = file.destinations.find((item) => item.verified);
+        if (!copy) throw new Error(`代理源没有已校验副本：${file.relativePath}`);
+        const checksum = copy.checksum || file.srcChecksum;
+        if (!checksum) throw new Error(`代理源缺少哈希证据：${file.relativePath}`);
+        const stat = await fs.stat(copy.path).catch(() => undefined);
+        if (!stat?.isFile() || stat.size !== file.size)
+          throw new Error(`代理源已离线或大小变化：${file.relativePath}`);
+        const metadata = await inspectMedia(
+          copy.path,
+          path.join(app.getPath("userData"), "thumbnails"),
+        ).catch(() => ({}) as any);
+        const parameters = validateProxyParameters({
+          purpose: "review",
+          format: "h264",
+          resolution: "1080p",
+          container: "mp4",
+          namingTemplate: "{name}_proxy_{resolution}",
+        });
+        jobs.push({
+          id: randomUUID(),
+          automationKey,
+          input: copy.path,
+          name: path.basename(copy.path),
+          outputDir: proxyOut,
+          format: "h264",
+          resolution: "1080p",
+          container: "mp4",
+          preset: "review",
+          namingTemplate: "{name}_proxy_{resolution}",
+          sourceTaskId: task.id,
+          sourceRelativePath: file.relativePath,
+          status: "pending",
+          stage: "queued",
+          progress: 0,
+          createdAt: Date.now(),
+          timecode: metadata.timecode,
+          sourceFrameRate: metadata.frameRate,
+          sourceAudio: metadata.audio,
+          sourceDuration: metadata.duration,
+          sourceColorSpace: metadata.colorSpace,
+          sourceEvidence: {
+            taskId: task.id,
+            relativePath: file.relativePath,
+            path: copy.path,
+            bytes: stat.size,
+            modifiedAt: stat.mtimeMs,
+            hashAlgorithm: task.hashAlgorithm,
+            checksum,
+            capturedAt: Date.now(),
+            media: {
+              duration: metadata.duration,
+              frameRate: metadata.frameRate,
+              timecode: metadata.timecode,
+              audio: metadata.audio,
+              audioTracks: metadata.audioTracks,
+              rotation: metadata.rotation,
+              colorSpace: metadata.colorSpace,
+              resolution: metadata.resolution,
+            },
+          },
+          parameterSnapshot: parameters,
+        });
+      }
+      proxyJobs.push(...jobs);
+      await persistProxyJobs();
+      emitProxyJobs();
+      const total = proxyJobs.filter((job) =>
+        job.automationKey?.startsWith(`${record.key}:`),
+      ).length;
+      finishCompletionAction(record, {
+        result: eligible.length
+          ? `代理计划共 ${total} 项，本次新增 ${jobs.length} 项；重复触发未重复入队`
+          : "没有可代理的视频文件，未创建队列项",
+      });
+      void processProxyQueue();
+    } else {
+      const frozenRules = project?.ruleSnapshots?.find(
+          (snapshot) => snapshot.id === task.projectRuleSnapshotId,
+        )?.rules,
+        requiredCopies = frozenRules?.requiredCopies || project?.requiredCopies || 2;
+      if (
+        !task.destinations.length ||
+        !task.destinations.every((item) => item.verified) ||
+        !manifestRequirementMet(task) ||
+        !taskMeetsCopyRequirement(task, requiredCopies)
+      )
+        throw new Error(
+          `任务尚未满足清单、全部目标校验或 ${requiredCopies} 份物理独立副本要求，不能推出源盘`,
+        );
+      const volume = (await listVolumes()).find(
+        (item) => item.canEject && inside(task.sourcePath, item.path),
+      );
+      if (!volume) throw new Error("源盘当前不在线或不可推出；没有按成功处理");
+      assertVolumeIdentity(
+        task.sourceVolumeUuid,
+        task.sourceVolumeId,
+        await volumeIdentity(volume.path),
+        "源",
+      );
+      const inUse = engine.getAllTasks().some(
+        (item) =>
+          item.id !== task.id &&
+          ["pending", "running", "paused", "verifying"].includes(item.status) &&
+          (inside(item.sourcePath, volume.path) ||
+            item.destinations.some((destination) => inside(destination.path, volume.path))),
+      );
+      if (inUse) throw new Error("源盘仍被其他任务使用，已停止推出");
+      if (
+        proxyJobs.some(
+          (job) =>
+            ["pending", "running", "paused"].includes(job.status) &&
+            (inside(job.input, volume.path) || inside(job.outputDir, volume.path)),
+        )
+      )
+        throw new Error("源盘仍被代理任务使用，已停止推出");
+      await ejectVolume(volume.path);
+      finishCompletionAction(record, {
+        result: `${volume.name} 已由 ${operator} 确认并安全推出`,
+      });
+    }
+    await persist(true);
+    if (main && !main.isDestroyed()) main.webContents.send("workspace:changed");
+    return record;
+  } catch (error) {
+    failCompletionAction(record, error);
+    task.faultTimeline = [
+      ...(task.faultTimeline || []),
+      {
+        at: Date.now(),
+        phase: `completion-action:${action}`,
+        level: "error",
+        message: error instanceof Error ? error.message : String(error),
+      },
+    ];
+    await persist(true);
+    if (main && !main.isDestroyed()) main.webContents.send("workspace:changed");
+    throw error;
   }
 }
 async function processProxyQueue() {
@@ -1304,6 +1563,7 @@ app.whenReady().then(async () => {
   let startupRecordsChanged = false;
   for (const task of saved) {
     if (ensureTaskMediaBreakdown(task)) startupRecordsChanged = true;
+    if (recoverInterruptedCompletionActions(task)) startupRecordsChanged = true;
     if (["pending", "running", "paused", "verifying"].includes(task.status)) {
       task.status = "failed";
       task.errorMessage = "上次运行中断。可重新执行并重新校验已有文件。";
@@ -1571,6 +1831,55 @@ app.whenReady().then(async () => {
     engine.setPriority(id, value);
     await persist();
   });
+  handle("completion:plan", async (id: string) => {
+    const task = engine.getTask(id);
+    if (!task) throw new Error("任务不存在");
+    const project = (await readProjects()).find(
+      (item) => item.id === task.projectId,
+    );
+    if (!operations.active && ensureCompletionActionPlan(task, project))
+      await persist(true);
+    return task.completionActionRecords || [];
+  });
+  handle(
+    "completion:run",
+    async (id: string, action: CompletionActionKind, operator: string) => {
+      if (!["report", "delivery", "proxy", "eject"].includes(action))
+        throw new Error("未知完成动作");
+      const task = engine.getTask(id);
+      if (!task) throw new Error("任务不存在");
+      if (typeof operator !== "string" || !operator.trim())
+        throw new Error("请填写本次完成动作的操作人");
+      const label = completionActionLabel[action];
+      const detail =
+        action === "eject"
+          ? `${task.name}\n将再次核对任务状态、当前源盘身份和占用情况，然后尝试推出源盘。推出失败不会按成功处理；此操作不会删除素材或修改 MHL。`
+          : `${task.name}\n将以“${operator?.trim() || "未填写"}”记录本次授权。动作产物不会覆盖已有文件，重复触发不会重复入队；此操作不会修改素材、MHL 或备份校验结论。`;
+      if (!(await confirmOperation(`确认${label}？`, detail))) return null;
+      return executeCompletionAction(task, action, operator);
+    },
+  );
+  handle(
+    "completion:skip",
+    async (id: string, action: CompletionActionKind, operator: string) => {
+      if (!["report", "delivery", "proxy", "eject"].includes(action))
+        throw new Error("未知完成动作");
+      const task = engine.getTask(id);
+      if (!task) throw new Error("任务不存在");
+      if (typeof operator !== "string" || !operator.trim())
+        throw new Error("请填写跳过动作的操作人");
+      if (
+        !(await confirmOperation(
+          `本任务不执行“${completionActionLabel[action]}”？`,
+          `${task.name}\n这只关闭本任务的建议并保留操作人和时间，不改变备份、校验、素材或 MHL。`,
+        ))
+      )
+        return null;
+      const record = skipCompletionAction(task, action, operator);
+      await persist(true);
+      return record;
+    },
+  );
   handle("source:scan", async (source: string, includeHidden = true) => {
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -5743,132 +6052,18 @@ app.whenReady().then(async () => {
       )
         void (async () => {
           const project = (await readProjects()).find(
-              (item) => item.id === task.projectId,
-            ),
-            actions = project?.completionActions || [];
-          if (!actions.length) return;
-          const output = path.join(
-            app.getPath("userData"),
-            "completed-actions",
-            project!.projectFolderName || project!.name,
-            task.name,
+            (item) => item.id === task.projectId,
           );
-          await fs.mkdir(output, { recursive: true });
-          if (actions.includes("report")) {
-            const pdf = await htmlToPdf(
-              await generateReport(task, { includeThumbnails: true }),
-            );
-            await fs.writeFile(
-              path.join(output, `${task.name}_校验报告.pdf`),
-              pdf,
-            );
-          }
-          if (actions.includes("delivery"))
-            await fs.writeFile(
-              path.join(output, `${task.name}_交付清单.json`),
-              JSON.stringify(
-                {
-                  application: "Kocpy",
-                  version: app.getVersion(),
-                  task,
-                  generatedAt: Date.now(),
-                },
-                null,
-                2,
-              ),
-            );
-          if (actions.includes("proxy")) {
-            const proxyOut = path.join(output, "Proxies");
-            await fs.mkdir(proxyOut, { recursive: true });
-            const video = /\.(mov|mp4|mxf|mts|m2ts|avi|mkv|r3d|braw)$/i;
-            const jobs: ProxyJob[] = [];
-            for (const record of task.fileRecords.filter((item) =>
-              video.test(item.relativePath),
-            )) {
-              const copy = record.destinations.find((item) => item.verified);
-              if (!copy) continue;
-              const checksum = copy.checksum || record.srcChecksum;
-              if (!checksum)
-                throw new Error(
-                  `完成后代理缺少已校验哈希证据：${record.relativePath}`,
-                );
-              const stat = await fs.stat(copy.path).catch(() => undefined);
-              if (!stat?.isFile() || stat.size !== record.size)
-                throw new Error(
-                  `完成后代理源已离线或大小变化：${record.relativePath}`,
-                );
-              const metadata = await inspectMedia(
-                copy.path,
-                path.join(app.getPath("userData"), "thumbnails"),
-              ).catch(() => ({}) as any);
-              const parameters = validateProxyParameters({
-                purpose: "review",
-                format: "h264",
-                resolution: "1080p",
-                container: "mp4",
-                namingTemplate: "{name}_proxy_{resolution}",
-              });
-              jobs.push({
-                id: randomUUID(),
-                input: copy.path,
-                name: path.basename(copy.path),
-                outputDir: proxyOut,
-                format: "h264",
-                resolution: "1080p",
-                container: "mp4",
-                preset: "review",
-                namingTemplate: "{name}_proxy_{resolution}",
-                sourceTaskId: task.id,
-                sourceRelativePath: record.relativePath,
-                status: "pending",
-                stage: "queued",
-                progress: 0,
-                createdAt: Date.now(),
-                timecode: metadata.timecode,
-                sourceFrameRate: metadata.frameRate,
-                sourceAudio: metadata.audio,
-                sourceDuration: metadata.duration,
-                sourceColorSpace: metadata.colorSpace,
-                sourceEvidence: {
-                  taskId: task.id,
-                  relativePath: record.relativePath,
-                  path: copy.path,
-                  bytes: stat.size,
-                  modifiedAt: stat.mtimeMs,
-                  hashAlgorithm: task.hashAlgorithm,
-                  checksum,
-                  capturedAt: Date.now(),
-                  media: {
-                    duration: metadata.duration,
-                    frameRate: metadata.frameRate,
-                    timecode: metadata.timecode,
-                    audio: metadata.audio,
-                    audioTracks: metadata.audioTracks,
-                    rotation: metadata.rotation,
-                    colorSpace: metadata.colorSpace,
-                    resolution: metadata.resolution,
-                  },
-                },
-                parameterSnapshot: parameters,
-              });
-            }
-            proxyJobs.push(...jobs);
-            await persistProxyJobs();
-            emitProxyJobs();
-            void processProxyQueue();
-          }
-          if (
-            actions.includes("eject") &&
-            task.destinations.every((item) => item.verified) &&
-            manifestRequirementMet(task)
-          )
-            await ejectVolume(task.sourcePath).catch(() => {});
+          if (!ensureCompletionActionPlan(task, project)) return;
+          await persist(true);
+          if (main && !main.isDestroyed())
+            main.webContents.send("workspace:changed");
         })().catch((error) => {
           task.faultTimeline = [
             ...(task.faultTimeline || []),
             {
               at: Date.now(),
-              phase: "completion-action",
+              phase: "completion-plan",
               level: "error",
               message: String(error),
             },

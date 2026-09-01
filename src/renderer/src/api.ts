@@ -22,6 +22,8 @@ import type {
   TaskConfig,
   TransferPerformance,
   BenchmarkResult,
+  CompletionActionKind,
+  CompletionActionRecord,
   WorkspaceMergeResult,
 } from "../../main/types";
 export { statusText } from "../../common/status";
@@ -47,6 +49,8 @@ export type {
   TaskConfig,
   TransferPerformance,
   BenchmarkResult,
+  CompletionActionKind,
+  CompletionActionRecord,
   WorkspaceMergeResult,
 };
 export interface Volume {
@@ -95,6 +99,13 @@ export interface Scan {
     device?: string;
     cameraPosition?: string;
     nextVolume: number;
+    basis: "structure-match" | "volume-history" | "none";
+    confidence: "possible-duplicate" | "historical-suggestion" | "none";
+    fingerprint: string;
+    fileCount: number;
+    totalBytes: number;
+    matchedTaskCreatedAt?: number;
+    evidence: string[];
   };
 }
 export interface UpdateInfo {
@@ -151,6 +162,17 @@ export interface API {
   recoverTask(id: string): Promise<boolean>;
   deleteTask(id: string): Promise<void>;
   setPriority(id: string, value: boolean): Promise<void>;
+  getCompletionPlan(id: string): Promise<CompletionActionRecord[]>;
+  runCompletionAction(
+    id: string,
+    action: CompletionActionKind,
+    operator: string,
+  ): Promise<CompletionActionRecord | null>;
+  skipCompletionAction(
+    id: string,
+    action: CompletionActionKind,
+    operator: string,
+  ): Promise<CompletionActionRecord | null>;
   scanSource(path: string, includeHidden?: boolean): Promise<Scan>;
   listVolumes(): Promise<Volume[]>;
   driveInfo(

@@ -52,6 +52,34 @@ describe("backup layout and live detail", () => {
     expect(selectLiveTask("two", [live], snapshot)).toBeUndefined();
     expect(selectLiveTask("one", [{ ...live, lastCheckpointAt: 0 }], snapshot)!.copyProgress).toBe(1);
   });
+  it("keeps freshly fetched completion-action audit state over a stale task-list header", () => {
+    const action = {
+      key: "a".repeat(64),
+      action: "report" as const,
+      suggestedAt: 1,
+      status: "completed" as const,
+      result: "报告已生成",
+      attempts: [],
+    };
+    const snapshot = {
+      id: "one",
+      status: "completed",
+      lastCheckpointAt: 1,
+      fileRecords: [],
+      completionActionRecords: [action],
+    } as unknown as BackupTask;
+    const live = {
+      ...snapshot,
+      lastCheckpointAt: 2,
+      completionActionRecords: [{ ...action, status: "suggested", result: undefined }],
+    } as unknown as BackupTask;
+    const selected = selectLiveTask("one", [live], snapshot)!;
+    expect(selected.lastCheckpointAt).toBe(2);
+    expect(selected.completionActionRecords?.[0]).toMatchObject({
+      status: "completed",
+      result: "报告已生成",
+    });
+  });
   it("uses one supported drop resolver for both folder entry points and labels scanned counts", () => {
     const composer = readFileSync("src/renderer/src/Composer.tsx", "utf8");
     const interaction = readFileSync("src/renderer/src/Interaction.tsx", "utf8");

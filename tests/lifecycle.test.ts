@@ -11,6 +11,27 @@ describe("archive lifecycle and workstation merge", () => {
     expect(taskFingerprint(task("a"))).toBe(taskFingerprint(task("b")));
     const suggestion = sourceSuggestion([task("a")], { files: [{ relativePath: "DCIM/clip.mov", size: 42 }] });
     expect(suggestion.duplicateTaskId).toBe("a"); expect(suggestion.nextVolume).toBe(2);
+    expect(suggestion).toMatchObject({
+      basis: "structure-match",
+      confidence: "possible-duplicate",
+      fileCount: 1,
+      totalBytes: 42,
+    });
+    expect(suggestion.evidence.join(" ")).toMatch(/尚未重新读取文件内容哈希/);
+  });
+  it("keeps a new card suggestion neutral when no matching history exists", () => {
+    const suggestion = sourceSuggestion([], {
+      files: [{ relativePath: "DCIM/new.mov", size: 84 }],
+    });
+    expect(suggestion).toMatchObject({
+      basis: "none",
+      confidence: "none",
+      nextVolume: 1,
+    });
+    expect(
+      sourceSuggestion([{ ...task("empty"), fileRecords: [] }], { files: [] })
+        .duplicateTaskId,
+    ).toBeUndefined();
   });
   it("merges workstation records without duplicating identical media", () => {
     const merged = mergeWorkspace({ projects: [project], tasks: [task("a")] }, { projects: [{ ...project, namingRule: "custom" }], tasks: [task("b"), task("c", "different")] });

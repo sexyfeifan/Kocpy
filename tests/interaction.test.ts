@@ -350,4 +350,13 @@ it("regression contracts: no progress-driven catalog fetch, no automatic checkli
     "const changeChannels = /^(tasks:(create|delete|reverify|retry-failed)|projects:|",
   );
   expect(main).toContain("guardedCommands.has(name)");
+  expect(main).toContain("ensureCompletionActionPlan(task, project)");
+  expect(main).not.toContain('actions.includes("eject")');
+  expect(main).not.toContain("ejectVolume(task.sourcePath).catch(() => {})");
+  expect(main).toContain('main.webContents.send("workspace:changed")');
+  expect(app).toContain('aria-label="完成动作建议"');
+  expect(app).toContain("return await api.runCompletionAction(");
+  expect(app).toContain("if (latest) setDetailTask(latest)");
+  expect(composer).toContain("应用此建议");
+  expect(composer).toContain("尚未重新读取内容哈希");
 });

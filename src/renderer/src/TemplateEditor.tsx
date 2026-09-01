@@ -8,10 +8,10 @@ import { DEVICE_SUGGESTIONS } from "./ProjectEditor";
 const DEFAULT_RULE =
   "{date}_{project}/{shootingDate}/{device}/{position}/{card}";
 const ACTIONS = [
-  ["report", "自动生成报告"],
-  ["delivery", "自动生成交付清单"],
-  ["proxy", "自动加入代理队列"],
-  ["eject", "达标后安全推出"],
+  ["report", "完成后建议生成报告"],
+  ["delivery", "完成后建议生成交付清单"],
+  ["proxy", "完成后建议加入代理队列"],
+  ["eject", "达标后建议安全推出"],
 ] as const;
 type CompletionAction = ProjectTemplate["completionActions"][number];
 

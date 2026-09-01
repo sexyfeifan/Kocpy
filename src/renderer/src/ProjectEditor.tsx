@@ -9,6 +9,7 @@ import {
   Info,
   Camera,
   CalendarDays,
+  ShieldCheck,
 } from "lucide-react";
 import {
   api,
@@ -628,7 +629,7 @@ export function ProjectEditor({
                   )
                 }
               />
-              <span>自动生成报告</span>
+              <span>完成后建议生成报告</span>
             </label>
             <label>
               <input
@@ -642,7 +643,7 @@ export function ProjectEditor({
                   )
                 }
               />
-              <span>自动生成交付清单</span>
+              <span>完成后建议生成交付清单</span>
             </label>
             <label>
               <input
@@ -656,7 +657,7 @@ export function ProjectEditor({
                   )
                 }
               />
-              <span>自动加入代理队列</span>
+              <span>完成后建议加入代理队列</span>
             </label>
             <label>
               <input
@@ -670,8 +671,12 @@ export function ProjectEditor({
                   )
                 }
               />
-              <span>达标后安全推出</span>
+              <span>达标后建议安全推出</span>
             </label>
+          </div>
+          <div className="notice">
+            <ShieldCheck size={17} />
+            这些选项只会在任务完成后建立待办建议。Kocpy 不会后台生成文件、加入代理或推出磁盘；每项都需要用户查看依据、填写操作人并再次确认。外部清单与 MHL 不会被完成动作修改。
           </div>
           {dests.map((p) => (
             <div className="chosen-path" key={p}>

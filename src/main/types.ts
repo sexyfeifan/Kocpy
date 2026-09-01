@@ -88,6 +88,8 @@ export interface ProxyJob {
   namingTemplate?: string;
   sourceTaskId?: string;
   sourceRelativePath?: string;
+  /** Stable completion-action key. A repeated trigger must reuse the job. */
+  automationKey?: string;
   sourceFrameRate?: string;
   sourceAudio?: string;
   sourceDuration?: string;
@@ -108,6 +110,31 @@ export interface ProxyJob {
     checkedAt?: number;
     notes: string[];
   };
+}
+
+export type CompletionActionKind = "report" | "delivery" | "proxy" | "eject";
+export interface CompletionActionAttempt {
+  id: string;
+  authorizedAt: number;
+  operator: string;
+  startedAt?: number;
+  completedAt?: number;
+  status: "authorized" | "running" | "completed" | "failed" | "skipped";
+  error?: string;
+  result?: string;
+}
+export interface CompletionActionRecord {
+  /** Stable across repeated settled events and restarts for one rule snapshot. */
+  key: string;
+  action: CompletionActionKind;
+  ruleSnapshotId?: string;
+  suggestedAt: number;
+  status: "suggested" | "running" | "completed" | "failed" | "skipped";
+  result?: string;
+  error?: string;
+  outputPaths?: string[];
+  outputSha256?: Record<string, string>;
+  attempts: CompletionActionAttempt[];
 }
 
 export interface Destination {
@@ -302,6 +329,8 @@ export interface BackupTask {
     level: "info" | "warning" | "error";
     message: string;
   }>;
+  /** Audited, user-authorized completion suggestions. Never implies backup trust. */
+  completionActionRecords?: CompletionActionRecord[];
 }
 
 export interface TaskConfig {

@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { validateArchiveEvidence } from "./archive-evidence";
+import { validateCompletionActionRecords } from "./completion-automation";
 import type {
   ArchiveEvidenceState,
   BackupTask,
@@ -86,6 +87,7 @@ function assertWorkspaceBody(candidate: WorkspaceStateInput) {
     )
   )
     throw new Error("工作区状态包含无效的任务、项目或删除记录");
+  for (const task of candidate.tasks) validateCompletionActionRecords(task);
   const taskIds = candidate.tasks.map((task) => task.id),
     projectIds = candidate.projects.map((project) => project.id),
     taskTombstoneIds = candidate.taskTombstones.map((item) => item.id),

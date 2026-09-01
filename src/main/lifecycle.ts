@@ -11,6 +11,7 @@ import type {
   ProjectTemplate,
   WorkspaceMergeResult,
 } from "./types";
+import { validateCompletionActionRecords } from "./completion-automation";
 
 const taskStatuses = new Set([
   "pending",
@@ -119,6 +120,7 @@ export function validateWorkspacePackage(value: unknown) {
       throw new Error("工作站配置中的任务状态或哈希算法无效");
     if (item.destinations.length > 32 || item.fileRecords.length > 2_000_000)
       throw new Error("工作站配置中的任务规模超过限制");
+    validateCompletionActionRecords(item as unknown as BackupTask);
     for (const destination of item.destinations) {
       if (!plainObject(destination))
         throw new Error("工作站配置中的目的地记录无效");
@@ -185,6 +187,23 @@ export const taskFingerprint = (task: BackupTask) =>
     )
     .digest("hex");
 
+const structureInventory = (
+  files: Array<{ relativePath: string; size: number }>,
+) =>
+  files
+    .map((file) => [file.relativePath, file.size] as const)
+    .sort((left, right) =>
+      left[0] === right[0]
+        ? left[1] - right[1]
+        : left[0].localeCompare(right[0]),
+    );
+const structureSignature = (
+  files: Array<{ relativePath: string; size: number }>,
+) =>
+  createHash("sha256")
+    .update(JSON.stringify(structureInventory(files)))
+    .digest("hex");
+
 export function sourceSuggestion(
   tasks: BackupTask[],
   input: {
@@ -192,25 +211,11 @@ export function sourceSuggestion(
     files: Array<{ relativePath: string; size: number }>;
   },
 ) {
-  const signature = createHash("sha256")
-    .update(
-      JSON.stringify(
-        input.files.map((file) => [file.relativePath, file.size]).sort(),
-      ),
-    )
-    .digest("hex");
-  const duplicate = tasks.find(
-    (task) =>
-      createHash("sha256")
-        .update(
-          JSON.stringify(
-            task.fileRecords
-              .map((file) => [file.relativePath, file.size])
-              .sort(),
-          ),
-        )
-        .digest("hex") === signature,
-  );
+  const normalizedFiles = structureInventory(input.files);
+  const signature = structureSignature(input.files);
+  const duplicate = normalizedFiles.length
+    ? tasks.find((task) => structureSignature(task.fileRecords) === signature)
+    : undefined;
   const history = tasks
     .filter(
       (task) =>
@@ -220,24 +225,48 @@ export function sourceSuggestion(
     )
     .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
   const recent = duplicate || history[0];
+  const relatedVolumes = recent
+    ? tasks.filter(
+        (task) =>
+          task.projectId &&
+          task.projectId === recent.projectId &&
+          task.devices[0] === recent.devices[0],
+      )
+    : [];
   return {
     duplicateTaskId: duplicate?.id,
     duplicateTaskName: duplicate?.name,
     projectId: recent?.projectId,
     device: recent?.devices[0],
     cameraPosition: recent?.cameraPosition,
-    nextVolume:
-      Math.max(
-        1,
-        ...tasks
-          .filter(
-            (task) =>
-              task.projectId &&
-              task.projectId === recent?.projectId &&
-              task.devices[0] === recent?.devices[0],
-          )
-          .map((task) => task.volumeNumber || 0),
-      ) + 1,
+    nextVolume: recent
+      ? Math.max(0, ...relatedVolumes.map((task) => task.volumeNumber || 0)) + 1
+      : 1,
+    basis: duplicate
+      ? ("structure-match" as const)
+      : history.length
+        ? ("volume-history" as const)
+        : ("none" as const),
+    confidence: duplicate
+      ? ("possible-duplicate" as const)
+      : history.length
+        ? ("historical-suggestion" as const)
+        : ("none" as const),
+    fingerprint: signature,
+    fileCount: normalizedFiles.length,
+    totalBytes: normalizedFiles.reduce((sum, item) => sum + item[1], 0),
+    matchedTaskCreatedAt: recent?.createdAt,
+    evidence: duplicate
+      ? [
+          `相对路径和字节数与历史任务 ${duplicate.name} 的 ${normalizedFiles.length} 个文件完全一致`,
+          "尚未重新读取文件内容哈希，因此只判为疑似重复",
+        ]
+      : history.length
+        ? [
+            `当前卷身份与 ${history.length} 条历史接收记录一致`,
+            "项目、设备、机位和下一卷号来自最近一次该卷记录",
+          ]
+        : ["没有找到相同目录结构或相同卷身份的历史记录"],
   };
 }
 

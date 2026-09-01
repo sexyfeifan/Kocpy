@@ -4091,6 +4091,97 @@ small {
   font-size: 9px;
   margin-top: 5px;
 }
+.completion-actions {
+  margin-top: 15px;
+  padding: 15px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel2);
+}
+.completion-actions-heading {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(180px, 0.55fr);
+  gap: 16px;
+  align-items: end;
+}
+.completion-actions-heading strong,
+.completion-actions-heading p,
+.completion-action strong,
+.completion-action span,
+.completion-action small,
+.completion-action p {
+  display: block;
+}
+.completion-actions-heading p,
+.completion-action p {
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.6;
+}
+.completion-actions-heading label {
+  margin: 0;
+  font-size: 9px;
+  color: var(--muted);
+}
+.completion-actions-heading input {
+  margin-top: 5px;
+}
+.completion-action-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 13px;
+}
+.completion-action {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  min-width: 0;
+  padding: 11px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+}
+.completion-action > div:first-child {
+  min-width: 0;
+}
+.completion-action strong {
+  font-size: 11px;
+}
+.completion-action span {
+  margin-top: 3px;
+  color: var(--sub);
+  font-size: 10px;
+}
+.completion-action small {
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 9px;
+  overflow-wrap: anywhere;
+}
+.completion-action.completed {
+  border-color: #81c9aa30;
+}
+.completion-action.failed {
+  border-color: #ef999b38;
+}
+.completion-action-buttons {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+@media (max-width: 860px) {
+  .completion-actions-heading,
+  .completion-action {
+    grid-template-columns: 1fr;
+  }
+  .completion-action-buttons {
+    justify-content: flex-start;
+  }
+}
 .detail-label {
   font-size: 11px;
   color: var(--sub);

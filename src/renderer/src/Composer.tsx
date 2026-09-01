@@ -120,6 +120,27 @@ export function Composer({
     availablePositions = project?.devicePositions?.[camera]?.length
       ? project.devicePositions[camera]
       : CAMERA_POSITIONS;
+  const historicalSuggestion = sources
+    .map((source) => source.scan?.suggestion)
+    .find((suggestion) => suggestion?.projectId);
+  const applyHistoricalSuggestion = () => {
+    if (!historicalSuggestion?.projectId) return;
+    const suggestedProject = projects.find(
+      (item) => item.id === historicalSuggestion.projectId,
+    );
+    if (!suggestedProject) return;
+    const suggestedDevice =
+      historicalSuggestion.device || suggestedProject.devices[0] || "A机";
+    const positions = suggestedProject.devicePositions?.[suggestedDevice] || [];
+    setMode("project");
+    setProjectId(suggestedProject.id);
+    setCamera(suggestedDevice);
+    setMultiPosition(Boolean(positions.length));
+    setCameraPosition(
+      historicalSuggestion.cameraPosition || positions[0] || "A",
+    );
+    setDests(suggestedProject.destinationPaths || []);
+  };
   const previewStamp = previewVolumeTimestamp(new Date(clock));
   const capacity = capacityReadiness(dests, spaces, total);
   const previewPrefixRaw =
@@ -720,13 +741,26 @@ export function Composer({
                 ) && (
                   <div className="error-box" role="alert">
                     <AlertTriangle size={16} />
-                    检测到与历史任务“
-                    {
-                      sources.find(
-                        (source) => source.scan?.suggestion?.duplicateTaskId,
-                      )?.scan?.suggestion?.duplicateTaskName
-                    }
-                    ”相同的文件结构和容量。请确认这不是已经接收过的素材卡。
+                    <div>
+                      <strong>疑似重复素材卡，需要人工确认</strong>
+                      <p>
+                        与历史任务“
+                        {
+                          sources.find(
+                            (source) => source.scan?.suggestion?.duplicateTaskId,
+                          )?.scan?.suggestion?.duplicateTaskName
+                        }
+                        ”的相对路径和字节数完全一致。这里只比较目录结构与大小，尚未重新读取内容哈希，不能据此判定内容一定相同。
+                      </p>
+                      <small>
+                        依据：
+                        {sources
+                          .find(
+                            (source) => source.scan?.suggestion?.duplicateTaskId,
+                          )
+                          ?.scan?.suggestion?.evidence.join("；")}
+                      </small>
+                    </div>
                   </div>
                 )}
                 {!sources.some(
@@ -737,27 +771,26 @@ export function Composer({
                   ) && (
                     <div className="notice">
                       <Info size={15} />
-                      根据素材卡历史记录，建议继续项目“
-                      {projects.find(
-                        (item) =>
-                          item.id ===
-                          sources.find(
-                            (source) => source.scan?.suggestion?.projectId,
-                          )?.scan?.suggestion?.projectId,
-                      )?.name || "历史项目"}
-                      ”、设备{" "}
-                      {
-                        sources.find(
-                          (source) => source.scan?.suggestion?.device,
-                        )?.scan?.suggestion?.device
-                      }
-                      ，下一卷号{" "}
-                      {
-                        sources.find(
-                          (source) => source.scan?.suggestion?.nextVolume,
-                        )?.scan?.suggestion?.nextVolume
-                      }
-                      。Kocpy 不会自动开始写入。
+                      <div>
+                        <strong>历史卷身份建议（尚未应用）</strong>
+                        <p>
+                          建议继续项目“
+                          {projects.find(
+                            (item) => item.id === historicalSuggestion?.projectId,
+                          )?.name || "历史项目"}
+                          ”、设备 {historicalSuggestion?.device || "未记录"}
+                          {historicalSuggestion?.cameraPosition
+                            ? `、机位 ${historicalSuggestion.cameraPosition}`
+                            : ""}
+                          ，下一卷号 {historicalSuggestion?.nextVolume}。
+                        </p>
+                        <small>
+                          依据：{historicalSuggestion?.evidence.join("；")}。应用只会填写当前草稿，仍需在最终页确认并手动开始。
+                        </small>
+                      </div>
+                      <Button kind="subtle" onClick={applyHistoricalSuggestion}>
+                        应用此建议
+                      </Button>
                     </div>
                   )}
                 {sources.some((source) => source.scan?.breakdown) && (

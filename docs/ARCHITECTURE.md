@@ -1,4 +1,12 @@
-# Kocpy 0.1.29 architecture
+# Kocpy 0.1.30 architecture
+
+## Safe completion automation
+
+Source suggestions are evidence-bearing drafts. A structure signature covers sorted relative paths and byte counts; it is explicitly weaker than a content hash. Volume-history suggestions use the recorded source-volume identity. Neither result mutates a composer draft until the user applies it, and applying never starts a task.
+
+Project completion configuration is frozen through the task's project-rule snapshot and materialized as `CompletionActionRecord` suggestions only after terminal backup completion. Each action key derives from task ID, rule snapshot, action and contract version. A user supplies an operator and approves each execution; attempts remain append-only as running, completed, failed or skipped. Startup converts an interrupted running attempt to failed and never infers success.
+
+Reports and delivery manifests store planned paths and SHA-256 before a hard-link-based no-replace publication. A restart may recover a published artifact only when the recorded digest still matches. Proxy jobs carry a per-file automation key so a partial retry adds only missing jobs. Eject remains a one-shot authorization and rechecks terminal trust, manifest requirements, current source identity, active tasks and proxy use. Completion actions cannot mutate MHL, accept manifest differences, establish baselines, delete media, reduce copy requirements or alter backup trust.
 
 ## Archive evidence authority
 

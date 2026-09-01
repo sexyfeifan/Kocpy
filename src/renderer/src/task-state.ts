@@ -15,7 +15,16 @@ export function selectLiveTask(
     (snapshot.lastCheckpointAt || 0) > (live.lastCheckpointAt || 0)
       ? snapshot
       : live;
-  return { ...snapshot, ...newest, fileRecords: snapshot.fileRecords };
+  return {
+    ...snapshot,
+    ...newest,
+    fileRecords: snapshot.fileRecords,
+    // Task lists and progress events are intentionally lightweight. They may
+    // lag behind an explicit detail refresh after a completion action, so they
+    // must not overwrite the audited action state that was just fetched.
+    completionActionRecords:
+      snapshot.completionActionRecords ?? live.completionActionRecords,
+  };
 }
 
 export function transferPhaseText(task: BackupTask): string {
