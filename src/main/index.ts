@@ -94,6 +94,11 @@ import {
   validateWorkspacePackage,
 } from "./lifecycle";
 import { CatalogDatabase } from "./catalog";
+import {
+  claimBackupPriorityPause,
+  mapWithConcurrency,
+  resumeBackupPausedProxyJobs,
+} from "./resource-policy";
 import { WorkspaceRepository, type WorkspaceCommitResult } from "./workspace";
 import {
   builtInProductionTemplates,
@@ -394,7 +399,9 @@ let main: BrowserWindow | null = null,
   proxyBusy = false,
   proxyController: AbortController | undefined,
   proxyPauseRequested: string | undefined,
+  backupStartPending = 0,
   proxyJobs: ProxyJob[] = [];
+const proxyIdleWaiters = new Set<() => void>();
 let benchmarkHistory: BenchmarkResult[] = [];
 let reliabilityValidations: ReliabilityValidationRecord[] = [];
 let healthRecords: ArchiveHealthRecord[] = [],
@@ -795,7 +802,13 @@ async function htmlToPdf(html: Buffer | string) {
   }
 }
 async function processProxyQueue() {
-  if (proxyBusy || operations.active) return;
+  if (
+    proxyBusy ||
+    operations.active ||
+    backupStartPending > 0 ||
+    engine.hasActive()
+  )
+    return;
   let dependencyChanged = false;
   for (const queued of proxyJobs.filter((item) => item.status === "pending")) {
     const failed = (queued.dependsOn || []).find((id) =>
@@ -920,16 +933,58 @@ async function processProxyQueue() {
           ? "cancelled"
           : "failed",
       error: paused ? undefined : e.message || String(e),
+      pauseReason: paused ? job.pauseReason || "user" : undefined,
       completedAt: paused ? undefined : Date.now(),
     });
   } finally {
     proxyBusy = false;
     proxyController = undefined;
     proxyPauseRequested = undefined;
+    for (const resolve of proxyIdleWaiters) resolve();
+    proxyIdleWaiters.clear();
     powerSaveBlocker.stop(lock);
     await persistProxyJobs();
     emitProxyJobs();
     void processProxyQueue();
+  }
+}
+
+async function waitForProxyIdle() {
+  if (!proxyBusy) return;
+  await new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      proxyIdleWaiters.delete(done);
+      reject(new Error("代理任务未能及时让出资源，请先手动暂停后重试"));
+    }, 15_000);
+    const done = () => {
+      clearTimeout(timeout);
+      resolve();
+    };
+    proxyIdleWaiters.add(done);
+    if (!proxyBusy) {
+      proxyIdleWaiters.delete(done);
+      done();
+    }
+  });
+}
+
+async function withBackupPriority<T>(operation: () => Promise<T>) {
+  backupStartPending++;
+  try {
+    const running = proxyJobs.find((job) => job.status === "running");
+    if (proxyBusy && running) {
+      // A user pause already in flight remains a user decision. The backup
+      // waits for the same safe boundary but must not make it auto-resumable.
+      if (claimBackupPriorityPause(running, Boolean(proxyPauseRequested))) {
+        proxyPauseRequested = running.id;
+        proxyController?.abort(new Error("备份任务优先，代理已安全暂停"));
+      }
+      await waitForProxyIdle();
+    }
+    return await operation();
+  } finally {
+    backupStartPending--;
+    if (!engine.hasActive()) void processProxyQueue();
   }
 }
 function createWindow() {
@@ -1116,6 +1171,14 @@ app.whenReady().then(async () => {
     if (job.status === "running") {
       job.status = "failed";
       job.error = "上次转码被中断，可点击重试";
+      job.pauseReason = undefined;
+    } else if (
+      job.status === "paused" &&
+      job.pauseReason === "backup-priority"
+    ) {
+      job.status = "pending";
+      job.pauseReason = undefined;
+      job.error = undefined;
     }
   const saved = structuredClone(workspaceLoad.state.tasks);
   let startupRecordsChanged = false;
@@ -1185,24 +1248,34 @@ app.whenReady().then(async () => {
       projectId?: string;
       query?: string;
       kind?: string;
-      offset?: number;
+      cursor?: string;
       limit?: number;
     }) => {
-      const rows = await catalog.pageFiles(options || {});
-      return await Promise.all(
-        rows.map(async (row: any) => {
-          const destinations = await Promise.all(
-            row.destinations.map(async (copy: any) => ({
-              ...copy,
-              online: await fs.access(copy.path).then(
-                () => true,
-                () => false,
-              ),
-            })),
-          );
-          return { ...row, destinations };
-        }),
-      );
+      const page = await catalog.pageFileBatch(options || {}),
+        probes = page.rows.flatMap((row: any, rowIndex) =>
+          (row.destinations || []).map((copy: any, copyIndex: number) => ({
+            rowIndex,
+            copyIndex,
+            path: copy.path,
+          })),
+        ),
+        online = await mapWithConcurrency(probes, 16, (probe) =>
+          fs.access(probe.path).then(
+            () => true,
+            () => false,
+          ),
+        ),
+        rows: any[] = [];
+      let probeIndex = 0;
+      for (const row of page.rows as any[])
+        rows.push({
+          ...row,
+          destinations: (row.destinations || []).map((copy: any) => ({
+            ...copy,
+            online: online[probeIndex++] || false,
+          })),
+        });
+      return { ...page, rows };
     },
   );
   handle("catalog:rebuild", async () => {
@@ -1309,9 +1382,11 @@ app.whenReady().then(async () => {
       )
     )
       return true;
-    engine.startTask(id);
-    await persist();
-    return true;
+    return withBackupPriority(async () => {
+      engine.startTask(id);
+      await persist();
+      return true;
+    });
   });
   handle("tasks:cancel", (id: string) => {
     engine.cancelTask(id);
@@ -1323,19 +1398,25 @@ app.whenReady().then(async () => {
     return true;
   });
   handle("tasks:resume", async (id: string) => {
-    engine.resumeTask(id);
-    await persist();
-    return true;
+    return withBackupPriority(async () => {
+      engine.resumeTask(id);
+      await persist();
+      return true;
+    });
   });
   handle("tasks:reverify", async (id: string) => {
-    const result = await engine.reverifyTask(id);
-    await persist();
-    return result;
+    return withBackupPriority(async () => {
+      const result = await engine.reverifyTask(id);
+      await persist();
+      return result;
+    });
   });
   handle("tasks:retry-failed", async (id: string) => {
-    engine.retryFailedDestinations(id);
-    await persist();
-    return true;
+    return withBackupPriority(async () => {
+      engine.retryFailedDestinations(id);
+      await persist();
+      return true;
+    });
   });
   handle("tasks:inspect-recovery", async (id: string) => {
     const task = engine.getTask(id);
@@ -1348,9 +1429,11 @@ app.whenReady().then(async () => {
     const report = await inspectTaskRecovery(task);
     if (!report.canRetry)
       throw new Error("当前尚不满足安全重试条件，请重新检查并处理标出的项目。");
-    engine.retryFailedDestinations(id);
-    await persist();
-    return true;
+    return withBackupPriority(async () => {
+      engine.retryFailedDestinations(id);
+      await persist();
+      return true;
+    });
   });
   handle("tasks:delete", async (id: string) => {
     const task = engine.getTask(id);
@@ -5140,6 +5223,7 @@ app.whenReady().then(async () => {
     const job = proxyJobs.find((item) => item.id === id);
     if (!job || job.status !== "running")
       throw new Error("只有正在转码的任务可以暂停");
+    job.pauseReason = "user";
     proxyPauseRequested = id;
     proxyController?.abort(new Error("用户暂停代理任务"));
     return true;
@@ -5147,7 +5231,12 @@ app.whenReady().then(async () => {
   handle("proxy:resume", async (id: string) => {
     const job = proxyJobs.find((item) => item.id === id);
     if (!job || job.status !== "paused") throw new Error("该代理任务未暂停");
-    Object.assign(job, { status: "pending", progress: 0, error: undefined });
+    Object.assign(job, {
+      status: "pending",
+      progress: 0,
+      error: undefined,
+      pauseReason: undefined,
+    });
     await persistProxyJobs();
     emitProxyJobs();
     void processProxyQueue();
@@ -5161,6 +5250,7 @@ app.whenReady().then(async () => {
       status: "pending",
       progress: 0,
       error: undefined,
+      pauseReason: undefined,
       completedAt: undefined,
     });
     await persistProxyJobs();
@@ -5304,9 +5394,17 @@ app.whenReady().then(async () => {
       clearTimeout(persistTimer);
       persistTimer = undefined;
       void persist(true)
-        .then(() => {
+        .then(async () => {
           if (main && !main.isDestroyed())
             main.webContents.send("workspace:changed");
+          if (!engine.hasActive() && backupStartPending === 0) {
+            const resumed = resumeBackupPausedProxyJobs(proxyJobs);
+            if (resumed) {
+              await persistProxyJobs();
+              emitProxyJobs();
+            }
+            void processProxyQueue();
+          }
         })
         .catch(() => undefined);
       if (blocker !== undefined) {

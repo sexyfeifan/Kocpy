@@ -1,4 +1,4 @@
-# Kocpy 0.1.26 architecture
+# Kocpy 0.1.27 architecture
 
 ## Workspace authority and commit boundary
 
@@ -8,7 +8,23 @@ All task and project mutations enter one serialized `WorkspaceRepository`. A com
 
 The first 0.1.26 launch treats a valid legacy JSON array—including an explicit empty array—as authoritative for its domain. SQLite fills a domain only when its JSON mirror is absent or unrecoverable. Once a compatibility marker exists, invalid authority copies block startup instead of resetting the revision from legacy mirrors. A newer unknown schema also blocks startup. These guards prevent stale indexes, backups or unsupported downgrades from reviving deleted records.
 
-Task and project identifiers are unique within the envelope; live records cannot overlap tombstones. SQLite schema 4 stores entity digests and the exact indexed workspace revision. Reconciliation removes extra rows and updates changed entities inside one transaction; deleting the SQLite file is recoverable from the authority state. Diagnostic exports include only workspace counts, revision and a shortened digest, never the complete workspace or media paths.
+Task and project identifiers are unique within the envelope; live records cannot overlap tombstones. SQLite schema 6 stores entity digests and the exact indexed workspace revision. Reconciliation removes extra rows and updates changed entities inside one transaction; deleting the SQLite file is recoverable from the authority state. Diagnostic exports include only workspace counts, revision and a shortened digest, never the complete workspace or media paths.
+
+## Large-workspace checkpoints and index lifecycle
+
+The authority commit computes each domain digest once, seals one canonical serialized document, and sends those exact bytes through the existing atomic storage boundary. This avoids duplicate whole-document serialization without changing validation, SHA-256 integrity, backup rotation, directory synchronization, or commit order. No-op domain writes preserve the existing revision; active transfer checkpoints remain explicit durable commits.
+
+Catalog schema 6 installs transactional dirty triggers on tasks, files, projects, and workspace entities. Startup may skip row-by-row reconciliation only when the dirty flag is clear and catalog metadata, indexed workspace snapshot, revision, digest, and schema all match the validated authority. Missing triggers or any tracked-table mutation mark the index dirty and force a complete drift check, including same-count path or size changes.
+
+Catalog publication uses a durable hard-link rollback point, with a copy fallback, before the SQLite transaction is persisted. If publication fails after commit, the rollback database is integrity-checked, atomically restored, and reopened; the in-memory database is never allowed to advertise an unpublished state. Bulk internal rebuilds temporarily remove dirty triggers inside the same transaction and reinstall them before commit, avoiding per-row trigger overhead without leaving a crash window on disk.
+
+Library pages use a scope-bound opaque keyset cursor ordered by creation time, task identifier and relative path. A cursor from a different project, query or media kind is rejected. Online path probes are flattened and executed with a maximum concurrency of 16 while retaining row order.
+
+## Backup-priority resource scheduling
+
+Proxy processing cannot begin while a backup action is queued or the transfer engine is active. Before starting copy, resume, failed-target retry, recovery or reverification, a running proxy receives an abort request and settles as paused with `pauseReason: backup-priority`. The backup action waits for this safe boundary rather than competing for sustained reads and writes.
+
+After the backup engine is idle and the authoritative workspace settlement succeeds, only backup-priority pauses return to pending. A user pause is recorded as `pauseReason: user` and is never auto-resumed. On application restart there is no surviving active backup process, so an old backup-priority pause may return to the pending queue; stale proxy `running` states remain failures requiring an explicit retry.
 
 ## Shared trust decisions
 

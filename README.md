@@ -8,9 +8,9 @@
 
 ![Kocpy 工作台](docs/screenshots/dashboard.png)
 
-当前代码版本：**0.1.26** · [完整使用手册](docs/USER_GUIDE.md) · [0.1.26 更新说明](docs/RELEASE_NOTES_0.1.26.md) · [已公开发布版本](https://github.com/sexyfeifan/Kocpy/releases/latest)
+当前代码版本：**0.1.27** · [完整使用手册](docs/USER_GUIDE.md) · [0.1.27 更新说明](docs/RELEASE_NOTES_0.1.27.md) · [已公开发布版本](https://github.com/sexyfeifan/Kocpy/releases/latest)
 
-0.1.26 将任务和项目收口到带修订、摘要和删除墓碑的权威工作区状态，SQLite 明确定义为可重建索引。JSON 与索引之间中断后会按可证明的提交版本对账，不再按时间猜测合并，也不会从旧索引复活已删除记录；0.1.25 兼容镜像继续维护，但检测到旧版写入造成分叉时会停止自动合并。复制、独立回读、专业接管、GUI 与证据安全标准保持不变。已公开安装包以 Release 实际附件为准，草稿不是公开发行；测试范围及限制见 [验证记录](docs/VERIFICATION.md)。
+0.1.27 面向大型项目优化热路径：权威工作区减少重复序列化，素材索引在修订和摘要一致且无变更标记时快速启动，深页素材列表改用稳定游标；代理任务在备份到来时会安全让路，并且只自动恢复由“备份优先”造成的暂停。索引仍会对任何任务、项目、文件或实体变更执行完整漂移核对，复制哈希、逐目标独立回读、落盘和恢复标准没有降低。已公开安装包以 Release 实际附件为准，草稿不是公开发行；合成基准、真实环境边界及已知限制见 [验证记录](docs/VERIFICATION.md)。
 
 ## 中文
 
@@ -132,8 +132,8 @@ Kocpy 支持真实深色与浅色外观，任务、项目、偏好、缩略图�
 
 从 [GitHub Releases](https://github.com/sexyfeifan/Kocpy/releases) 下载对应架构：
 
-- `Kocpy-0.1.26-arm64.dmg`：Apple Silicon Mac
-- `Kocpy-0.1.26-x64.dmg`：Intel Mac
+- `Kocpy-0.1.27-arm64.dmg`：Apple Silicon Mac
+- `Kocpy-0.1.27-x64.dmg`：Intel Mac
 
 当前代码对应上述版本；远端可下载版本以 Release 实际附件为准。
 

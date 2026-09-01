@@ -6,6 +6,7 @@ import { CatalogDatabase } from "./catalog";
 import {
   WORKSPACE_SCHEMA,
   entityDigest,
+  sealWorkspaceDocument,
   sealWorkspaceState,
   validateWorkspaceState,
   type WorkspaceMigration,
@@ -59,6 +60,8 @@ export class WorkspaceRepository {
   private writes: Promise<unknown> = Promise.resolve();
   private compatibilityDirty = false;
   private indexDirty = false;
+  private tasksDigest?: string;
+  private projectsDigest?: string;
 
   constructor(
     private storage: Storage,
@@ -132,6 +135,7 @@ export class WorkspaceRepository {
 
     if (canonical) {
       this.state = canonical.state;
+      this.rememberDomainDigests(canonical.state);
       await this.repairCompatibilityMirrors(canonical.state);
       const indexRebuilt =
         !catalogState ||
@@ -186,6 +190,7 @@ export class WorkspaceRepository {
       migration,
     });
     this.state = initial;
+    this.rememberDomainDigests(initial);
     await this.publishCanonicalAndMirrors(initial);
     await this.catalog.applyWorkspaceState(initial);
     this.indexDirty = false;
@@ -209,10 +214,17 @@ export class WorkspaceRepository {
         committedAt = Date.now(),
         revision = previous.revision + 1,
         inputTasks = options.tasks || previous.tasks,
-        inputProjects = options.projects || previous.projects;
+        inputProjects = options.projects || previous.projects,
+        tasksDigest = options.tasks
+          ? entityDigest(inputTasks)
+          : this.tasksDigest || entityDigest(previous.tasks),
+        projectsDigest = options.projects
+          ? entityDigest(inputProjects)
+          : this.projectsDigest || entityDigest(previous.projects);
       if (
-        entityDigest(inputTasks) === entityDigest(previous.tasks) &&
-        entityDigest(inputProjects) === entityDigest(previous.projects)
+        tasksDigest === (this.tasksDigest || entityDigest(previous.tasks)) &&
+        projectsDigest ===
+          (this.projectsDigest || entityDigest(previous.projects))
       ) {
         let compatibilityError: string | undefined;
         if (this.compatibilityDirty && options.syncCompatibility !== false)
@@ -256,7 +268,7 @@ export class WorkspaceRepository {
         projects = options.projects
           ? structuredClone(inputProjects)
           : previous.projects;
-      const next = sealWorkspaceState({
+      const document = sealWorkspaceDocument({
         schemaVersion: WORKSPACE_SCHEMA,
         revision,
         committedAt,
@@ -278,8 +290,11 @@ export class WorkspaceRepository {
         ),
         migration: previous.migration,
       });
-      await this.storage.write(STATE_FILE, next);
+      const next = document.state;
+      await this.storage.writeSerialized(STATE_FILE, document.serialized);
       this.state = next;
+      this.tasksDigest = tasksDigest;
+      this.projectsDigest = projectsDigest;
       this.indexDirty = true;
       let compatibilitySynchronized = !this.compatibilityDirty,
         compatibilityError: string | undefined;
@@ -344,7 +359,10 @@ export class WorkspaceRepository {
   }
 
   synchronizeIndex() {
-    return this.catalog.applyWorkspaceState(this.snapshot);
+    return this.catalog.applyWorkspaceState(this.snapshot).then((result) => {
+      this.indexDirty = false;
+      return result;
+    });
   }
 
   flush() {
@@ -427,8 +445,16 @@ export class WorkspaceRepository {
   }
 
   private async publishCanonicalAndMirrors(state: WorkspaceState) {
-    await this.storage.write(STATE_FILE, state);
+    const { serialized } = sealWorkspaceDocument(
+      (({ digest: _digest, ...body }) => body)(state),
+    );
+    await this.storage.writeSerialized(STATE_FILE, serialized);
     await this.writeCompatibilityMirrors(state);
+  }
+
+  private rememberDomainDigests(state: WorkspaceState) {
+    this.tasksDigest = entityDigest(state.tasks);
+    this.projectsDigest = entityDigest(state.projects);
   }
 
   private async writeCompatibilityMirrors(state: WorkspaceState) {

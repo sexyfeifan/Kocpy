@@ -1,12 +1,72 @@
 import initSqlJs, { type Database } from "sql.js";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import type { BackupTask, ProjectConfig } from "./types";
 import { entityDigest, type WorkspaceState } from "./workspace-contract";
 
-const SCHEMA = 4;
+const SCHEMA = 6;
 const EMPTY_FILE_DIGEST = createHash("sha256").digest("hex");
+const DIRTY_TRIGGERS = ["tasks", "files", "projects", "workspace_entities"];
+
+interface CatalogCursor {
+  version: 1;
+  scope: string;
+  createdAt: number;
+  taskId: string;
+  relativePath: string;
+}
+
+export interface CatalogPageOptions {
+  projectId?: string;
+  query?: string;
+  kind?: string;
+  cursor?: string;
+  limit?: number;
+}
+
+export interface CatalogPage {
+  rows: Record<string, unknown>[];
+  nextCursor?: string;
+}
+
+function pageScope(options: CatalogPageOptions) {
+  return createHash("sha256")
+    .update(
+      JSON.stringify({
+        projectId: options.projectId || "",
+        query: options.query || "",
+        kind: options.kind || "all",
+      }),
+    )
+    .digest("hex")
+    .slice(0, 16);
+}
+
+function encodeCursor(cursor: CatalogCursor) {
+  return Buffer.from(JSON.stringify(cursor)).toString("base64url");
+}
+
+function decodeCursor(value: string | undefined, scope: string) {
+  if (!value) return undefined;
+  if (value.length > 1024) throw new Error("素材分页游标无效");
+  try {
+    const cursor = JSON.parse(
+      Buffer.from(value, "base64url").toString("utf8"),
+    ) as CatalogCursor;
+    if (
+      cursor.version !== 1 ||
+      cursor.scope !== scope ||
+      !Number.isFinite(cursor.createdAt) ||
+      typeof cursor.taskId !== "string" ||
+      typeof cursor.relativePath !== "string"
+    )
+      throw new Error("invalid cursor");
+    return cursor;
+  } catch {
+    throw new Error("素材分页游标已失效，请从第一页重新加载");
+  }
+}
 
 function taskHeader(task: BackupTask) {
   return [
@@ -85,6 +145,16 @@ export class CatalogDatabase {
         );
       }
     }
+    const previousSchema = (() => {
+      try {
+        return this.db!.exec("SELECT value FROM meta WHERE key='schema'")[0]
+          ?.values[0]?.[0];
+      } catch {
+        return undefined;
+      }
+    })();
+    let schemaChanged =
+      !bytes || String(previousSchema || "") !== String(SCHEMA);
     this.db.run(`PRAGMA foreign_keys=ON;
       CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS tasks(id TEXT PRIMARY KEY,project_id TEXT,name TEXT,shooting_date TEXT,status TEXT,provenance TEXT,created_at INTEGER,total_files INTEGER,total_bytes INTEGER,json TEXT NOT NULL);
@@ -100,14 +170,50 @@ export class CatalogDatabase {
       this.db
         .exec("PRAGMA table_info(files)")[0]
         ?.values.map((row) => String(row[1])) || [];
-    if (!columns.includes("json"))
+    if (!columns.includes("json")) {
       this.db.run("ALTER TABLE files ADD COLUMN json TEXT");
-    if (!columns.includes("ordinal"))
+      schemaChanged = true;
+    }
+    if (!columns.includes("ordinal")) {
       this.db.run("ALTER TABLE files ADD COLUMN ordinal INTEGER");
+      schemaChanged = true;
+    }
+    const existingTriggers = new Set(
+      (
+        this.db.exec(
+          "SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'kocpy_dirty_%'",
+        )[0]?.values || []
+      ).map((row) => String(row[0])),
+    );
+    let triggersChanged = String(previousSchema || "") !== String(SCHEMA);
+    if (triggersChanged)
+      for (const name of existingTriggers)
+        this.db.run(`DROP TRIGGER IF EXISTS ${name}`);
+    for (const table of DIRTY_TRIGGERS)
+      for (const operation of ["insert", "update", "delete"])
+        if (!existingTriggers.has(`kocpy_dirty_${table}_${operation}`)) {
+          schemaChanged = true;
+          triggersChanged = true;
+        }
+    this.installDirtyTriggers(this.db);
+    const dirtyExists = this.db.exec(
+      "SELECT value FROM meta WHERE key='catalog_dirty'",
+    )[0]?.values[0]?.[0];
+    if (dirtyExists === undefined) {
+      this.db.run("INSERT INTO meta(key,value) VALUES('catalog_dirty','1')");
+      schemaChanged = true;
+    }
+    if (triggersChanged)
+      this.db.run(
+        "INSERT OR REPLACE INTO meta(key,value) VALUES('catalog_dirty','1')",
+      );
+    this.db.run(
+      "INSERT OR IGNORE INTO meta(key,value) VALUES('catalog_internal_write','0')",
+    );
     this.db.run("INSERT OR REPLACE INTO meta(key,value) VALUES('schema',?)", [
       String(SCHEMA),
     ]);
-    await this.persistNow();
+    if (schemaChanged) await this.persistNow();
     return this.db;
   }
   async rebuild(tasks: BackupTask[], projects: ProjectConfig[]) {
@@ -115,6 +221,10 @@ export class CatalogDatabase {
       const db = await this.open();
       db.run("BEGIN");
       try {
+        this.removeDirtyTriggers(db);
+        db.run(
+          "INSERT OR REPLACE INTO meta(key,value) VALUES('catalog_internal_write','1')",
+        );
         db.run("DELETE FROM files");
         db.run("DELETE FROM tasks");
         db.run("DELETE FROM projects");
@@ -150,6 +260,13 @@ export class CatalogDatabase {
               ordinal,
             ]);
         }
+        db.run(
+          "INSERT OR REPLACE INTO meta(key,value) VALUES('catalog_internal_write','0')",
+        );
+        db.run(
+          "INSERT OR REPLACE INTO meta(key,value) VALUES('catalog_dirty','1')",
+        );
+        this.installDirtyTriggers(db);
         db.run("COMMIT");
         await this.persistNow();
       } catch (error) {
@@ -219,10 +336,33 @@ export class CatalogDatabase {
   async applyWorkspaceState(state: WorkspaceState) {
     return this.enqueue(async () => {
       const db = await this.open(),
-        snapshot = db.export();
+        metadata = Object.fromEntries(
+          (
+            db.exec(
+              "SELECT key,value FROM meta WHERE key IN ('workspace_revision','workspace_digest','catalog_dirty')",
+            )[0]?.values || []
+          ).map((row) => [String(row[0]), String(row[1])]),
+        ),
+        storedWorkspace = db.exec(
+          "SELECT revision,digest,schema_version FROM workspace_state WHERE id=1",
+        )[0]?.values[0];
+      if (
+        metadata.catalog_dirty === "0" &&
+        metadata.workspace_revision === String(state.revision) &&
+        metadata.workspace_digest === state.digest &&
+        Number(storedWorkspace?.[0]) === state.revision &&
+        String(storedWorkspace?.[1] || "") === state.digest &&
+        Number(storedWorkspace?.[2]) === state.schemaVersion
+      )
+        return;
+      const rollback = await this.createRollbackPoint();
       let committed = false;
       db.run("BEGIN");
       try {
+        this.removeDirtyTriggers(db);
+        db.run(
+          "INSERT OR REPLACE INTO meta(key,value) VALUES('catalog_internal_write','1')",
+        );
         const existing = new Map<string, string>(),
           rows = db.prepare("SELECT kind,id,digest FROM workspace_entities");
         while (rows.step()) {
@@ -375,18 +515,22 @@ export class CatalogDatabase {
           );
         }
         for (const task of state.tasks) {
-          const digest = entityDigest(task);
+          const digest = entityDigest(task),
+            headerMatches =
+              storedTaskIds.has(task.id) &&
+              storedTaskHeaders.get(task.id) ===
+                JSON.stringify(taskHeader(task)),
+            filesMatch =
+              (storedFileCounts.get(task.id) || 0) ===
+                task.fileRecords.length &&
+              (storedFileDigests.get(task.id) || EMPTY_FILE_DIGEST) ===
+                taskFilesDigest(task);
           if (
             existing.get(`task:${task.id}`) === digest &&
-            storedTaskIds.has(task.id) &&
-            storedTaskHeaders.get(task.id) ===
-              JSON.stringify(taskHeader(task)) &&
-            (storedFileCounts.get(task.id) || 0) === task.fileRecords.length &&
-            (storedFileDigests.get(task.id) || EMPTY_FILE_DIGEST) ===
-              taskFilesDigest(task)
+            headerMatches &&
+            filesMatch
           )
             continue;
-          db.run("DELETE FROM files WHERE task_id=?", [task.id]);
           db.run("INSERT OR REPLACE INTO tasks VALUES(?,?,?,?,?,?,?,?,?,?)", [
             task.id,
             task.projectId || "",
@@ -399,17 +543,20 @@ export class CatalogDatabase {
             task.totalBytes,
             JSON.stringify({ ...task, fileRecords: [] }),
           ]);
-          for (const [ordinal, file] of task.fileRecords.entries())
-            db.run("INSERT OR REPLACE INTO files VALUES(?,?,?,?,?,?,?,?)", [
-              task.id,
-              file.relativePath,
-              file.size,
-              file.srcChecksum,
-              file.destinations.some((item) => item.verified) ? 1 : 0,
-              path.extname(file.name).toLowerCase(),
-              JSON.stringify(file),
-              ordinal,
-            ]);
+          if (!filesMatch) {
+            db.run("DELETE FROM files WHERE task_id=?", [task.id]);
+            for (const [ordinal, file] of task.fileRecords.entries())
+              db.run("INSERT OR REPLACE INTO files VALUES(?,?,?,?,?,?,?,?)", [
+                task.id,
+                file.relativePath,
+                file.size,
+                file.srcChecksum,
+                file.destinations.some((item) => item.verified) ? 1 : 0,
+                path.extname(file.name).toLowerCase(),
+                JSON.stringify(file),
+                ordinal,
+              ]);
+          }
           db.run(
             "INSERT OR REPLACE INTO workspace_entities VALUES('task',?,?)",
             [task.id, digest],
@@ -430,18 +577,22 @@ export class CatalogDatabase {
           "INSERT OR REPLACE INTO meta(key,value) VALUES('workspace_digest',?)",
           [state.digest],
         );
+        db.run(
+          "INSERT OR REPLACE INTO meta(key,value) VALUES('catalog_dirty','0')",
+        );
+        db.run(
+          "INSERT OR REPLACE INTO meta(key,value) VALUES('catalog_internal_write','0')",
+        );
+        this.installDirtyTriggers(db);
         db.run("COMMIT");
         committed = true;
         await this.persistNow();
+        await fs.unlink(rollback).catch(() => undefined);
       } catch (error) {
-        if (!committed) db.run("ROLLBACK");
-        else {
-          db.close();
-          const SQL = await initSqlJs();
-          this.db = new SQL.Database(snapshot);
-          this.db.run("PRAGMA foreign_keys=ON");
-          await this.persistNow().catch(() => undefined);
-        }
+        if (!committed) {
+          db.run("ROLLBACK");
+          await fs.unlink(rollback).catch(() => undefined);
+        } else await this.restoreRollbackPoint(rollback);
         throw error;
       }
     });
@@ -546,16 +697,9 @@ export class CatalogDatabase {
       }
     });
   }
-  async pageFiles(options: {
-    projectId?: string;
-    query?: string;
-    kind?: string;
-    offset?: number;
-    limit?: number;
-  }) {
+  async pageFileBatch(options: CatalogPageOptions): Promise<CatalogPage> {
     const db = await this.open(),
       limit = Math.min(1000, Math.max(1, options.limit || 100)),
-      offset = Math.max(0, options.offset || 0),
       query = `%${(options.query || "").replaceAll("%", "\\%").replaceAll("_", "\\_")}%`;
     const kind = options.kind || "all",
       kindSql =
@@ -568,19 +712,34 @@ export class CatalogDatabase {
               : kind === "color"
                 ? " AND f.kind IN ('.cube','.cdl','.cc','.ccc','.clf')"
                 : "";
-    const where = `${options.projectId ? "t.project_id=? AND " : ""}f.relative_path LIKE ? ESCAPE '\\'${kindSql}`,
-      params: Array<string | number> = [
-        ...(options.projectId ? [options.projectId] : []),
-        query,
-        limit,
-        offset,
-      ];
+    const scope = pageScope(options),
+      cursor = decodeCursor(options.cursor, scope),
+      clauses = ["f.relative_path LIKE ? ESCAPE '\\'"];
+    const params: Array<string | number> = [query];
+    if (options.projectId) {
+      clauses.unshift("t.project_id=?");
+      params.unshift(options.projectId);
+    }
+    if (kindSql) clauses.push(kindSql.replace(/^ AND /, ""));
+    if (cursor) {
+      clauses.push(
+        "(t.created_at < ? OR (t.created_at = ? AND (t.id > ? OR (t.id = ? AND f.relative_path > ?))))",
+      );
+      params.push(
+        cursor.createdAt,
+        cursor.createdAt,
+        cursor.taskId,
+        cursor.taskId,
+        cursor.relativePath,
+      );
+    }
+    params.push(limit + 1);
     const statement = db.prepare(
-      `SELECT f.task_id,f.relative_path,f.size,f.checksum,f.verified,f.json,t.name task_name,t.project_id FROM files f JOIN tasks t ON t.id=f.task_id WHERE ${where} ORDER BY t.created_at DESC,f.relative_path LIMIT ? OFFSET ?`,
+      `SELECT f.task_id,f.relative_path,f.size,f.checksum,f.verified,f.json,t.name task_name,t.project_id,t.created_at FROM files f JOIN tasks t ON t.id=f.task_id WHERE ${clauses.join(" AND ")} ORDER BY t.created_at DESC,t.id ASC,f.relative_path ASC LIMIT ?`,
     );
     statement.bind(params);
     const rows: Record<string, unknown>[] = [];
-    while (statement.step()) {
+    while (rows.length < limit + 1 && statement.step()) {
       const row = statement.getAsObject();
       try {
         Object.assign(row, JSON.parse(String(row.json || "{}")));
@@ -589,7 +748,30 @@ export class CatalogDatabase {
       rows.push(row);
     }
     statement.free();
-    return rows;
+    const hasMore = rows.length > limit,
+      visible = rows.slice(0, limit),
+      last = visible.at(-1),
+      nextCursor =
+        hasMore && last
+          ? encodeCursor({
+              version: 1,
+              scope,
+              createdAt: Number(last.created_at || 0),
+              taskId: String(last.task_id || ""),
+              relativePath: String(last.relative_path || ""),
+            })
+          : undefined;
+    for (const row of visible) delete row.created_at;
+    return {
+      rows: visible,
+      nextCursor,
+    };
+  }
+  async pageFiles(
+    options: CatalogPageOptions & { offset?: number },
+  ): Promise<Record<string, unknown>[]> {
+    if (options.offset) throw new Error("深分页已改用游标，请从第一页重新加载");
+    return (await this.pageFileBatch(options)).rows;
   }
   async stats() {
     const db = await this.open(),
@@ -611,6 +793,18 @@ export class CatalogDatabase {
     );
     return action;
   }
+  private removeDirtyTriggers(db: Database) {
+    for (const table of DIRTY_TRIGGERS)
+      for (const operation of ["insert", "update", "delete"])
+        db.run(`DROP TRIGGER IF EXISTS kocpy_dirty_${table}_${operation}`);
+  }
+  private installDirtyTriggers(db: Database) {
+    for (const table of DIRTY_TRIGGERS)
+      for (const operation of ["insert", "update", "delete"])
+        db.run(
+          `CREATE TRIGGER IF NOT EXISTS kocpy_dirty_${table}_${operation} AFTER ${operation.toUpperCase()} ON ${table} WHEN COALESCE((SELECT value FROM meta WHERE key='catalog_internal_write'),'0') <> '1' BEGIN INSERT OR REPLACE INTO meta(key,value) VALUES('catalog_dirty','1'); END`,
+        );
+  }
   private async persistNow() {
     if (!this.db) return;
     await fs.mkdir(this.root, { recursive: true });
@@ -620,7 +814,7 @@ export class CatalogDatabase {
     await fs.copyFile(this.file, `${this.file}.bak`).catch(() => {});
     const handle = await fs.open(temp, "w");
     try {
-      await handle.writeFile(Buffer.from(this.db.export()));
+      await handle.writeFile(this.db.export());
       await handle.sync();
     } finally {
       await handle.close();
@@ -635,6 +829,56 @@ export class CatalogDatabase {
     } finally {
       await directory.close();
     }
+  }
+  private async createRollbackPoint() {
+    await fs.mkdir(this.root, { recursive: true });
+    const rollback = `${this.file}.rollback-${randomUUID()}`;
+    try {
+      await fs.link(this.file, rollback);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (!["EXDEV", "EPERM", "ENOTSUP", "EOPNOTSUPP"].includes(code || ""))
+        throw error;
+      await fs.copyFile(this.file, rollback);
+    }
+    return rollback;
+  }
+  private async restoreRollbackPoint(rollback: string) {
+    const candidate = await fs.readFile(rollback),
+      SQL = await initSqlJs(),
+      verified = new SQL.Database(candidate),
+      integrity = verified.exec("PRAGMA integrity_check")[0]?.values[0]?.[0];
+    verified.close();
+    if (integrity !== "ok") throw new Error("素材索引回滚点未通过完整性检查");
+    const temp = `${this.file}.restore-${randomUUID()}`,
+      handle = await fs.open(temp, "wx");
+    try {
+      await handle.writeFile(candidate);
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    try {
+      await fs.rename(temp, this.file);
+    } finally {
+      await fs.unlink(temp).catch(() => undefined);
+    }
+    // Restore the live connection immediately after the atomic rename. Even
+    // if the following directory sync reports an unexpected error, callers
+    // must never continue against the unpublished in-memory transaction.
+    this.db?.close();
+    this.db = new SQL.Database(candidate);
+    this.db.run("PRAGMA foreign_keys=ON");
+    const directory = await fs.open(this.root, "r");
+    try {
+      await directory.sync().catch((error) => {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (!["EINVAL", "ENOTSUP", "EBADF"].includes(code || "")) throw error;
+      });
+    } finally {
+      await directory.close();
+    }
+    await fs.unlink(rollback).catch(() => undefined);
   }
   flush() {
     return this.enqueue(() => this.persistNow());

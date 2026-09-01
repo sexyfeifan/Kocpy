@@ -72,22 +72,30 @@ describe.skipIf(!count)("large workspace persistence", () => {
           false,
         );
         const checkpointMs = performance.now() - checkpointStarted,
-          reopenStarted = performance.now(),
+          recoveryReopenStarted = performance.now(),
           reopened = await new WorkspaceRepository(
             new Storage(root),
             new CatalogDatabase(root),
           ).initialize(),
-          reopenMs = performance.now() - reopenStarted,
+          recoveryReopenMs = performance.now() - recoveryReopenStarted,
+          cleanReopenStarted = performance.now(),
+          cleanReopened = await new WorkspaceRepository(
+            new Storage(root),
+            new CatalogDatabase(root),
+          ).initialize(),
+          cleanReopenMs = performance.now() - cleanReopenStarted,
           stateBytes = (await fs.stat(path.join(root, "workspace-state.json")))
             .size;
         expect(reopened.state.tasks[0].fileRecords).toHaveLength(count);
+        expect(cleanReopened.state.digest).toBe(reopened.state.digest);
         expect((await new CatalogDatabase(root).stats()).files).toBe(count);
         console.log(
           JSON.stringify({
             files: count,
             commitMs: Math.round(commitMs),
             checkpointMs: Math.round(checkpointMs),
-            reopenMs: Math.round(reopenMs),
+            recoveryReopenMs: Math.round(recoveryReopenMs),
+            cleanReopenMs: Math.round(cleanReopenMs),
             stateBytes,
           }),
         );

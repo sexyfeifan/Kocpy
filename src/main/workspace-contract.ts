@@ -30,18 +30,12 @@ export interface WorkspaceState {
 
 export type WorkspaceStateInput = Omit<WorkspaceState, "digest">;
 
-export function workspaceDigest(value: WorkspaceStateInput): string {
-  return createHash("sha256").update(JSON.stringify(value)).digest("hex");
+export interface SealedWorkspaceDocument {
+  state: WorkspaceState;
+  serialized: string;
 }
 
-export function sealWorkspaceState(value: WorkspaceStateInput): WorkspaceState {
-  return validateWorkspaceState({ ...value, digest: workspaceDigest(value) });
-}
-
-export function validateWorkspaceState(value: unknown): WorkspaceState {
-  if (!value || typeof value !== "object")
-    throw new Error("工作区状态不是有效对象");
-  const candidate = value as WorkspaceState;
+function assertWorkspaceBody(candidate: WorkspaceStateInput) {
   if (
     candidate.schemaVersion !== WORKSPACE_SCHEMA ||
     !Number.isSafeInteger(candidate.revision) ||
@@ -50,8 +44,7 @@ export function validateWorkspaceState(value: unknown): WorkspaceState {
     !Array.isArray(candidate.tasks) ||
     !Array.isArray(candidate.projects) ||
     !Array.isArray(candidate.taskTombstones) ||
-    !Array.isArray(candidate.projectTombstones) ||
-    !/^[a-f0-9]{64}$/.test(candidate.digest)
+    !Array.isArray(candidate.projectTombstones)
   )
     throw new Error("工作区状态结构或版本不受支持");
   if (
@@ -91,7 +84,40 @@ export function validateWorkspaceState(value: unknown): WorkspaceState {
     projectTombstoneIds.some((id) => projectIdSet.has(id))
   )
     throw new Error("工作区状态存在重复或互相冲突的标识");
+}
+
+export function workspaceDigest(value: WorkspaceStateInput): string {
+  return createHash("sha256").update(JSON.stringify(value)).digest("hex");
+}
+
+export function sealWorkspaceState(value: WorkspaceStateInput): WorkspaceState {
+  return sealWorkspaceDocument(value).state;
+}
+
+export function sealWorkspaceDocument(
+  value: WorkspaceStateInput,
+): SealedWorkspaceDocument {
+  assertWorkspaceBody(value);
+  const body = JSON.stringify(value),
+    digest = createHash("sha256").update(body).digest("hex"),
+    state = { ...value, digest };
+  return {
+    state,
+    // The body was already serialized to calculate the authoritative digest.
+    // Append the digest without serializing the multi-gigabyte-scale entity
+    // arrays a second time.
+    serialized: `${body.slice(0, -1)},"digest":${JSON.stringify(digest)}}`,
+  };
+}
+
+export function validateWorkspaceState(value: unknown): WorkspaceState {
+  if (!value || typeof value !== "object")
+    throw new Error("工作区状态不是有效对象");
+  const candidate = value as WorkspaceState;
+  if (!/^[a-f0-9]{64}$/.test(candidate.digest))
+    throw new Error("工作区状态结构或版本不受支持");
   const { digest, ...body } = candidate;
+  assertWorkspaceBody(body);
   if (workspaceDigest(body) !== digest) throw new Error("工作区状态摘要不匹配");
   return candidate;
 }

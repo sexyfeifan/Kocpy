@@ -3526,31 +3526,42 @@ function Library({
     .map((task) => task.id + ":" + task.status + ":" + task.completedAt)
     .join("|");
   const [kind, setKind] = useState("all"),
-    [limit, setLimit] = useState(100),
+    [pagination, setPagination] = useState<{
+      key: string;
+      index: number;
+      cursors: Array<string | undefined>;
+    }>({ key: "", index: 0, cursors: [undefined] }),
     [selectedPaths, setSelectedPaths] = useState<string[]>([]),
     [locations, setLocations] = useState<Record<string, string>>({}),
     [files, setFiles] = useState<any[]>([]),
-    [hasMore, setHasMore] = useState(false),
+    [nextCursor, setNextCursor] = useState<string | undefined>(),
     [preview, setPreview] = useState<any>(null),
     [previewBusy, setPreviewBusy] = useState(false);
+  const pageKey = [query, kind, taskSignature, catalogRevision].join("\0"),
+    pageIndex = pagination.key === pageKey ? pagination.index : 0,
+    pageCursor =
+      pagination.key === pageKey
+        ? pagination.cursors[pagination.index]
+        : undefined;
   useEffect(() => {
     let stopped = false;
     setCatalogBusy(true);
     setCatalogError("");
+    setNextCursor(undefined);
     const timer = setTimeout(
       () =>
         void api
           .getCatalogFiles({
             query,
             kind,
-            limit: 101,
-            offset: Math.max(0, limit - 100),
+            limit: 100,
+            cursor: pageCursor,
           })
-          .then((rows) => {
+          .then((page) => {
             if (!stopped) {
-              setHasMore(rows.length > 100);
+              setNextCursor(page.nextCursor);
               setFiles(
-                rows.slice(0, 100).map((row: any) => ({
+                page.rows.map((row: any) => ({
                   ...row,
                   task: row.task_name,
                   taskId: row.task_id,
@@ -3571,7 +3582,7 @@ function Library({
       stopped = true;
       clearTimeout(timer);
     };
-  }, [query, kind, limit, taskSignature, catalogRevision]);
+  }, [query, kind, pageCursor, pageKey]);
   useEffect(() => {
     setSelectedPaths([]);
   }, [query, kind, catalogRevision]);
@@ -3597,7 +3608,6 @@ function Library({
               className={kind === id ? "active" : ""}
               onClick={() => {
                 setKind(id);
-                setLimit(100);
               }}
             >
               {label}
@@ -3630,7 +3640,6 @@ function Library({
             value={query}
             onChange={(v) => {
               setQuery(v);
-              setLimit(100);
             }}
             placeholder="搜索素材文件…"
           />
@@ -3653,7 +3662,7 @@ function Library({
             <span>副本状态</span>
             <span>操作</span>
           </div>
-          {filtered.slice(0, limit).map((f) => {
+          {filtered.map((f) => {
             const verified = f.destinations.filter((d: any) => d.verified),
               p =
                 locations[f.id] ||
@@ -3772,20 +3781,46 @@ function Library({
           })}
           <div className="library-footer">
             <span>
-              第 {Math.ceil(limit / 100)} 页 · 本页 {filtered.length} 个文件
-              {hasMore ? " · 还有更多结果" : " · 已到末尾"}·
+              第 {pageIndex + 1} 页 · 本页 {filtered.length} 个文件
+              {nextCursor ? " · 还有更多结果" : " · 已到末尾"}·
               记录中的校验状态不代表实时磁盘检测
             </span>
-            {limit > 100 && (
+            {pageIndex > 0 && (
               <Button
                 kind="subtle"
-                onClick={() => setLimit((n) => Math.max(100, n - 100))}
+                onClick={() =>
+                  setPagination((current) => ({
+                    ...(current.key === pageKey
+                      ? current
+                      : { key: pageKey, index: 0, cursors: [undefined] }),
+                    key: pageKey,
+                    index: Math.max(0, pageIndex - 1),
+                  }))
+                }
               >
                 上一页
               </Button>
             )}
-            {hasMore && (
-              <Button kind="subtle" onClick={() => setLimit((n) => n + 100)}>
+            {nextCursor && (
+              <Button
+                kind="subtle"
+                onClick={() =>
+                  setPagination((current) => {
+                    const base =
+                      current.key === pageKey
+                        ? current
+                        : { key: pageKey, index: 0, cursors: [undefined] };
+                    return {
+                      key: pageKey,
+                      index: pageIndex + 1,
+                      cursors: [
+                        ...base.cursors.slice(0, pageIndex + 1),
+                        nextCursor,
+                      ],
+                    };
+                  })
+                }
+              >
                 下一页
               </Button>
             )}
@@ -5397,19 +5432,15 @@ function HelpPage({
       <section className="help-release-note">
         <RefreshCw size={20} />
         <div>
-          <strong>0.1.26：可对账、可恢复的工作区记录</strong>
+          <strong>0.1.27：大型项目性能与备份优先</strong>
           <p>
-            任务和项目使用带提交修订、SHA-256
-            摘要与删除墓碑的权威工作区状态；SQLite
-            只作为可重建素材索引。中断后不再按时间猜测合并，也不会从旧索引复活已删除记录。
+            大型工作区减少重复序列化；素材索引仅在修订、摘要和变更标记完全一致时快速启动，任何记录变化仍会触发完整漂移核对。
           </p>
           <p>
-            首次升级会从旧任务／项目 JSON
-            建立迁移记录并继续维护兼容镜像，不移动或修改素材。辅助镜像或索引失败时会说明权威记录是否已经保存，并在下次启动安全修复。
+            素材库改用稳定游标分页并限制在线路径检查并发。修改项目、搜索或素材类型后会回到第一页，不复用旧范围游标。
           </p>
           <p>
-            若所有权威副本均损坏，或旧版应用造成记录分叉，Kocpy
-            会停止自动合并。请保留应用数据并导出诊断信息，不要删除记录文件来绕过提示。
+            开始备份时，运行中的代理会安全暂停并标记“备份优先”；备份空闲且记录保存成功后只恢复此类任务，用户手动暂停不会自动恢复。复制哈希与独立回读标准没有降低。
           </p>
         </div>
       </section>
@@ -6565,6 +6596,12 @@ export function ProxyQueue({
                     }
                   </span>
                 </div>
+                {job.status === "paused" &&
+                  job.pauseReason === "backup-priority" && (
+                    <p className="amber-text small">
+                      备份优先：已安全暂停，备份队列空闲后自动继续
+                    </p>
+                  )}
                 <p>
                   {job.preset === "editorial"
                     ? "剪辑代理"

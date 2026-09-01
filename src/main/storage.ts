@@ -17,7 +17,9 @@ export class Storage {
     return fallback;
   }
   write(name: string, value: unknown) {
-    const data = JSON.stringify(value, null, 2);
+    return this.writeSerialized(name, JSON.stringify(value, null, 2));
+  }
+  writeSerialized(name: string, data: string) {
     const result = this.writes
       .catch(() => {})
       .then(async () => {

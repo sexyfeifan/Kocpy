@@ -122,9 +122,12 @@ export interface API {
     projectId?: string;
     query?: string;
     kind?: string;
-    offset?: number;
+    cursor?: string;
     limit?: number;
-  }): Promise<Array<Record<string, unknown>>>;
+  }): Promise<{
+    rows: Array<Record<string, unknown>>;
+    nextCursor?: string;
+  }>;
   rebuildCatalog(): Promise<{
     tasks: number;
     files: number;
@@ -288,7 +291,11 @@ export interface API {
     projectId: string,
     operator: string,
     note: string,
-    options?: { scope?: "day" | "project"; shootingDate?: string; exceptions?: string[] },
+    options?: {
+      scope?: "day" | "project";
+      shootingDate?: string;
+      exceptions?: string[];
+    },
   ): Promise<ProjectConfig[]>;
   updateProjectDailyPlan(
     projectId: string,

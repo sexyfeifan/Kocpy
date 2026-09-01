@@ -11,12 +11,7 @@ export type TaskStatus =
 export type CopyMode = "normal" | "mirror";
 export type DuplicateStrategy = "skip" | "suffix";
 export type ProxyStatus =
-  | "pending"
-  | "running"
-  | "paused"
-  | "completed"
-  | "failed"
-  | "cancelled";
+  "pending" | "running" | "paused" | "completed" | "failed" | "cancelled";
 export type ProxyPreset = "review" | "editorial" | "offline";
 export interface SavedProxyPreset {
   id: string;
@@ -45,6 +40,7 @@ export interface ProxyJob {
   completedAt?: number;
   outputPath?: string;
   error?: string;
+  pauseReason?: "user" | "backup-priority";
   timecode?: string;
   preset?: ProxyPreset;
   namingTemplate?: string;
@@ -431,12 +427,7 @@ export interface ProjectConfig {
   managedSince?: string;
   expectedVolumes?: number;
   productionType?:
-    | "commercial"
-    | "documentary"
-    | "short"
-    | "variety"
-    | "feature"
-    | "custom";
+    "commercial" | "documentary" | "short" | "variety" | "feature" | "custom";
   crew?: Array<{
     id: string;
     name: string;
@@ -489,7 +480,11 @@ export interface ProjectRuleSnapshot {
   revision: number;
   createdAt: number;
   operator: string;
-  reason: "project-created" | "legacy-baseline" | "project-updated" | "template-applied";
+  reason:
+    | "project-created"
+    | "legacy-baseline"
+    | "project-updated"
+    | "template-applied";
   sha256: string;
   rules: ProjectRuleDefinition;
 }
@@ -502,7 +497,12 @@ export interface TemplateApplicationEvidence {
   templateName: string;
   templateRevision: number;
   selectedFields: string[];
-  changes: Array<{ field: string; label: string; before: string; after: string }>;
+  changes: Array<{
+    field: string;
+    label: string;
+    before: string;
+    after: string;
+  }>;
   resultingRuleSnapshotId: string;
 }
 
@@ -626,7 +626,12 @@ export interface ExistingImportPreview {
   detectedStructure: "card" | "day" | "project" | "unknown";
   warnings: string[];
   blockingIssues: Array<{
-    code: "unknown-structure" | "missing-date" | "missing-device" | "missing-card" | "duplicate-mapping";
+    code:
+      | "unknown-structure"
+      | "missing-date"
+      | "missing-device"
+      | "missing-card"
+      | "duplicate-mapping";
     message: string;
     relativeRoot?: string;
   }>;
@@ -653,7 +658,9 @@ export interface ExistingImportPreview {
     device?: string;
     cameraPosition?: string;
     card?: string;
-    issues: Array<"missing-date" | "missing-device" | "missing-card" | "duplicate-mapping">;
+    issues: Array<
+      "missing-date" | "missing-device" | "missing-card" | "duplicate-mapping"
+    >;
   }>;
 }
 

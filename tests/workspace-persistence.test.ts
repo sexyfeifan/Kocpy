@@ -330,12 +330,12 @@ describe("workspace authority and reconciliation", () => {
     const workspace = new WorkspaceRepository(storage, catalog);
     await workspace.initialize();
     const before = workspace.snapshot,
-      original = storage.write.bind(storage);
-    storage.write = ((name: string, value: unknown) => {
+      original = storage.writeSerialized.bind(storage);
+    storage.writeSerialized = ((name: string, value: string) => {
       if (name === "workspace-state.json")
         return Promise.reject(new Error("injected authority interruption"));
       return original(name, value);
-    }) as Storage["write"];
+    }) as Storage["writeSerialized"];
     await expect(
       workspace.commitTasks([task("not-committed")]),
     ).rejects.toThrow("injected authority interruption");
@@ -387,6 +387,28 @@ describe("workspace authority and reconciliation", () => {
       "DCIM/B.mov",
     ]);
     expect(repaired.map((file) => file.size)).toEqual([1, 2]);
+  });
+
+  it("does not rewrite a clean matching catalog during startup", async () => {
+    const { root, storage, catalog } = await fixture();
+    const workspace = new WorkspaceRepository(storage, catalog);
+    await workspace.initialize();
+    await workspace.commit({
+      tasks: [taskWithFiles("clean-media", ["A.mov", "B.mov"])],
+      projects: [{ ...project("project-files"), id: "project-files" }],
+      syncCatalog: true,
+    });
+    const file = path.join(root, "catalog.sqlite"),
+      fixed = new Date(1_700_000_000_000);
+    await fs.utimes(file, fixed, fixed);
+    const before = (await fs.stat(file)).mtimeMs;
+
+    const reopened = await new WorkspaceRepository(
+      new Storage(root),
+      new CatalogDatabase(root),
+    ).initialize();
+    expect(reopened.indexRebuilt).toBe(false);
+    expect((await fs.stat(file)).mtimeMs).toBe(before);
   });
 
   it("reconciles file rows when a committed task changes and when it is removed", async () => {
@@ -500,6 +522,8 @@ describe("workspace authority and reconciliation", () => {
     const db = await catalog.open();
     db.run("UPDATE workspace_state SET json='{broken' WHERE id=1");
     await catalog.flush();
+    for (const suffix of [".bak", ".bak2", ".bak3"])
+      await fs.writeFile(path.join(root, `catalog.sqlite${suffix}`), "broken");
 
     await expect(
       new WorkspaceRepository(
