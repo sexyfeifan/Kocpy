@@ -1,6 +1,6 @@
 {
   "name": "kocpy",
-  "version": "0.1.25",
+  "version": "0.1.26",
   "description": "Kocpy 专业素材工作台 · 多目的地备份、独立校验与项目归档",
   "main": "out/main/index.js",
   "productName": "Kocpy",
@@ -27,7 +27,8 @@
     "dist:x64": "npm run build && electron-builder --mac --x64 -c.mac.notarize=false",
     "test:hardware": "vitest run tests/hardware.integration.test.ts",
     "test:large": "KOCPY_LARGE_TEST=100000 vitest run tests/catalog-stress.integration.test.ts",
-    "test:million": "KOCPY_LARGE_TEST=1000000 vitest run tests/catalog-stress.integration.test.ts"
+    "test:million": "KOCPY_LARGE_TEST=1000000 vitest run tests/catalog-stress.integration.test.ts",
+    "test:workspace-large": "KOCPY_WORKSPACE_LARGE_TEST=100000 vitest run tests/workspace-stress.integration.test.ts"
   },
   "dependencies": {
     "lucide-react": "^1.37.0",

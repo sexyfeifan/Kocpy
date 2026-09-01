@@ -1,4 +1,14 @@
-# Kocpy 0.1.21 architecture
+# Kocpy 0.1.26 architecture
+
+## Workspace authority and commit boundary
+
+`workspace-state.json` is the authoritative task/project state. It carries a schema version, monotonic revision, commit time, SHA-256 digest, complete task/project snapshots and deletion tombstones. `tasks.json` and `projects.json` remain compatibility mirrors for 0.1.25 readers. `catalog.sqlite` is a searchable replica and recovery snapshot, not a second business authority.
+
+All task and project mutations enter one serialized `WorkspaceRepository`. A commit atomically publishes authority first, writes compatibility mirrors and their revision marker second, then transactionally reconciles SQLite entity digests and the matching workspace snapshot. Active transfers keep the crash-safe authoritative checkpoint cadence but defer the duplicate large compatibility write until settlement or the next explicit state transition. If the process stops between stages, startup selects the highest valid revision, verifies its digest, repairs mirrors and reconciles the catalog. Index failure never changes a committed business result.
+
+The first 0.1.26 launch treats a valid legacy JSON array—including an explicit empty array—as authoritative for its domain. SQLite fills a domain only when its JSON mirror is absent or unrecoverable. Once a compatibility marker exists, invalid authority copies block startup instead of resetting the revision from legacy mirrors. A newer unknown schema also blocks startup. These guards prevent stale indexes, backups or unsupported downgrades from reviving deleted records.
+
+Task and project identifiers are unique within the envelope; live records cannot overlap tombstones. SQLite schema 4 stores entity digests and the exact indexed workspace revision. Reconciliation removes extra rows and updates changed entities inside one transaction; deleting the SQLite file is recoverable from the authority state. Diagnostic exports include only workspace counts, revision and a shortened digest, never the complete workspace or media paths.
 
 ## Shared trust decisions
 
@@ -24,7 +34,7 @@ The UI samples completed writes/readbacks every second and retains recent speed 
 - Completion requires independent destination hashes to match the source hash.
 - A paused or interrupted task never reports success.
 
-## Compatibility
+## Runtime compatibility
 
 Kocpy ships separate native FFmpeg binaries for Apple Silicon and Intel. All tasks, projects, preferences, thumbnails, and proxy records remain in the Kocpy local data directory.
 

@@ -94,6 +94,7 @@ import {
   validateWorkspacePackage,
 } from "./lifecycle";
 import { CatalogDatabase } from "./catalog";
+import { WorkspaceRepository, type WorkspaceCommitResult } from "./workspace";
 import {
   builtInProductionTemplates,
   importExistingBackup,
@@ -131,7 +132,8 @@ const engine = new BackupEngine(
     path.join(app.getPath("userData"), "thumbnails"),
   ),
   store = new Storage(app.getPath("userData")),
-  catalog = new CatalogDatabase(app.getPath("userData"));
+  catalog = new CatalogDatabase(app.getPath("userData")),
+  workspace = new WorkspaceRepository(store, catalog);
 const normalizeProject = (project: ProjectConfig): ProjectConfig => {
   const shootingDateStart =
     project.shootingDateStart ||
@@ -202,9 +204,9 @@ const normalizeProject = (project: ProjectConfig): ProjectConfig => {
 const hasProjectRuleEvidence = (project: ProjectConfig) =>
   Boolean(
     project.activeRuleSnapshotId &&
-      project.ruleSnapshots?.some(
-        (snapshot) => snapshot.id === project.activeRuleSnapshotId,
-      ),
+    project.ruleSnapshots?.some(
+      (snapshot) => snapshot.id === project.activeRuleSnapshotId,
+    ),
   );
 const ensureProjectRuleEvidence = (project: ProjectConfig): ProjectConfig =>
   hasProjectRuleEvidence(project)
@@ -217,19 +219,19 @@ const sameManifestDifferences = (
 ) =>
   Boolean(
     left &&
-      right &&
+    right &&
+    JSON.stringify({
+      missing: left.missing,
+      extra: left.extra,
+      sizeMismatches: left.sizeMismatches,
+      checksumMismatches: left.checksumMismatches,
+    }) ===
       JSON.stringify({
-        missing: left.missing,
-        extra: left.extra,
-        sizeMismatches: left.sizeMismatches,
-        checksumMismatches: left.checksumMismatches,
-      }) ===
-        JSON.stringify({
-          missing: right.missing,
-          extra: right.extra,
-          sizeMismatches: right.sizeMismatches,
-          checksumMismatches: right.checksumMismatches,
-        }),
+        missing: right.missing,
+        extra: right.extra,
+        sizeMismatches: right.sizeMismatches,
+        checksumMismatches: right.checksumMismatches,
+      }),
   );
 
 const existingEvent = (
@@ -250,9 +252,8 @@ const existingEvent = (
   details: input.details,
 });
 const existingOperator = async () =>
-  (
-    await store.read("settings.json", defaultSettings)
-  ).operator?.trim() || "本机用户";
+  (await store.read("settings.json", defaultSettings)).operator?.trim() ||
+  "本机用户";
 
 const appendExistingTaskEvent = (
   task: BackupTask,
@@ -297,6 +298,30 @@ const consolidateProjectExistingRecords = (projectId: string) => {
   for (const duplicateId of [...result.duplicateIds, ...result.aggregateIds])
     engine.deleteTask(duplicateId);
   return result;
+};
+const snapshotExistingProjectRecords = (projectId: string) =>
+  structuredClone(
+    engine
+      .getAllTasks()
+      .filter(
+        (task) =>
+          task.projectId === projectId &&
+          task.provenance &&
+          task.provenance !== "kocpy-transfer",
+      ),
+  );
+const restoreExistingProjectRecords = (
+  projectId: string,
+  snapshot: BackupTask[],
+) => {
+  for (const task of engine.getAllTasks())
+    if (
+      task.projectId === projectId &&
+      task.provenance &&
+      task.provenance !== "kocpy-transfer"
+    )
+      engine.deleteTask(task.id);
+  for (const task of snapshot) engine.loadTask(structuredClone(task));
 };
 const prepareProject = (value: ProjectConfig): ProjectConfig => {
   const project = {
@@ -346,13 +371,15 @@ const prepareProject = (value: ProjectConfig): ProjectConfig => {
     ]),
   );
   project.expectedDevicesByDate = Object.fromEntries(
-    Object.entries(project.expectedDevicesByDate || {}).map(([date, values]) => [
-      date,
-      [...new Set(values)].filter(
-        (key) =>
-          typeof key === "string" && key.length <= 160 && !/[\\/]/.test(key),
-      ),
-    ]),
+    Object.entries(project.expectedDevicesByDate || {}).map(
+      ([date, values]) => [
+        date,
+        [...new Set(values)].filter(
+          (key) =>
+            typeof key === "string" && key.length <= 160 && !/[\\/]/.test(key),
+        ),
+      ],
+    ),
   );
   project.requiredCopies = Math.max(
     1,
@@ -399,37 +426,98 @@ const lanIndex = new LanProjectIndex(() => ({
   projects: [],
   tasks: engine.getAllTasks(),
 }));
-const persist = () =>
-  store.write("tasks.json", engine.getAllTasks().slice().reverse());
-const taskFreshness = (task: BackupTask) =>
-  Math.max(
-    task.lastCheckpointAt || 0,
-    task.lastVerifiedAt || 0,
-    task.completedAt || 0,
-    task.createdAt || 0,
-  );
-const mergeTaskSnapshots = (
-  mirror: BackupTask[],
-  indexed: BackupTask[],
-): BackupTask[] => {
-  const merged = new Map(indexed.map((task) => [task.id, task]));
-  for (const task of mirror) {
-    const existing = merged.get(task.id);
-    if (!existing || taskFreshness(task) >= taskFreshness(existing))
-      merged.set(task.id, task);
-  }
-  return [...merged.values()].sort(
-    (left, right) => (left.createdAt || 0) - (right.createdAt || 0),
+let lastWorkspaceAuxiliaryWarning = "";
+let lastWorkspaceAuthorityFailure = "";
+const reportWorkspaceAuthorityFailure = (error: unknown) => {
+  const message = error instanceof Error ? error.message : String(error);
+  if (message === lastWorkspaceAuthorityFailure) return;
+  lastWorkspaceAuthorityFailure = message;
+  for (const task of engine
+    .getAllTasks()
+    .filter((item) => ["running", "verifying"].includes(item.status)))
+    try {
+      engine.pauseTask(task.id);
+      task.faultTimeline = [
+        ...(task.faultTimeline || []),
+        {
+          at: Date.now(),
+          phase: "workspace-persistence",
+          level: "error",
+          message: "权威任务记录写入失败，已请求暂停任务",
+        },
+      ];
+    } catch {
+      /* a task may already be settling */
+    }
+  dialog.showErrorBox(
+    "权威记录保存失败",
+    "Kocpy 无法确认最新任务或项目状态已经落盘，已请求暂停仍在运行的任务。素材文件未因此删除；请不要清卡，先确认系统盘空间和权限并导出诊断信息。\n" +
+      message,
   );
 };
-const mergeProjectSnapshots = (
-  mirror: ProjectConfig[],
-  indexed: ProjectConfig[],
+const reportWorkspaceAuxiliaryState = (
+  result: WorkspaceCommitResult,
+  expectIndex: boolean,
 ) => {
-  const merged = new Map(indexed.map((project) => [project.id, project]));
-  for (const project of mirror) merged.set(project.id, project);
-  return [...merged.values()].map(normalizeProject);
+  const messages = [
+    result.compatibilityError,
+    expectIndex ? result.indexError : undefined,
+  ].filter(Boolean) as string[];
+  const key = messages.join("\n");
+  if (!key) {
+    lastWorkspaceAuxiliaryWarning = "";
+    return;
+  }
+  if (key === lastWorkspaceAuxiliaryWarning) return;
+  lastWorkspaceAuxiliaryWarning = key;
+  dialog.showErrorBox(
+    "记录已保存，辅助数据待恢复",
+    "权威任务和项目记录已经安全写入，素材文件未被删除。下次启动会自动修复兼容镜像或素材索引。\n" +
+      key,
+  );
 };
+const commitWorkspace = async (
+  options: Parameters<WorkspaceRepository["commit"]>[0],
+) => {
+  try {
+    const result = await workspace.commit(options);
+    lastWorkspaceAuthorityFailure = "";
+    reportWorkspaceAuxiliaryState(result, Boolean(options.syncCatalog));
+    return result;
+  } catch (error) {
+    reportWorkspaceAuthorityFailure(error);
+    throw error;
+  }
+};
+const persist = (syncCatalog = false, syncCompatibility = true) =>
+  workspace
+    .commitTasks(
+      engine.getAllTasks().slice().reverse(),
+      syncCatalog,
+      syncCompatibility,
+    )
+    .then((result) => {
+      lastWorkspaceAuthorityFailure = "";
+      reportWorkspaceAuxiliaryState(result, syncCatalog);
+      return result;
+    })
+    .catch((error) => {
+      reportWorkspaceAuthorityFailure(error);
+      throw error;
+    });
+const readProjects = async () => workspace.getProjects();
+const writeProjects = (projects: ProjectConfig[]) =>
+  workspace
+    .commitProjects(projects, true)
+    .then((result) => {
+      lastWorkspaceAuthorityFailure = "";
+      reportWorkspaceAuxiliaryState(result, true);
+      return result;
+    })
+    .catch((error) => {
+      reportWorkspaceAuthorityFailure(error);
+      throw error;
+    });
 const sourceInventoryMatches = async (task: BackupTask) => {
   const identity = await volumeIdentity(task.sourcePath);
   if (task.sourceVolumeUuid && task.sourceVolumeUuid !== identity.uuid)
@@ -876,6 +964,67 @@ function createWindow() {
   else main.loadFile(path.join(__dirname, "../renderer/index.html"));
 }
 app.whenReady().then(async () => {
+  let workspaceLoad;
+  try {
+    workspaceLoad = await workspace.initialize();
+  } catch (error) {
+    const reportPath = path.join(
+        app.getPath("userData"),
+        "workspace-startup-error.json",
+      ),
+      files = await Promise.all(
+        [
+          "workspace-state.json",
+          "workspace-state.json.bak",
+          "workspace-compatibility.json",
+          "tasks.json",
+          "tasks.json.bak",
+          "projects.json",
+          "projects.json.bak",
+          "catalog.sqlite",
+          "catalog.sqlite.bak",
+          "catalog.sqlite.bak2",
+          "catalog.sqlite.bak3",
+        ].map(async (name) => {
+          const stat = await fs
+            .stat(path.join(app.getPath("userData"), name))
+            .catch(() => undefined);
+          return {
+            name,
+            present: Boolean(stat),
+            bytes: stat?.size,
+            modifiedAt: stat?.mtime.toISOString(),
+          };
+        }),
+      ),
+      reportSaved = await fs
+        .writeFile(
+          reportPath,
+          JSON.stringify(
+            {
+              schema: 1,
+              generatedAt: new Date().toISOString(),
+              version: app.getVersion(),
+              error: error instanceof Error ? error.message : String(error),
+              files,
+              privacy: "不包含任务、项目、素材内容、完整素材路径或文件清单。",
+            },
+            null,
+            2,
+          ),
+          "utf8",
+        )
+        .then(
+          () => true,
+          () => false,
+        );
+    dialog.showErrorBox(
+      "工作区记录需要处理",
+      `${error instanceof Error ? error.message : String(error)}\n\nKocpy 没有改写素材文件。请保留 Kocpy 应用数据目录，不要用旧版继续写入，也不要删除记录文件。${reportSaved ? `\n已生成脱敏启动报告：${reportPath}` : "\n启动报告无法写入，请同时检查系统盘空间和应用数据目录权限。"}`,
+    );
+    app.exit(1);
+    return;
+  }
   operations.restore(await store.read("operation-history.json", []));
   const initialSettings = await store.read("settings.json", defaultSettings);
   nativeTheme.themeSource =
@@ -916,9 +1065,9 @@ app.whenReady().then(async () => {
   for (const reminder of archiveReminders.filter(
     (item) => item.enabled && item.nextAt <= Date.now(),
   )) {
-    const project = (
-      await store.read<ProjectConfig[]>("projects.json", [])
-    ).find((item) => item.id === reminder.projectId);
+    const project = (await readProjects()).find(
+      (item) => item.id === reminder.projectId,
+    );
     if (Notification.isSupported())
       new Notification({
         title: "归档复校验到期",
@@ -936,7 +1085,7 @@ app.whenReady().then(async () => {
           (item) => item.enabled && item.nextAt <= Date.now(),
         );
         if (!due.length) return;
-        const projects = await store.read<ProjectConfig[]>("projects.json", []);
+        const projects = await readProjects();
         for (const reminder of due) {
           const project = projects.find(
             (item) => item.id === reminder.projectId,
@@ -968,24 +1117,8 @@ app.whenReady().then(async () => {
       job.status = "failed";
       job.error = "上次转码被中断，可点击重试";
     }
-  const mirroredTasks = await store.read<BackupTask[]>("tasks.json", []);
-  let indexedTasks: BackupTask[] = [],
-    catalogReadFailed = false;
-  try {
-    indexedTasks = await catalog.loadTasks();
-  } catch {
-    catalogReadFailed = true;
-    await catalog.recover().catch(() => {});
-    indexedTasks = await catalog.loadTasks().catch(() => []);
-  }
-  const saved = mergeTaskSnapshots(mirroredTasks, indexedTasks);
-  let startupRecordsChanged =
-    catalogReadFailed ||
-    saved.length !== indexedTasks.length ||
-    saved.some((task) => {
-      const indexed = indexedTasks.find((item) => item.id === task.id);
-      return !indexed || taskFreshness(task) !== taskFreshness(indexed);
-    });
+  const saved = structuredClone(workspaceLoad.state.tasks);
+  let startupRecordsChanged = false;
   for (const task of saved) {
     if (ensureTaskMediaBreakdown(task)) startupRecordsChanged = true;
     if (["pending", "running", "paused", "verifying"].includes(task.status)) {
@@ -995,28 +1128,20 @@ app.whenReady().then(async () => {
     }
     engine.loadTask(task);
   }
-  await persist();
-  const mirroredProjects = (
-      await store.read<ProjectConfig[]>("projects.json", [])
-    ).map(normalizeProject),
-    indexedProjects = (await catalog.loadProjects().catch(() => [])).map(
-      normalizeProject,
-    ),
-    initialProjects = mergeProjectSnapshots(mirroredProjects, indexedProjects);
-  startupRecordsChanged ||=
-    initialProjects.length !== indexedProjects.length ||
-    initialProjects.some((project) => {
-      const indexed = indexedProjects.find((item) => item.id === project.id);
-      return !indexed || JSON.stringify(project) !== JSON.stringify(indexed);
+  const initialProjects = structuredClone(workspaceLoad.state.projects).map(
+    normalizeProject,
+  );
+  startupRecordsChanged ||= initialProjects.some(
+    (project, index) =>
+      JSON.stringify(project) !==
+      JSON.stringify(workspaceLoad.state.projects[index]),
+  );
+  if (startupRecordsChanged)
+    await commitWorkspace({
+      tasks: engine.getAllTasks().slice().reverse(),
+      projects: initialProjects,
+      syncCatalog: true,
     });
-  await store.write("projects.json", initialProjects);
-  if (startupRecordsChanged || !indexedTasks.length || !indexedProjects.length)
-    await catalog
-      .rebuild(engine.getAllTasks(), initialProjects)
-      .catch(async () => {
-        await catalog.recover().catch(() => {});
-        await catalog.rebuild(engine.getAllTasks(), initialProjects);
-      });
   handle("dialog:directory", async (defaultPath?: string) => {
     const r = await dialog.showOpenDialog({
       properties: ["openDirectory", "createDirectory"],
@@ -1083,10 +1208,7 @@ app.whenReady().then(async () => {
   handle("catalog:rebuild", async () => {
     if (engine.hasActive() || proxyBusy)
       throw new Error("请等待当前任务结束后再重建素材索引");
-    const projects = (
-      await store.read<ProjectConfig[]>("projects.json", [])
-    ).map(normalizeProject);
-    await catalog.rebuild(engine.getAllTasks(), projects);
+    await workspace.synchronizeIndex();
     return catalog.stats();
   });
   handle("tasks:create", async (config: TaskConfig) => {
@@ -1096,7 +1218,10 @@ app.whenReady().then(async () => {
       const existing = engine
         .getAllTasks()
         .find((task) => task.requestId === config.requestId);
-      if (existing) return existing;
+      if (existing) {
+        await persist(true);
+        return existing;
+      }
     }
     const speedFor = (destination: string) =>
       benchmarkHistory
@@ -1118,17 +1243,16 @@ app.whenReady().then(async () => {
     );
     let taskProject: ProjectConfig | undefined;
     if (config.projectId) {
-      const projects = (
-          await store.read<ProjectConfig[]>("projects.json", [])
-        ).map(normalizeProject),
-        projectIndex = projects.findIndex((item) => item.id === config.projectId);
+      const projects = (await readProjects()).map(normalizeProject),
+        projectIndex = projects.findIndex(
+          (item) => item.id === config.projectId,
+        );
       let project = projects[projectIndex];
       if (!project) throw new Error("拍摄项目不存在");
       if (!hasProjectRuleEvidence(project)) {
         project = ensureProjectRuleEvidence(project);
         projects[projectIndex] = project;
-        await store.write("projects.json", projects);
-        await catalog.upsertProject(project);
+        await writeProjects(projects);
       }
       taskProject = project;
       const required = project.requiredCopies || 2;
@@ -1168,8 +1292,12 @@ app.whenReady().then(async () => {
         destination.volumeName = identity.name;
       }),
     );
-    await persist();
-    await catalog.upsertTask(task);
+    try {
+      await persist(true);
+    } catch (error) {
+      engine.deleteTask(task.id);
+      throw error;
+    }
     return task;
   });
   handle("tasks:start", async (id: string) => {
@@ -1225,8 +1353,15 @@ app.whenReady().then(async () => {
     return true;
   });
   handle("tasks:delete", async (id: string) => {
+    const task = engine.getTask(id);
+    if (!task) return true;
     engine.deleteTask(id);
-    await Promise.all([persist(), catalog.deleteTask(id)]);
+    try {
+      await persist(true);
+    } catch (error) {
+      engine.loadTask(task);
+      throw error;
+    }
     return true;
   });
   handle("tasks:priority", async (id: string, value: boolean) => {
@@ -1435,6 +1570,17 @@ app.whenReady().then(async () => {
       ({ path: _path, ...record }) => record,
     ),
     archiveHealth: healthRecords.slice(-20),
+    workspace: {
+      schemaVersion: workspace.snapshot.schemaVersion,
+      revision: workspace.snapshot.revision,
+      committedAt: workspace.snapshot.committedAt,
+      digest: workspace.snapshot.digest.slice(0, 16),
+      tasks: workspace.snapshot.tasks.length,
+      projects: workspace.snapshot.projects.length,
+      taskTombstones: workspace.snapshot.taskTombstones.length,
+      projectTombstones: workspace.snapshot.projectTombstones.length,
+      catalog: await catalog.stats(),
+    },
   });
   handle("diagnostics:benchmark", async (directory: string, sizeMiB = 64) => {
     if (!(await assertDiagnosticTarget(directory))) return null;
@@ -1589,7 +1735,11 @@ app.whenReady().then(async () => {
     if (scope.projectId)
       tasks = tasks.filter((task) => task.projectId === scope.projectId);
     if (scope.shootingDate)
-      tasks = tasks.filter((task) => shootingDateKey(task.shootingDate) === shootingDateKey(scope.shootingDate));
+      tasks = tasks.filter(
+        (task) =>
+          shootingDateKey(task.shootingDate) ===
+          shootingDateKey(scope.shootingDate),
+      );
     if (scope.taskId) tasks = tasks.filter((task) => task.id === scope.taskId);
     if (scope.volumePath)
       tasks = tasks.filter((task) =>
@@ -1739,7 +1889,7 @@ app.whenReady().then(async () => {
     await Promise.all([
       store.write("archive-health.json", healthRecords),
       store.write("archive-changes.json", archiveChanges),
-      persist(),
+      persist(true),
     ]);
     return { changes, record };
   });
@@ -1826,7 +1976,7 @@ app.whenReady().then(async () => {
       ].slice(-10000);
       await Promise.all([
         store.write("archive-changes.json", archiveChanges),
-        persist(),
+        persist(true),
       ]);
       return task;
     },
@@ -2022,7 +2172,7 @@ app.whenReady().then(async () => {
         });
         target.error = undefined;
         if (repaired) await engine.reverifyTask(task.id);
-        await Promise.all([persist(), catalog.upsertTask(task)]);
+        await persist(true);
         return { repaired, preservedDamagedOriginals };
       } catch (error) {
         target.verified = false;
@@ -2038,8 +2188,7 @@ app.whenReady().then(async () => {
           note: target.error,
         });
         await Promise.all([
-          persist(),
-          catalog.upsertTask(task),
+          persist(true),
           store.write("archive-changes.json", archiveChanges),
         ]);
         throw new Error(target.error);
@@ -2056,7 +2205,7 @@ app.whenReady().then(async () => {
       selectedDate?: string,
     ) => {
       const project = projectId
-        ? (await store.read<ProjectConfig[]>("projects.json", []))
+        ? (await readProjects())
             .map(normalizeProject)
             .find((item) => item.id === projectId)
         : undefined;
@@ -2071,13 +2220,12 @@ app.whenReady().then(async () => {
       mode: "manifest-import" | "external-baseline" | "unverified-import",
       metadata: any,
     ) => {
-      const projects = (
-          await store.read<ProjectConfig[]>("projects.json", [])
-        ).map(normalizeProject),
+      const projects = (await readProjects()).map(normalizeProject),
         project = projects.find((item) => item.id === projectId);
       if (!project) throw new Error("项目不存在");
       if (!hasProjectRuleEvidence(project))
         Object.assign(project, ensureProjectRuleEvidence(project));
+      const engineBefore = snapshotExistingProjectRecords(projectId);
       const preview = await previewExistingBackup(
           root,
           project,
@@ -2087,8 +2235,7 @@ app.whenReady().then(async () => {
         decisions = resolveExistingCandidates(preview, [
           {
             relativeRoot: ".",
-            shootingDate:
-              metadata?.shootingDate || preview.suggestedDate || "",
+            shootingDate: metadata?.shootingDate || preview.suggestedDate || "",
             device: metadata?.device || preview.suggestedDevice || "",
             cameraPosition: metadata?.cameraPosition,
             card: metadata?.card || preview.suggestedCard || "",
@@ -2129,8 +2276,16 @@ app.whenReady().then(async () => {
         { id: randomUUID(), path: root, boundAt: Date.now(), provenance: mode },
       ]);
       project.managedSince ||= task.shootingDate;
-      await Promise.all([store.write("projects.json", projects), persist()]);
-      await catalog.rebuild(engine.getAllTasks(), projects);
+      try {
+        await commitWorkspace({
+          tasks: engine.getAllTasks().slice().reverse(),
+          projects,
+          syncCatalog: true,
+        });
+      } catch (error) {
+        restoreExistingProjectRecords(projectId, engineBefore);
+        throw error;
+      }
       return (
         consolidated.records.find(
           (record) =>
@@ -2195,9 +2350,7 @@ app.whenReady().then(async () => {
       emitImportProgress("analyzing", "正在重新扫描并分析目录结构", {
         force: true,
       });
-      const projects = (
-          await store.read<ProjectConfig[]>("projects.json", [])
-        ).map(normalizeProject),
+      const projects = (await readProjects()).map(normalizeProject),
         project = projects.find((item) => item.id === projectId);
       if (!project) throw new Error("项目不存在");
       if (!associateMatchingCopies)
@@ -2206,6 +2359,7 @@ app.whenReady().then(async () => {
         );
       if (!hasProjectRuleEvidence(project))
         Object.assign(project, ensureProjectRuleEvidence(project));
+      const engineBefore = snapshotExistingProjectRecords(projectId);
       const preview = await previewExistingBackup(
         root,
         project,
@@ -2216,9 +2370,7 @@ app.whenReady().then(async () => {
       if (!/^[a-f0-9]{64}$/.test(previewDigest || ""))
         throw new Error("接管预览已失效，请重新检查目录映射后再接管");
       if (preview.scanDigest !== previewDigest)
-        throw new Error(
-          "目录内容或识别映射已变化，请重新检查预览后再接管",
-        );
+        throw new Error("目录内容或识别映射已变化，请重新检查预览后再接管");
       const decisions = resolveExistingCandidates(preview, candidateDecisions),
         candidates = preview.candidates.map((candidate) => ({
           ...candidate,
@@ -2367,8 +2519,16 @@ app.whenReady().then(async () => {
         .map((task) => task.shootingDate)
         .filter(Boolean)
         .sort()[0];
-      await Promise.all([store.write("projects.json", projects), persist()]);
-      await catalog.rebuild(engine.getAllTasks(), projects);
+      try {
+        await commitWorkspace({
+          tasks: engine.getAllTasks().slice().reverse(),
+          projects,
+          syncCatalog: true,
+        });
+      } catch (error) {
+        restoreExistingProjectRecords(projectId, engineBefore);
+        throw error;
+      }
       completedBytes = totalBytes;
       completedFiles = totalFiles;
       emitImportProgress("completed", "接管完成", {
@@ -2397,9 +2557,7 @@ app.whenReady().then(async () => {
   handle(
     "existing:reanalyze-project",
     async (projectId: string, apply = false) => {
-      const projects = (
-          await store.read<ProjectConfig[]>("projects.json", [])
-        ).map(normalizeProject),
+      const projects = (await readProjects()).map(normalizeProject),
         project = projects.find((item) => item.id === projectId);
       if (!project) throw new Error("项目不存在");
       const importedTasks = engine
@@ -2410,6 +2568,9 @@ app.whenReady().then(async () => {
             task.provenance &&
             task.provenance !== "kocpy-transfer",
         );
+      const engineBefore = apply
+        ? snapshotExistingProjectRecords(projectId)
+        : [];
       const workingTasks: BackupTask[] = apply
         ? importedTasks
         : structuredClone(importedTasks);
@@ -2549,8 +2710,16 @@ app.whenReady().then(async () => {
             },
           }),
         );
-        await Promise.all([store.write("projects.json", projects), persist()]);
-        await catalog.rebuild(engine.getAllTasks(), projects);
+        try {
+          await commitWorkspace({
+            tasks: engine.getAllTasks().slice().reverse(),
+            projects,
+            syncCatalog: true,
+          });
+        } catch (error) {
+          restoreExistingProjectRecords(projectId, engineBefore);
+          throw error;
+        }
       }
       return {
         importedTasks: importedTasks.length,
@@ -2714,7 +2883,7 @@ app.whenReady().then(async () => {
               },
             }),
           );
-          await Promise.all([persist(), catalog.upsertTask(task)]);
+          await persist(true);
           completedBytes = totalBytes;
           completedFiles = totalFiles;
           emit("completed", "首次哈希基线建立完成", undefined, true);
@@ -2722,7 +2891,7 @@ app.whenReady().then(async () => {
         } catch (error) {
           task.status = "failed";
           task.errorMessage = String(error).replace(/^Error: /, "");
-          await Promise.all([persist(), catalog.upsertTask(task)]);
+          await persist(true);
           emit("failed", task.errorMessage, undefined, true);
           throw error;
         }
@@ -2844,7 +3013,7 @@ app.whenReady().then(async () => {
               },
             }),
           );
-          await Promise.all([persist(), catalog.upsertTask(task)]);
+          await persist(true);
           emit(
             "completed",
             `已补回 ${result.files} 个文件，准备完整重校验`,
@@ -2870,9 +3039,7 @@ app.whenReady().then(async () => {
         const task = engine.getTask(taskId);
         if (!task?.projectId || !task.externalManifest)
           throw new Error("接管素材卷或外部清单不存在");
-        const projects = (
-            await store.read<ProjectConfig[]>("projects.json", [])
-          ).map(normalizeProject),
+        const projects = (await readProjects()).map(normalizeProject),
           project = projects.find((item) => item.id === task.projectId);
         if (!project) throw new Error("项目不存在");
         const manifestDigest = await hashFile(
@@ -3019,7 +3186,7 @@ app.whenReady().then(async () => {
                 details: { status: task.status },
               }),
             );
-            await Promise.all([persist(), catalog.upsertTask(task)]);
+            await persist(true);
             completedBytes = totalBytes;
             completedFiles = totalFiles;
             emit(
@@ -3087,7 +3254,7 @@ app.whenReady().then(async () => {
               details: { status: task.status, files: task.totalFiles },
             }),
           );
-          await Promise.all([persist(), catalog.upsertTask(task)]);
+          await persist(true);
           completedBytes = totalBytes;
           completedFiles = totalFiles;
           emit("completed", "外部清单完整校验通过", undefined, true);
@@ -3152,7 +3319,7 @@ app.whenReady().then(async () => {
           details: { extra: [...comparison.extra] },
         }),
       );
-      await Promise.all([persist(), catalog.upsertTask(task)]);
+      await persist(true);
       return task;
     }),
   );
@@ -3227,7 +3394,7 @@ app.whenReady().then(async () => {
             },
           }),
         );
-        await Promise.all([persist(), catalog.upsertTask(task)]);
+        await persist(true);
         return result;
       }),
   );
@@ -3269,7 +3436,8 @@ app.whenReady().then(async () => {
       properties: ["openDirectory"],
     });
     if (chosen.canceled) return null;
-    const root = await canonical(chosen.filePaths[0]),
+    const taskBefore = structuredClone(task),
+      root = await canonical(chosen.filePaths[0]),
       availability = await Promise.all(
         task.destinations.map((item) =>
           fs.access(item.resolvedPath || item.path).then(
@@ -3280,8 +3448,12 @@ app.whenReady().then(async () => {
       ),
       unavailableIndex = availability.findIndex((value) => !value),
       associatingCopy = unavailableIndex < 0,
-      targetIndex = associatingCopy ? task.destinations.length : unavailableIndex,
-      destination = associatingCopy ? undefined : task.destinations[targetIndex],
+      targetIndex = associatingCopy
+        ? task.destinations.length
+        : unavailableIndex,
+      destination = associatingCopy
+        ? undefined
+        : task.destinations[targetIndex],
       previousRoot = destination
         ? destination.resolvedPath || destination.path
         : "",
@@ -3422,9 +3594,7 @@ app.whenReady().then(async () => {
       },
     });
     appendExistingTaskEvent(task, event);
-    const projects = (
-        await store.read<ProjectConfig[]>("projects.json", [])
-      ).map(normalizeProject),
+    const projects = (await readProjects()).map(normalizeProject),
       project = task.projectId
         ? projects.find((item) => item.id === task.projectId)
         : undefined;
@@ -3448,11 +3618,16 @@ app.whenReady().then(async () => {
       ]);
       appendProjectTakeoverEvent(project, event);
     }
-    await Promise.all([persist(), store.write("projects.json", projects)]);
-    await catalog.rebuild(
-      engine.getAllTasks(),
-      projects,
-    );
+    try {
+      await commitWorkspace({
+        tasks: engine.getAllTasks().slice().reverse(),
+        projects,
+        syncCatalog: true,
+      });
+    } catch (error) {
+      engine.loadTask(taskBefore);
+      throw error;
+    }
     return matched;
   });
   handle("system:open-path", async (file: string) => {
@@ -3461,16 +3636,14 @@ app.whenReady().then(async () => {
     return true;
   });
   handle("projects:coverage", (projectId: string) =>
-    store.read<ProjectConfig[]>("projects.json", []).then((projects) => {
+    readProjects().then((projects) => {
       const project = projects.find((item) => item.id === projectId);
       if (!project) throw new Error("项目不存在");
       return projectCoverage(project, engine.getAllTasks());
     }),
   );
   handle("projects:sign-checklist", async (projectId: string, run: any) => {
-    const projects = (
-        await store.read<ProjectConfig[]>("projects.json", [])
-      ).map(normalizeProject),
+    const projects = (await readProjects()).map(normalizeProject),
       project = projects.find((item) => item.id === projectId);
     if (!project) throw new Error("项目不存在");
     if (!hasProjectRuleEvidence(project))
@@ -3513,7 +3686,7 @@ app.whenReady().then(async () => {
       ...(project.checklistRuns || []).filter((item) => item.id !== run.id),
       run,
     ].slice(-1000);
-    await store.write("projects.json", projects);
+    await writeProjects(projects);
     return project;
   });
   handle("nas:list", () => nasPresets);
@@ -3579,9 +3752,9 @@ app.whenReady().then(async () => {
     }
   });
   handle("templates:from-project", async (projectId: string, name?: string) => {
-    const project = (
-      await store.read<ProjectConfig[]>("projects.json", [])
-    ).find((item) => item.id === projectId);
+    const project = (await readProjects()).find(
+      (item) => item.id === projectId,
+    );
     if (!project) throw new Error("项目不存在");
     const template = templateFromProject(project, name);
     const index = projectTemplates.findIndex((item) => item.id === template.id);
@@ -3715,9 +3888,7 @@ app.whenReady().then(async () => {
     "templates:preview-apply",
     async (templateId: string, projectId: string) => {
       const template = projectTemplates.find((item) => item.id === templateId),
-        project = (await store.read<ProjectConfig[]>("projects.json", [])).find(
-          (item) => item.id === projectId,
-        );
+        project = (await readProjects()).find((item) => item.id === projectId);
       if (!template) throw new Error("模板不存在");
       if (!project) throw new Error("项目不存在");
       const actionLabels: Record<string, string> = {
@@ -3800,9 +3971,7 @@ app.whenReady().then(async () => {
     ) => {
       const template = projectTemplates.find((item) => item.id === templateId);
       if (!template) throw new Error("模板不存在");
-      const projects = (
-          await store.read<ProjectConfig[]>("projects.json", [])
-        ).map(normalizeProject),
+      const projects = (await readProjects()).map(normalizeProject),
         project = projects.find((item) => item.id === projectId);
       if (!project) throw new Error("项目不存在");
       const beforeProject = structuredClone(project);
@@ -3896,8 +4065,7 @@ app.whenReady().then(async () => {
         operator.trim(),
       );
       Object.assign(project, evidenced);
-      await store.write("projects.json", projects);
-      await catalog.upsertProject(project);
+      await writeProjects(projects);
       return projects;
     },
   );
@@ -3907,9 +4075,7 @@ app.whenReady().then(async () => {
       projectId: string,
       input: Parameters<typeof recordDailyPlanDecision>[1],
     ) => {
-      const projects = (
-          await store.read<ProjectConfig[]>("projects.json", [])
-        ).map(normalizeProject),
+      const projects = (await readProjects()).map(normalizeProject),
         index = projects.findIndex((item) => item.id === projectId);
       if (index < 0) throw new Error("项目不存在");
       const planDate = shootingDateKey(input.date),
@@ -3922,8 +4088,7 @@ app.whenReady().then(async () => {
         ensureProjectRuleEvidence(projects[index]),
         input,
       );
-      await store.write("projects.json", projects);
-      await catalog.upsertProject(projects[index]);
+      await writeProjects(projects);
       return projects;
     },
   );
@@ -3933,11 +4098,13 @@ app.whenReady().then(async () => {
       projectId: string,
       operator: string,
       note: string,
-      options?: { scope?: "day" | "project"; shootingDate?: string; exceptions?: string[] },
+      options?: {
+        scope?: "day" | "project";
+        shootingDate?: string;
+        exceptions?: string[];
+      },
     ) => {
-      const projects = (
-          await store.read<ProjectConfig[]>("projects.json", [])
-        ).map(normalizeProject),
+      const projects = (await readProjects()).map(normalizeProject),
         project = projects.find((item) => item.id === projectId);
       if (!project) throw new Error("项目不存在");
       if (!hasProjectRuleEvidence(project)) {
@@ -3945,7 +4112,9 @@ app.whenReady().then(async () => {
       }
       if (!note.trim()) throw new Error("请输入交接内容");
       if (!operator.trim()) throw new Error("请填写实际交接人姓名");
-      const related = engine.getAllTasks().filter((task) => task.projectId === projectId);
+      const related = engine
+        .getAllTasks()
+        .filter((task) => task.projectId === projectId);
       Object.assign(
         project,
         appendProjectHandoffEvidence(project, related, {
@@ -3956,7 +4125,7 @@ app.whenReady().then(async () => {
           exceptions: options?.exceptions,
         }),
       );
-      await store.write("projects.json", projects);
+      await writeProjects(projects);
       return projects;
     },
   );
@@ -3966,7 +4135,7 @@ app.whenReady().then(async () => {
       filters: [{ name: "JSON", extensions: ["json"] }],
     });
     if (!result.filePath) return null;
-    const projects = await store.read<ProjectConfig[]>("projects.json", []);
+    const projects = await readProjects();
     const base = {
       schema: 2,
       application: "Kocpy",
@@ -4009,10 +4178,7 @@ app.whenReady().then(async () => {
       throw new Error("工作站配置包不是有效 JSON");
     }
     const incoming = validateWorkspacePackage(parsed);
-    const currentProjects = await store.read<ProjectConfig[]>(
-        "projects.json",
-        [],
-      ),
+    const currentProjects = await readProjects(),
       currentTasks = engine.getAllTasks();
     const backupDir = path.join(app.getPath("userData"), "import-backups");
     await fs.mkdir(backupDir, { recursive: true });
@@ -4035,41 +4201,58 @@ app.whenReady().then(async () => {
       "utf8",
     );
     const merged = mergeWorkspace(
-      { projects: currentProjects, tasks: currentTasks },
-      incoming,
-    );
-    await store.write("projects.json", merged.projects);
+        { projects: currentProjects, tasks: currentTasks },
+        incoming,
+      ),
+      nextProjectTemplates = [
+        ...projectTemplates,
+        ...(incoming.templates || []).map(normalizeProjectTemplate),
+      ].filter(
+        (item, index, all) =>
+          all.findIndex((other) => other.id === item.id) === index,
+      ),
+      nextHealthRecords = [
+        ...healthRecords,
+        ...((incoming.healthRecords || []) as typeof healthRecords),
+      ]
+        .filter(
+          (item, index, all) =>
+            all.findIndex((other) => other.id === item.id) === index,
+        )
+        .slice(-500),
+      nextArchiveChanges = [
+        ...archiveChanges,
+        ...(incoming.archiveChanges || []),
+      ]
+        .filter(
+          (item, index, all) =>
+            all.findIndex((other) => other.id === item.id) === index,
+        )
+        .slice(-10000);
+    try {
+      await Promise.all([
+        store.write("project-templates.json", nextProjectTemplates),
+        store.write("archive-health.json", nextHealthRecords),
+        store.write("archive-changes.json", nextArchiveChanges),
+      ]);
+      await commitWorkspace({
+        tasks: merged.tasks,
+        projects: merged.projects,
+        syncCatalog: true,
+      });
+    } catch (error) {
+      await Promise.all([
+        store.write("project-templates.json", projectTemplates),
+        store.write("archive-health.json", healthRecords),
+        store.write("archive-changes.json", archiveChanges),
+      ]).catch(() => undefined);
+      throw error;
+    }
+    projectTemplates = nextProjectTemplates;
+    healthRecords = nextHealthRecords;
+    archiveChanges = nextArchiveChanges;
     for (const task of merged.tasks)
       if (!engine.getTask(task.id)) engine.loadTask(task);
-    projectTemplates = [
-      ...projectTemplates,
-      ...(incoming.templates || []).map(normalizeProjectTemplate),
-    ].filter(
-      (item, index, all) =>
-        all.findIndex((other) => other.id === item.id) === index,
-    );
-    healthRecords = [
-      ...healthRecords,
-      ...((incoming.healthRecords || []) as typeof healthRecords),
-    ]
-      .filter(
-        (item, index, all) =>
-          all.findIndex((other) => other.id === item.id) === index,
-      )
-      .slice(-500);
-    archiveChanges = [...archiveChanges, ...(incoming.archiveChanges || [])]
-      .filter(
-        (item, index, all) =>
-          all.findIndex((other) => other.id === item.id) === index,
-      )
-      .slice(-10000);
-    await Promise.all([
-      store.write("project-templates.json", projectTemplates),
-      store.write("archive-health.json", healthRecords),
-      store.write("archive-changes.json", archiveChanges),
-      persist(),
-      catalog.rebuild(merged.tasks, merged.projects),
-    ]);
     return merged.result;
   });
   handle("workspace:backup-data", async () => {
@@ -4082,11 +4265,19 @@ app.whenReady().then(async () => {
       result.filePath,
       JSON.stringify(
         {
-          schema: 1,
+          schema: 2,
           version: app.getVersion(),
           createdAt: Date.now(),
           tasks: engine.getAllTasks(),
-          projects: await store.read<ProjectConfig[]>("projects.json", []),
+          projects: await readProjects(),
+          workspace: {
+            schemaVersion: workspace.snapshot.schemaVersion,
+            revision: workspace.snapshot.revision,
+            committedAt: workspace.snapshot.committedAt,
+            digest: workspace.snapshot.digest,
+            taskTombstones: workspace.snapshot.taskTombstones,
+            projectTombstones: workspace.snapshot.projectTombstones,
+          },
           settings: await store.read("settings.json", defaultSettings),
           proxyJobs,
           projectTemplates,
@@ -4119,9 +4310,7 @@ app.whenReady().then(async () => {
     )
       return null;
     if (engine.hasActive() || proxyBusy) throw new Error("请等待当前任务结束");
-    const projects = (
-        await store.read<ProjectConfig[]>("projects.json", [])
-      ).map(normalizeProject),
+    const projects = (await readProjects()).map(normalizeProject),
       project = projects.find((item) => item.id === projectId);
     if (!project) throw new Error("项目不存在");
     const tasks = engine
@@ -4167,15 +4356,17 @@ app.whenReady().then(async () => {
     project.status = "archived";
     project.coldArchivedAt = Date.now();
     project.coldArchiveFile = chosen.filePath;
-    for (const task of tasks) {
-      engine.deleteTask(task.id);
-      await catalog.deleteTask(task.id);
+    for (const task of tasks) engine.deleteTask(task.id);
+    try {
+      await commitWorkspace({
+        tasks: engine.getAllTasks().slice().reverse(),
+        projects,
+        syncCatalog: true,
+      });
+    } catch (error) {
+      for (const task of tasks) engine.loadTask(task);
+      throw error;
     }
-    await Promise.all([
-      store.write("projects.json", projects),
-      catalog.upsertProject(project),
-      persist(),
-    ]);
     return chosen.filePath;
   });
   handle("workspace:restore-cold", async () => {
@@ -4218,9 +4409,7 @@ app.whenReady().then(async () => {
       healthRecords: [],
       archiveChanges: [],
     });
-    const projects = (
-        await store.read<ProjectConfig[]>("projects.json", [])
-      ).map(normalizeProject),
+    const projects = (await readProjects()).map(normalizeProject),
       project = {
         ...parsed.project,
         status: "active",
@@ -4230,20 +4419,28 @@ app.whenReady().then(async () => {
       index = projects.findIndex((item) => item.id === project.id);
     if (index < 0) projects.push(project);
     else projects[index] = project;
+    const addedTaskIds: string[] = [];
     for (const task of parsed.tasks as BackupTask[]) {
-      if (!engine.getTask(task.id)) engine.loadTask(task);
-      await catalog.upsertTask(task);
+      if (!engine.getTask(task.id)) {
+        engine.loadTask(task);
+        addedTaskIds.push(task.id);
+      }
     }
-    await Promise.all([
-      store.write("projects.json", projects),
-      catalog.upsertProject(project),
-      persist(),
-    ]);
+    try {
+      await commitWorkspace({
+        tasks: engine.getAllTasks().slice().reverse(),
+        projects,
+        syncCatalog: true,
+      });
+    } catch (error) {
+      for (const id of addedTaskIds) engine.deleteTask(id);
+      throw error;
+    }
     return { project, tasks: parsed.tasks.length };
   });
   handle("lan:start", async () => {
     lanIndex.snapshot = async () => ({
-      projects: await store.read<ProjectConfig[]>("projects.json", []),
+      projects: await readProjects(),
       tasks: engine.getAllTasks(),
     });
     return lanIndex.start();
@@ -4307,9 +4504,7 @@ app.whenReady().then(async () => {
     return store.write("settings.json", settings);
   });
   handle("projects:list", async () =>
-    (await store.read<ProjectConfig[]>("projects.json", [])).map(
-      normalizeProject,
-    ),
+    (await readProjects()).map(normalizeProject),
   );
   handle("projects:inspect-structure", async (project: ProjectConfig) =>
     inspectProjectStructure(prepareProject(project)),
@@ -4324,9 +4519,7 @@ app.whenReady().then(async () => {
         throw new Error(
           `项目要求 ${project.requiredCopies || 2} 份物理独立副本，请配置至少同等数量的目的地`,
         );
-      const all = (await store.read<ProjectConfig[]>("projects.json", [])).map(
-          normalizeProject,
-        ),
+      const all = (await readProjects()).map(normalizeProject),
         idx = all.findIndex((p) => p.id === project.id);
       const previous = idx < 0 ? undefined : all[idx],
         previousRevisions = previous?.ruleSnapshots?.length || 0;
@@ -4342,15 +4535,12 @@ app.whenReady().then(async () => {
       if (createMissing) await createProjectStructure(project);
       if (idx < 0) all.push(project);
       else all[idx] = project;
-      await store.write("projects.json", all);
-      await catalog.upsertProject(project);
+      await writeProjects(all);
       return all;
     },
   );
   handle("projects:delete-preview", async (projectId: string) => {
-    const projects = (
-        await store.read<ProjectConfig[]>("projects.json", [])
-      ).map(normalizeProject),
+    const projects = (await readProjects()).map(normalizeProject),
       project = projects.find((item) => item.id === projectId);
     if (!project) throw new Error("项目不存在或已经删除");
     return buildProjectDeletionPreview(
@@ -4365,9 +4555,7 @@ app.whenReady().then(async () => {
   handle(
     "projects:delete",
     async (projectId: string, confirmationName: string) => {
-      const projects = (
-          await store.read<ProjectConfig[]>("projects.json", [])
-        ).map(normalizeProject),
+      const projects = (await readProjects()).map(normalizeProject),
         project = projects.find((item) => item.id === projectId);
       if (!project) throw new Error("项目不存在或已经删除");
       if (confirmationName !== project.name)
@@ -4409,18 +4597,18 @@ app.whenReady().then(async () => {
         throw new Error("项目仍有关联的代理任务未结束，不能删除项目记录");
       try {
         await Promise.all([
-          store.write("projects.json", nextProjects),
-          store.write("tasks.json", nextTasks),
           store.write("proxy-jobs.json", nextProxyJobs),
           store.write("archive-health.json", nextHealthRecords),
           store.write("archive-changes.json", nextArchiveChanges),
           store.write("archive-reminders.json", nextArchiveReminders),
         ]);
-        await catalog.deleteProjectRecords(projectId);
+        await commitWorkspace({
+          tasks: nextTasks,
+          projects: nextProjects,
+          syncCatalog: true,
+        });
       } catch (error) {
         await Promise.all([
-          store.write("projects.json", projects),
-          store.write("tasks.json", engine.getAllTasks().slice().reverse()),
           store.write("proxy-jobs.json", proxyJobs),
           store.write("archive-health.json", healthRecords),
           store.write("archive-changes.json", archiveChanges),
@@ -4443,9 +4631,7 @@ app.whenReady().then(async () => {
   handle(
     "projects:claim-volume",
     async (projectId: string, device: string, prefixOverride?: string) => {
-      const all = (await store.read<ProjectConfig[]>("projects.json", [])).map(
-          normalizeProject,
-        ),
+      const all = (await readProjects()).map(normalizeProject),
         project = all.find((p) => p.id === projectId);
       if (!project) throw new Error("项目不存在");
       if (!project.devices.includes(device))
@@ -4473,8 +4659,7 @@ app.whenReady().then(async () => {
       );
       project.lastVolumeTimestampByDevice[device] = timestamp;
       project.volumeTimestampCollisionByDevice[device] = claimed.collision;
-      await store.write("projects.json", all);
-      await catalog.upsertProject(project);
+      await writeProjects(all);
       return { ...claimed, timestamp, prefix, project };
     },
   );
@@ -4490,9 +4675,7 @@ app.whenReady().then(async () => {
             )) === shootingDate,
       );
     if (!tasks.length) throw new Error("所选拍摄日没有可汇总的任务");
-    const project = (
-      await store.read<ProjectConfig[]>("projects.json", [])
-    ).find((p) => p.id === projectId);
+    const project = (await readProjects()).find((p) => p.id === projectId);
     const r = await dialog.showSaveDialog({
       defaultPath: `Kocpy_${project?.name || "全部项目"}_${shootingDate}_汇总.pdf`,
       filters: [{ name: "PDF", extensions: ["pdf"] }],
@@ -4530,7 +4713,7 @@ app.whenReady().then(async () => {
   handle(
     "report:project",
     async (projectId: string, format: "pdf" | "json" | "csv" | "bundle") => {
-      const project = (await store.read<ProjectConfig[]>("projects.json", []))
+      const project = (await readProjects())
         .map(normalizeProject)
         .find((item) => item.id === projectId);
       if (!project) throw new Error("项目不存在");
@@ -5099,7 +5282,11 @@ app.whenReady().then(async () => {
     if (!persistTimer)
       persistTimer = setTimeout(() => {
         persistTimer = undefined;
-        void persist().catch(() => {});
+        // The canonical checkpoint remains crash-safe every second. The large
+        // legacy mirror is synchronized when the task settles or another
+        // explicit state transition occurs, avoiding duplicate full-state I/O
+        // in the transfer hot path.
+        void persist(false, false).catch(() => {});
       }, 1000);
     if (main && !main.isDestroyed())
       main.webContents.send("tasks:progress", payload);
@@ -5116,22 +5303,12 @@ app.whenReady().then(async () => {
         !operations.active && context?.kind !== "reverify";
       clearTimeout(persistTimer);
       persistTimer = undefined;
-      void persist().catch((e) =>
-        dialog.showErrorBox("任务记录保存失败", String(e)),
-      );
-      void catalog
-        .upsertTask(task)
+      void persist(true)
         .then(() => {
           if (main && !main.isDestroyed())
             main.webContents.send("workspace:changed");
         })
-        .catch((error) =>
-          dialog.showErrorBox(
-            "素材索引更新失败",
-            "备份文件未因此删除。请在任务记录中核对结果，稍后重建素材索引。\n" +
-              String(error),
-          ),
-        );
+        .catch(() => undefined);
       if (blocker !== undefined) {
         powerSaveBlocker.stop(blocker);
         blocker = undefined;
@@ -5155,9 +5332,9 @@ app.whenReady().then(async () => {
         allowCompletionActions
       )
         void (async () => {
-          const project = (
-              await store.read<ProjectConfig[]>("projects.json", [])
-            ).find((item) => item.id === task.projectId),
+          const project = (await readProjects()).find(
+              (item) => item.id === task.projectId,
+            ),
             actions = project?.completionActions || [];
           if (!actions.length) return;
           const output = path.join(
@@ -5337,7 +5514,7 @@ app.on("before-quit", (event) => {
     });
     return;
   }
-  void Promise.all([store.flush(), catalog.flush()])
+  void Promise.all([workspace.flush(), store.flush(), catalog.flush()])
     .then(() => {
       quitReady = true;
       app.quit();

@@ -3,13 +3,13 @@ import { recoveryAdvice } from "../../common/recovery";
 import { LifecycleControls } from "./LifecycleControls";
 import { OperationCenter, useModalStack } from "./Interaction";
 import { readableOperationError, didComplete } from "../../common/interaction";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
-  useState,
-  useEffect,
-  useCallback,
-  useRef,
-} from "react";
-import { selectLiveTask, transferPhaseText, transferTiming, transferProgressLabel } from "./task-state";
+  selectLiveTask,
+  transferPhaseText,
+  transferTiming,
+  transferProgressLabel,
+} from "./task-state";
 import {
   LayoutDashboard,
   ArrowLeftRight,
@@ -113,7 +113,11 @@ import {
 import { taskMediaKind } from "../../main/media-kind";
 import { copyEvidenceSummary } from "../../common/copy-evidence";
 import { APP_VERSION } from "../../common/version";
-import { taskTrustState, projectCoverage, savedDestinationBytes } from "../../common/task-trust";
+import {
+  taskTrustState,
+  projectCoverage,
+  savedDestinationBytes,
+} from "../../common/task-trust";
 import { projectDates, shootingDateKey } from "../../common/shooting-dates";
 import { groupLogicalVolumes } from "../../common/logical-volumes";
 import { Badge, Button, Empty } from "./Ui";
@@ -214,7 +218,12 @@ const performanceText = (performance?: TransferPerformance) =>
     : "样本不足";
 function TaskBadge({ task }: { task: BackupTask }) {
   const trust = taskTrustState(task);
-  return <span className={`badge ${trust.status}`} title={trust.explanation}><i />{trust.label}</span>;
+  return (
+    <span className={`badge ${trust.status}`} title={trust.explanation}>
+      <i />
+      {trust.label}
+    </span>
+  );
 }
 export function App() {
   useModalStack();
@@ -438,9 +447,9 @@ export function App() {
   }, [settings.theme]);
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
-      const modalOpen = [...document.querySelectorAll<HTMLElement>(modalDialogSelector)].some(
-        (node) => node.getClientRects().length > 0,
-      );
+      const modalOpen = [
+        ...document.querySelectorAll<HTMLElement>(modalDialogSelector),
+      ].some((node) => node.getClientRects().length > 0);
       if (e.metaKey && e.key.toLowerCase() === "n" && !modalOpen) {
         e.preventDefault();
         setComposer({});
@@ -694,7 +703,11 @@ export function App() {
       </div>
     </div>
   );
-  const saveProject = async (p: ProjectConfig, createMissing = true, operator?: string) => {
+  const saveProject = async (
+    p: ProjectConfig,
+    createMissing = true,
+    operator?: string,
+  ) => {
     setProjects(await api.saveProject(p, createMissing, operator));
     setComposer((current) => (current ? { ...current, project: p } : current));
     setEditor(null);
@@ -740,10 +753,7 @@ export function App() {
       )
     : null;
   const projectDetailLogicalVolumes = projectDetail
-    ? groupLogicalVolumes(
-        projectDetailTasks,
-        projectDetail.requiredCopies || 2,
-      )
+    ? groupLogicalVolumes(projectDetailTasks, projectDetail.requiredCopies || 2)
     : [];
   const activeProjectCloseouts = projects
     .filter((project) => project.status !== "archived")
@@ -1364,7 +1374,11 @@ export function App() {
               {page === "transfers" && (
                 <section className="panel">
                   <div className="list-toolbar">
-                    <div className="tabs" role="group" aria-label="传输任务状态">
+                    <div
+                      className="tabs"
+                      role="group"
+                      aria-label="传输任务状态"
+                    >
                       {[
                         ["all", "全部任务"],
                         ["active", "进行中"],
@@ -1747,10 +1761,12 @@ export function App() {
                               {p.destinationPaths?.length || 0} 个目的地
                             </span>
                             <span>
-                              {projectCoverage(
-                                p,
-                                tasks.filter((t) => t.projectId === p.id),
-                              ).verified}{" "}
+                              {
+                                projectCoverage(
+                                  p,
+                                  tasks.filter((t) => t.projectId === p.id),
+                                ).verified
+                              }{" "}
                               卷内容校验通过
                             </span>
                           </div>
@@ -1759,8 +1775,10 @@ export function App() {
                                 (task) => task.projectId === p.id,
                               ),
                               coverage = projectCoverage(p, related),
-                              { verified, compliant, attention, recorded } = coverage,
-                              received = coverage.byProvenance["kocpy-transfer"] || 0,
+                              { verified, compliant, attention, recorded } =
+                                coverage,
+                              received =
+                                coverage.byProvenance["kocpy-transfer"] || 0,
                               imported = recorded - received;
                             return (
                               <div className="project-coverage">
@@ -1771,8 +1789,7 @@ export function App() {
                                       {Math.min(
                                         100,
                                         Math.round(
-                                          (recorded / p.expectedVolumes) *
-                                            100,
+                                          (recorded / p.expectedVolumes) * 100,
                                         ),
                                       )}
                                       % 计划覆盖
@@ -2017,35 +2034,47 @@ export function App() {
                             value={dailyPlanDate}
                             min={projectDetailStart || undefined}
                             max={projectDetailEnd || undefined}
-                            onChange={(event) => setDailyPlanDate(event.target.value)}
+                            onChange={(event) =>
+                              setDailyPlanDate(event.target.value)
+                            }
                             aria-label="每日计划拍摄日期"
                           />
                         </label>
                         <span>
-                          “应该有素材 / 当天未使用 / 休息日”都会追加操作人、时间和决定记录；不填写时保持未知。
+                          “应该有素材 / 当天未使用 /
+                          休息日”都会追加操作人、时间和决定记录；不填写时保持未知。
                         </span>
                         <div className="daily-plan-temp">
                           <input
                             value={temporaryDailyDevice}
-                            onChange={(event) => setTemporaryDailyDevice(event.target.value)}
+                            onChange={(event) =>
+                              setTemporaryDailyDevice(event.target.value)
+                            }
                             placeholder="临时设备，例如 Drone"
                             aria-label="临时设备"
                           />
                           <input
                             value={temporaryDailyPosition}
-                            onChange={(event) => setTemporaryDailyPosition(event.target.value)}
+                            onChange={(event) =>
+                              setTemporaryDailyPosition(event.target.value)
+                            }
                             placeholder="机位（可选）"
                             aria-label="临时设备机位"
                           />
                           <Button
                             kind="subtle"
-                            disabled={!dailyPlanOperator.trim() || !temporaryDailyDevice.trim()}
+                            disabled={
+                              !dailyPlanOperator.trim() ||
+                              !temporaryDailyDevice.trim()
+                            }
                             onClick={() =>
                               void updateProjectSchedule(
                                 projectDetail,
                                 dailyPlanDate,
                                 temporaryDailyPosition.trim()
-                                  ? temporaryDailyDevice.trim() + "::" + temporaryDailyPosition.trim()
+                                  ? temporaryDailyDevice.trim() +
+                                      "::" +
+                                      temporaryDailyPosition.trim()
                                   : temporaryDailyDevice.trim(),
                                 "expected",
                               ).then((saved) => {
@@ -2065,30 +2094,38 @@ export function App() {
                         <span>
                           当前规则版本{" "}
                           <b>
-                            v{projectDetail.ruleSnapshots?.find(
+                            v
+                            {projectDetail.ruleSnapshots?.find(
                               (item) =>
                                 item.id === projectDetail.activeRuleSnapshotId,
                             )?.revision || "旧项目未建立"}
                           </b>
                         </span>
                         <span>
-                          每日决定 <b>{projectDetail.dailyPlanDecisions?.length || 0}</b> 条
+                          每日决定{" "}
+                          <b>{projectDetail.dailyPlanDecisions?.length || 0}</b>{" "}
+                          条
                         </span>
                         <span>
-                          模板应用 <b>{projectDetail.templateApplications?.length || 0}</b> 次
+                          模板应用{" "}
+                          <b>
+                            {projectDetail.templateApplications?.length || 0}
+                          </b>{" "}
+                          次
                         </span>
                         <span>
                           历史规则素材卷{" "}
                           <b>
-                            {projectDetailLogicalVolumes.filter(
-                              (volume) =>
+                            {
+                              projectDetailLogicalVolumes.filter((volume) =>
                                 volume.attempts.some(
                                   (task) =>
                                     task.projectRuleSnapshotId &&
                                     task.projectRuleSnapshotId !==
                                       projectDetail.activeRuleSnapshotId,
                                 ),
-                            ).length}
+                              ).length
+                            }
                           </b>{" "}
                           个
                         </span>
@@ -2192,7 +2229,11 @@ export function App() {
                                             (
                                               rows.find(
                                                 (task) =>
-                                                  !taskMeetsCopyRequirement(task, projectDetail.requiredCopies || 2),
+                                                  !taskMeetsCopyRequirement(
+                                                    task,
+                                                    projectDetail.requiredCopies ||
+                                                      2,
+                                                  ),
                                               ) || rows[0]
                                             ).id,
                                           )
@@ -2223,13 +2264,21 @@ export function App() {
                                 )
                               }
                             >
-                              {projectDetail.restDays?.some(date => shootingDateKey(date) === shootingDateKey(shootingDate)) ? (
+                              {projectDetail.restDays?.some(
+                                (date) =>
+                                  shootingDateKey(date) ===
+                                  shootingDateKey(shootingDate),
+                              ) ? (
                                 <Check size={13} />
                               ) : (
                                 <CalendarDays size={13} />
                               )}{" "}
                               {shootingDate.replace(/-/g, "")}{" "}
-                              {projectDetail.restDays?.some(date => shootingDateKey(date) === shootingDateKey(shootingDate))
+                              {projectDetail.restDays?.some(
+                                (date) =>
+                                  shootingDateKey(date) ===
+                                  shootingDateKey(shootingDate),
+                              )
                                 ? "休息日"
                                 : "标记休息"}
                             </Button>
@@ -2285,7 +2334,9 @@ export function App() {
                           )
                             .sort(
                               (a, b) =>
-                                (a.representative.shootingDate || "").localeCompare(
+                                (
+                                  a.representative.shootingDate || ""
+                                ).localeCompare(
                                   b.representative.shootingDate || "",
                                 ) ||
                                 (a.representative.startedAt || 0) -
@@ -2294,93 +2345,93 @@ export function App() {
                             .map((logicalVolume) => {
                               const task = logicalVolume.representative;
                               return (
-                              <div
-                                className="project-task-breakdown-row"
-                                key={logicalVolume.id}
-                              >
-                                <span>
-                                  {task.shootingDate?.replace(/-/g, "") ||
-                                    "未标日期"}{" "}
-                                  · {task.devices.join("/")}
-                                  {task.cameraPosition
-                                    ? ` · ${task.cameraPosition}`
-                                    : ""}
-                                </span>
-                                <button
-                                  className="project-roll-link"
-                                  onClick={() => setDetail(task.id)}
-                                  title="查看实时传输详情"
+                                <div
+                                  className="project-task-breakdown-row"
+                                  key={logicalVolume.id}
                                 >
-                                  {task.name}
-                                  {logicalVolume.attempts.length > 1 && (
-                                    <small className="project-roll-attempts">
-                                      {logicalVolume.attempts.length} 次尝试
-                                    </small>
-                                  )}
-                                </button>
-                                <small>
-                                  {task.totalFiles} 个文件 ·{" "}
-                                  {bytes(task.totalBytes)}
-                                  {active(task) && (
-                                    <span className="project-live-transfer">
-                                      {task.status === "paused"
-                                        ? "已暂停"
-                                        : `${transferPhaseText(task)} · ${transferProgressLabel(task, task.status === "verifying" ? "verify" : "copy")} · ${transferTiming(task).speed ? `${bytes(transferTiming(task).speed)}/s` : "测速中"}`}
-                                    </span>
-                                  )}
-                                </small>
-                                <span className="task-state-actions">
-                                  {(() => {
-                                    const trust = taskTrustState(task);
-                                    return task.externalManifest?.status ===
-                                      "mismatch" ? (
-                                      <button
-                                        className={`badge manifest-badge ${trust.status}`}
-                                        title="查看差异并处理"
-                                        onClick={() => setManifestIssue(task)}
-                                      >
-                                        <i />
-                                        {trust.label}
-                                        <ChevronRight size={13} />
-                                      </button>
-                                    ) : task.externalManifest?.resolution
-                                        ?.type === "revised-missing" ? (
-                                      <button
-                                        className={`badge manifest-badge ${trust.status}`}
-                                        title="显示修订前的原始 MHL 审计副本"
-                                        onClick={() =>
-                                          void api.revealExistingManifestAudit(
-                                            task.id,
-                                          )
-                                        }
-                                      >
-                                        <i />
-                                        {trust.label}
-                                        <FolderOpen size={13} />
-                                      </button>
-                                    ) : (
-                                      <span
-                                        className={`badge ${trust.status}`}
-                                        title={task.errorMessage}
-                                      >
-                                        <i />
-                                        {trust.label}
-                                      </span>
-                                    );
-                                  })()}
-                                  {task.provenance &&
-                                    task.provenance !== "kocpy-transfer" &&
-                                    task.status !== "completed" && (
-                                      <button
-                                        onClick={() =>
-                                          setExistingBaseline(task)
-                                        }
-                                      >
-                                        建立首次基线
-                                      </button>
+                                  <span>
+                                    {task.shootingDate?.replace(/-/g, "") ||
+                                      "未标日期"}{" "}
+                                    · {task.devices.join("/")}
+                                    {task.cameraPosition
+                                      ? ` · ${task.cameraPosition}`
+                                      : ""}
+                                  </span>
+                                  <button
+                                    className="project-roll-link"
+                                    onClick={() => setDetail(task.id)}
+                                    title="查看实时传输详情"
+                                  >
+                                    {task.name}
+                                    {logicalVolume.attempts.length > 1 && (
+                                      <small className="project-roll-attempts">
+                                        {logicalVolume.attempts.length} 次尝试
+                                      </small>
                                     )}
-                                </span>
-                              </div>
+                                  </button>
+                                  <small>
+                                    {task.totalFiles} 个文件 ·{" "}
+                                    {bytes(task.totalBytes)}
+                                    {active(task) && (
+                                      <span className="project-live-transfer">
+                                        {task.status === "paused"
+                                          ? "已暂停"
+                                          : `${transferPhaseText(task)} · ${transferProgressLabel(task, task.status === "verifying" ? "verify" : "copy")} · ${transferTiming(task).speed ? `${bytes(transferTiming(task).speed)}/s` : "测速中"}`}
+                                      </span>
+                                    )}
+                                  </small>
+                                  <span className="task-state-actions">
+                                    {(() => {
+                                      const trust = taskTrustState(task);
+                                      return task.externalManifest?.status ===
+                                        "mismatch" ? (
+                                        <button
+                                          className={`badge manifest-badge ${trust.status}`}
+                                          title="查看差异并处理"
+                                          onClick={() => setManifestIssue(task)}
+                                        >
+                                          <i />
+                                          {trust.label}
+                                          <ChevronRight size={13} />
+                                        </button>
+                                      ) : task.externalManifest?.resolution
+                                          ?.type === "revised-missing" ? (
+                                        <button
+                                          className={`badge manifest-badge ${trust.status}`}
+                                          title="显示修订前的原始 MHL 审计副本"
+                                          onClick={() =>
+                                            void api.revealExistingManifestAudit(
+                                              task.id,
+                                            )
+                                          }
+                                        >
+                                          <i />
+                                          {trust.label}
+                                          <FolderOpen size={13} />
+                                        </button>
+                                      ) : (
+                                        <span
+                                          className={`badge ${trust.status}`}
+                                          title={task.errorMessage}
+                                        >
+                                          <i />
+                                          {trust.label}
+                                        </span>
+                                      );
+                                    })()}
+                                    {task.provenance &&
+                                      task.provenance !== "kocpy-transfer" &&
+                                      task.status !== "completed" && (
+                                        <button
+                                          onClick={() =>
+                                            setExistingBaseline(task)
+                                          }
+                                        >
+                                          建立首次基线
+                                        </button>
+                                      )}
+                                  </span>
+                                </div>
                               );
                             })}
                         </div>
@@ -2928,7 +2979,14 @@ export function App() {
                   <strong>{taskTrustState(selected).label}</strong>
                   <p>{taskTrustState(selected).explanation}</p>
                   <p>{taskTrustState(selected).nextStep}</p>
-                  <small>依据：{taskTrustState(selected).basis} · 最近记录：{taskTrustState(selected).verifiedAt ? new Date(taskTrustState(selected).verifiedAt!).toLocaleString() : "未记录完整校验时间"}</small>
+                  <small>
+                    依据：{taskTrustState(selected).basis} · 最近记录：
+                    {taskTrustState(selected).verifiedAt
+                      ? new Date(
+                          taskTrustState(selected).verifiedAt!,
+                        ).toLocaleString()
+                      : "未记录完整校验时间"}
+                  </small>
                 </div>
               )}
               {taskTrustState(selected).contentVerified && (
@@ -2941,7 +2999,8 @@ export function App() {
                       份可计数副本
                     </strong>
                     <span>
-                      {copyEvidenceSummary(selected.destinations).independencePending
+                      {copyEvidenceSummary(selected.destinations)
+                        .independencePending
                         ? "物理独立性证据不足，未将不同卷 UUID 自动计作多份独立副本。重新校验可更新在线副本的存储关系；旧校验记录仍保留。"
                         : "副本计数按已记录的系统存储关系保守判定；校验完成不等于可以格式化原卡。"}
                     </span>
@@ -2996,7 +3055,8 @@ export function App() {
                         <div key={event.id}>
                           <strong>{event.summary}</strong>
                           <span>
-                            {new Date(event.at).toLocaleString()} · {event.operator}
+                            {new Date(event.at).toLocaleString()} ·{" "}
+                            {event.operator}
                           </span>
                           <small className="mono">
                             {event.previousPath
@@ -3115,7 +3175,9 @@ export function App() {
                       {(
                         selected.status === "verifying"
                           ? d.verifySpeedBps
-                          : selected.status === "running" ? d.speedBps : 0
+                          : selected.status === "running"
+                            ? d.speedBps
+                            : 0
                       )
                         ? `${bytes(selected.status === "verifying" ? d.verifySpeedBps : d.speedBps)}/s`
                         : `已保存 ${bytes(savedDestinationBytes(selected, d))} · 本次写入 ${bytes(d.bytesWritten)}`}
@@ -3187,7 +3249,9 @@ export function App() {
                       >
                         <Play size={14} />
                         {taskCommand?.id === selected.id
-                          ? taskCommand.action === "pause" ? "正在暂停…" : "正在继续…"
+                          ? taskCommand.action === "pause"
+                            ? "正在暂停…"
+                            : "正在继续…"
                           : "继续"}
                       </Button>
                     ) : ["running", "verifying"].includes(selected.status) ? (
@@ -3198,7 +3262,9 @@ export function App() {
                       >
                         <Pause size={14} />
                         {taskCommand?.id === selected.id
-                          ? taskCommand.action === "pause" ? "正在暂停…" : "正在继续…"
+                          ? taskCommand.action === "pause"
+                            ? "正在暂停…"
+                            : "正在继续…"
                           : "暂停"}
                       </Button>
                     ) : null}
@@ -3877,7 +3943,12 @@ function ExistingImportModal({
   );
   const count = preview.candidates.length;
   const mappingKeys = candidateDecisions.map((item) =>
-    [item.shootingDate, item.device.trim(), item.cameraPosition?.trim() || "", item.card.trim()].join("\0"),
+    [
+      item.shootingDate,
+      item.device.trim(),
+      item.cameraPosition?.trim() || "",
+      item.card.trim(),
+    ].join("\0"),
   );
   const mappingsReady =
     candidateDecisions.length === count &&
@@ -3982,67 +4053,67 @@ function ExistingImportModal({
                 (candidate) => candidate.relativeRoot === item.relativeRoot,
               );
               return (
-              <span
-                key={item.relativeRoot}
-                className={item.issues.length ? "needs-confirmation" : ""}
-              >
-                <strong>{item.card}</strong>
-                <small>
-                  {item.shootingDate || "日期未识别"} ·{" "}
-                  {item.device || "设备未识别"}
-                  {item.cameraPosition
-                    ? ` · ${item.cameraPosition} 机位`
-                    : ""}{" "}
-                  · {item.files} 文件
-                </small>
-                <small className="mono">{item.relativeRoot}</small>
-                <div className="candidate-mapping-grid">
-                  <input
-                    type="date"
-                    aria-label={`${item.relativeRoot} 拍摄日期`}
-                    value={decision?.shootingDate || ""}
-                    disabled={busy || previewBusy}
-                    onChange={(event) =>
-                      updateCandidate(item.relativeRoot, {
-                        shootingDate: event.target.value,
-                      })
-                    }
-                  />
-                  <input
-                    aria-label={`${item.relativeRoot} 设备`}
-                    placeholder="设备 / 机位"
-                    value={decision?.device || ""}
-                    disabled={busy || previewBusy}
-                    onChange={(event) =>
-                      updateCandidate(item.relativeRoot, {
-                        device: event.target.value,
-                      })
-                    }
-                  />
-                  <input
-                    aria-label={`${item.relativeRoot} 机位`}
-                    placeholder="机位（可选）"
-                    value={decision?.cameraPosition || ""}
-                    disabled={busy || previewBusy}
-                    onChange={(event) =>
-                      updateCandidate(item.relativeRoot, {
-                        cameraPosition: event.target.value,
-                      })
-                    }
-                  />
-                  <input
-                    aria-label={`${item.relativeRoot} 素材卷`}
-                    placeholder="素材卷名称"
-                    value={decision?.card || ""}
-                    disabled={busy || previewBusy}
-                    onChange={(event) =>
-                      updateCandidate(item.relativeRoot, {
-                        card: event.target.value,
-                      })
-                    }
-                  />
-                </div>
-              </span>
+                <span
+                  key={item.relativeRoot}
+                  className={item.issues.length ? "needs-confirmation" : ""}
+                >
+                  <strong>{item.card}</strong>
+                  <small>
+                    {item.shootingDate || "日期未识别"} ·{" "}
+                    {item.device || "设备未识别"}
+                    {item.cameraPosition
+                      ? ` · ${item.cameraPosition} 机位`
+                      : ""}{" "}
+                    · {item.files} 文件
+                  </small>
+                  <small className="mono">{item.relativeRoot}</small>
+                  <div className="candidate-mapping-grid">
+                    <input
+                      type="date"
+                      aria-label={`${item.relativeRoot} 拍摄日期`}
+                      value={decision?.shootingDate || ""}
+                      disabled={busy || previewBusy}
+                      onChange={(event) =>
+                        updateCandidate(item.relativeRoot, {
+                          shootingDate: event.target.value,
+                        })
+                      }
+                    />
+                    <input
+                      aria-label={`${item.relativeRoot} 设备`}
+                      placeholder="设备 / 机位"
+                      value={decision?.device || ""}
+                      disabled={busy || previewBusy}
+                      onChange={(event) =>
+                        updateCandidate(item.relativeRoot, {
+                          device: event.target.value,
+                        })
+                      }
+                    />
+                    <input
+                      aria-label={`${item.relativeRoot} 机位`}
+                      placeholder="机位（可选）"
+                      value={decision?.cameraPosition || ""}
+                      disabled={busy || previewBusy}
+                      onChange={(event) =>
+                        updateCandidate(item.relativeRoot, {
+                          cameraPosition: event.target.value,
+                        })
+                      }
+                    />
+                    <input
+                      aria-label={`${item.relativeRoot} 素材卷`}
+                      placeholder="素材卷名称"
+                      value={decision?.card || ""}
+                      disabled={busy || previewBusy}
+                      onChange={(event) =>
+                        updateCandidate(item.relativeRoot, {
+                          card: event.target.value,
+                        })
+                      }
+                    />
+                  </div>
+                </span>
               );
             })}
           </div>
@@ -4722,7 +4793,11 @@ function ManifestIssueModal({
               {success}
             </div>
           )}
-          {error && <div className="error-box" role="alert">{error}</div>}
+          {error && (
+            <div className="error-box" role="alert">
+              {error}
+            </div>
+          )}
         </div>
         <div className="modal-footer">
           <Button kind="subtle" onClick={onClose}>
@@ -4832,7 +4907,11 @@ function ExistingBaselineModal({
               )}
             </div>
           )}
-          {error && <div className="error-box" role="alert">{error}</div>}
+          {error && (
+            <div className="error-box" role="alert">
+              {error}
+            </div>
+          )}
         </div>
         <div className="modal-footer">
           <Button kind="subtle" onClick={onClose}>
@@ -5318,10 +5397,20 @@ function HelpPage({
       <section className="help-release-note">
         <RefreshCw size={20} />
         <div>
-          <strong>0.1.25：一致、清晰、可用键盘完成</strong>
-          <p>按钮、表单、表格、状态、空页面、弹窗和媒体检查器使用统一尺寸与信息层级。禁用按钮会说明当前条件尚未满足或操作仍在进行，不用消失来隐藏下一步。</p>
-          <p>普通弹窗和危险确认共享焦点规则：Tab／Shift-Tab 留在当前窗口，Escape 只触发可用的取消或关闭，结束后回到原操作位置。危险删除、清单修订等确认门槛没有降低。</p>
-          <p>侧栏文字和图标不随窗口高度缩小；最小窗口通过侧栏和正文独立滚动访问全部操作。深色、浅色、长路径和成功／警告／错误状态都使用统一主题与可访问语义。</p>
+          <strong>0.1.26：可对账、可恢复的工作区记录</strong>
+          <p>
+            任务和项目使用带提交修订、SHA-256
+            摘要与删除墓碑的权威工作区状态；SQLite
+            只作为可重建素材索引。中断后不再按时间猜测合并，也不会从旧索引复活已删除记录。
+          </p>
+          <p>
+            首次升级会从旧任务／项目 JSON
+            建立迁移记录并继续维护兼容镜像，不移动或修改素材。辅助镜像或索引失败时会说明权威记录是否已经保存，并在下次启动安全修复。
+          </p>
+          <p>
+            若所有权威副本均损坏，或旧版应用造成记录分叉，Kocpy
+            会停止自动合并。请保留应用数据并导出诊断信息，不要删除记录文件来绕过提示。
+          </p>
         </div>
       </section>
       <SearchBox
@@ -5755,7 +5844,8 @@ function MaintenancePage({
                       <span
                         className={`template-kind ${system ? "system" : "custom"}`}
                       >
-                        {system ? "系统模板" : "自定义"} · v{template.revision || 1}
+                        {system ? "系统模板" : "自定义"} · v
+                        {template.revision || 1}
                       </span>
                     </div>
                     <p>{template.description || "未填写模板说明"}</p>
@@ -5929,7 +6019,9 @@ function MaintenancePage({
             <select
               aria-label="交接范围"
               value={handoffScope}
-              onChange={(event) => setHandoffScope(event.target.value as "day" | "project")}
+              onChange={(event) =>
+                setHandoffScope(event.target.value as "day" | "project")
+              }
             >
               <option value="project">整个项目</option>
               <option value="day">单个拍摄日</option>
@@ -5977,7 +6069,8 @@ function MaintenancePage({
                     handoff,
                     {
                       scope: handoffScope,
-                      shootingDate: handoffScope === "day" ? handoffDate : undefined,
+                      shootingDate:
+                        handoffScope === "day" ? handoffDate : undefined,
                       exceptions: handoffExceptions.split(/\r?\n/),
                     },
                   ),
@@ -6004,7 +6097,9 @@ function MaintenancePage({
                 <div key={record.id}>
                   <span>
                     {new Date(record.at).toLocaleString()} · {record.operator} ·
-                    {record.scope === "day" ? ` 拍摄日 ${record.shootingDate}` : " 整个项目"}
+                    {record.scope === "day"
+                      ? ` 拍摄日 ${record.shootingDate}`
+                      : " 整个项目"}
                   </span>
                   <p>{record.note}</p>
                   {Boolean(record.exceptions?.length) && (
@@ -6017,8 +6112,10 @@ function MaintenancePage({
                   {record.closeoutEvidence && (
                     <small>
                       规则 {record.ruleSnapshotId ? "已快照" : "旧记录未快照"} ·
-                      素材卷 {record.closeoutEvidence.compliantVolumes}/{record.closeoutEvidence.logicalVolumes} 达标 ·
-                      待处理 {record.closeoutEvidence.pendingCells} · 待确认 {record.closeoutEvidence.unconfirmedCells}
+                      素材卷 {record.closeoutEvidence.compliantVolumes}/
+                      {record.closeoutEvidence.logicalVolumes} 达标 · 待处理{" "}
+                      {record.closeoutEvidence.pendingCells} · 待确认{" "}
+                      {record.closeoutEvidence.unconfirmedCells}
                     </small>
                   )}
                 </div>
@@ -7218,7 +7315,11 @@ function ProxyDialog({
               {result}，可在「代理队列」查看进度、取消或重试。
             </div>
           )}
-          {error && <div className="error-box" role="alert">{error}</div>}
+          {error && (
+            <div className="error-box" role="alert">
+              {error}
+            </div>
+          )}
         </div>
         <div className="modal-footer">
           <span className="small muted">唯一文件名 · 不覆盖已有文件</span>

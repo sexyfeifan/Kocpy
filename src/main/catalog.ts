@@ -2,8 +2,9 @@ import initSqlJs, { type Database } from "sql.js";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import type { BackupTask, ProjectConfig } from "./types";
+import { entityDigest, type WorkspaceState } from "./workspace-contract";
 
-const SCHEMA = 3;
+const SCHEMA = 4;
 export class CatalogDatabase {
   private db?: Database;
   private writes: Promise<void> = Promise.resolve();
@@ -17,11 +18,14 @@ export class CatalogDatabase {
     const bytes = await fs.readFile(this.file).catch(() => undefined);
     this.db = bytes ? new SQL.Database(bytes) : new SQL.Database();
     if (bytes) {
-      const integrity = this.db.exec("PRAGMA integrity_check")[0]?.values[0]?.[0];
+      const integrity = this.db.exec("PRAGMA integrity_check")[0]
+        ?.values[0]?.[0];
       if (integrity !== "ok") {
         this.db.close();
         this.db = undefined;
-        throw new Error(`素材目录数据库完整性检查失败：${String(integrity || "未知错误")}`);
+        throw new Error(
+          `素材目录数据库完整性检查失败：${String(integrity || "未知错误")}`,
+        );
       }
     }
     this.db.run(`PRAGMA foreign_keys=ON;
@@ -32,7 +36,9 @@ export class CatalogDatabase {
       CREATE INDEX IF NOT EXISTS files_path ON files(relative_path);
       CREATE TABLE IF NOT EXISTS projects(id TEXT PRIMARY KEY,name TEXT,status TEXT,json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS changes(id TEXT PRIMARY KEY,project_id TEXT,task_id TEXT,at INTEGER,kind TEXT,note TEXT,json TEXT NOT NULL);
-      CREATE INDEX IF NOT EXISTS changes_project_at ON changes(project_id,at DESC);`);
+      CREATE INDEX IF NOT EXISTS changes_project_at ON changes(project_id,at DESC);
+      CREATE TABLE IF NOT EXISTS workspace_entities(kind TEXT NOT NULL,id TEXT NOT NULL,digest TEXT NOT NULL,PRIMARY KEY(kind,id));
+      CREATE TABLE IF NOT EXISTS workspace_state(id INTEGER PRIMARY KEY CHECK(id=1),revision INTEGER NOT NULL,digest TEXT NOT NULL,schema_version INTEGER NOT NULL,committed_at INTEGER NOT NULL,json TEXT NOT NULL);`);
     const columns =
       this.db
         .exec("PRAGMA table_info(files)")[0]
@@ -97,7 +103,9 @@ export class CatalogDatabase {
   }
   async loadTasks(): Promise<BackupTask[]> {
     const db = await this.open(),
-      statement = db.prepare("SELECT id,json FROM tasks ORDER BY created_at ASC"),
+      statement = db.prepare(
+        "SELECT id,json FROM tasks ORDER BY created_at ASC",
+      ),
       rows: BackupTask[] = [];
     const tasks = new Map<string, BackupTask>(),
       embeddedFiles = new Map<string, BackupTask["fileRecords"]>();
@@ -144,6 +152,188 @@ export class CatalogDatabase {
     }
     statement.free();
     return rows;
+  }
+  async loadWorkspaceState(): Promise<WorkspaceState | undefined> {
+    const db = await this.open(),
+      row = db.exec("SELECT json FROM workspace_state WHERE id=1")[0]
+        ?.values[0];
+    return row ? (JSON.parse(String(row[0])) as WorkspaceState) : undefined;
+  }
+  async applyWorkspaceState(state: WorkspaceState) {
+    return this.enqueue(async () => {
+      const db = await this.open(),
+        snapshot = db.export();
+      let committed = false;
+      db.run("BEGIN");
+      try {
+        const existing = new Map<string, string>(),
+          rows = db.prepare("SELECT kind,id,digest FROM workspace_entities");
+        while (rows.step()) {
+          const values = rows.get();
+          existing.set(
+            `${String(values[0])}:${String(values[1])}`,
+            String(values[2]),
+          );
+        }
+        rows.free();
+        const taskIds = new Set(state.tasks.map((task) => task.id)),
+          projectIds = new Set(state.projects.map((project) => project.id)),
+          storedTaskIds = new Set<string>(),
+          storedProjectIds = new Set<string>(),
+          storedTaskJson = new Map<string, string>(),
+          storedProjectJson = new Map<string, string>(),
+          storedFileCounts = new Map<string, number>(),
+          taskRows = db.prepare("SELECT id,json FROM tasks"),
+          projectRows = db.prepare("SELECT id,json FROM projects"),
+          fileCountRows = db.prepare(
+            "SELECT task_id,count(*) FROM files GROUP BY task_id",
+          );
+        while (taskRows.step()) {
+          const values = taskRows.get(),
+            id = String(values[0]);
+          storedTaskIds.add(id);
+          storedTaskJson.set(id, String(values[1]));
+        }
+        while (projectRows.step()) {
+          const values = projectRows.get(),
+            id = String(values[0]);
+          storedProjectIds.add(id);
+          storedProjectJson.set(id, String(values[1]));
+        }
+        while (fileCountRows.step()) {
+          const values = fileCountRows.get();
+          storedFileCounts.set(String(values[0]), Number(values[1]));
+        }
+        taskRows.free();
+        projectRows.free();
+        fileCountRows.free();
+        for (const id of storedTaskIds)
+          if (!taskIds.has(id)) {
+            db.run("DELETE FROM files WHERE task_id=?", [id]);
+            db.run("DELETE FROM tasks WHERE id=?", [id]);
+            db.run(
+              "DELETE FROM workspace_entities WHERE kind='task' AND id=?",
+              [id],
+            );
+          }
+        for (const id of storedProjectIds)
+          if (!projectIds.has(id)) {
+            db.run("DELETE FROM projects WHERE id=?", [id]);
+            db.run("DELETE FROM changes WHERE project_id=?", [id]);
+            db.run(
+              "DELETE FROM workspace_entities WHERE kind='project' AND id=?",
+              [id],
+            );
+          }
+        for (const key of existing.keys()) {
+          const separator = key.indexOf(":"),
+            kind = key.slice(0, separator),
+            id = key.slice(separator + 1);
+          if (kind === "task" && !taskIds.has(id)) {
+            db.run("DELETE FROM files WHERE task_id=?", [id]);
+            db.run("DELETE FROM tasks WHERE id=?", [id]);
+            db.run(
+              "DELETE FROM workspace_entities WHERE kind='task' AND id=?",
+              [id],
+            );
+          }
+          if (kind === "project" && !projectIds.has(id)) {
+            db.run("DELETE FROM projects WHERE id=?", [id]);
+            db.run("DELETE FROM changes WHERE project_id=?", [id]);
+            db.run(
+              "DELETE FROM workspace_entities WHERE kind='project' AND id=?",
+              [id],
+            );
+          }
+        }
+        for (const project of state.projects) {
+          const digest = entityDigest(project);
+          if (
+            existing.get(`project:${project.id}`) === digest &&
+            storedProjectIds.has(project.id) &&
+            storedProjectJson.get(project.id) === JSON.stringify(project)
+          )
+            continue;
+          db.run("INSERT OR REPLACE INTO projects VALUES(?,?,?,?)", [
+            project.id,
+            project.name,
+            project.status || "active",
+            JSON.stringify(project),
+          ]);
+          db.run(
+            "INSERT OR REPLACE INTO workspace_entities VALUES('project',?,?)",
+            [project.id, digest],
+          );
+        }
+        for (const task of state.tasks) {
+          const digest = entityDigest(task);
+          if (
+            existing.get(`task:${task.id}`) === digest &&
+            storedTaskIds.has(task.id) &&
+            storedTaskJson.get(task.id) ===
+              JSON.stringify({ ...task, fileRecords: [] }) &&
+            (storedFileCounts.get(task.id) || 0) === task.fileRecords.length
+          )
+            continue;
+          db.run("DELETE FROM files WHERE task_id=?", [task.id]);
+          db.run("INSERT OR REPLACE INTO tasks VALUES(?,?,?,?,?,?,?,?,?,?)", [
+            task.id,
+            task.projectId || "",
+            task.name,
+            task.shootingDate || "",
+            task.status,
+            task.provenance || "kocpy-transfer",
+            task.createdAt || 0,
+            task.totalFiles,
+            task.totalBytes,
+            JSON.stringify({ ...task, fileRecords: [] }),
+          ]);
+          for (const [ordinal, file] of task.fileRecords.entries())
+            db.run("INSERT OR REPLACE INTO files VALUES(?,?,?,?,?,?,?,?)", [
+              task.id,
+              file.relativePath,
+              file.size,
+              file.srcChecksum,
+              file.destinations.some((item) => item.verified) ? 1 : 0,
+              path.extname(file.name).toLowerCase(),
+              JSON.stringify(file),
+              ordinal,
+            ]);
+          db.run(
+            "INSERT OR REPLACE INTO workspace_entities VALUES('task',?,?)",
+            [task.id, digest],
+          );
+        }
+        db.run("INSERT OR REPLACE INTO workspace_state VALUES(1,?,?,?,?,?)", [
+          state.revision,
+          state.digest,
+          state.schemaVersion,
+          state.committedAt,
+          JSON.stringify(state),
+        ]);
+        db.run(
+          "INSERT OR REPLACE INTO meta(key,value) VALUES('workspace_revision',?)",
+          [String(state.revision)],
+        );
+        db.run(
+          "INSERT OR REPLACE INTO meta(key,value) VALUES('workspace_digest',?)",
+          [state.digest],
+        );
+        db.run("COMMIT");
+        committed = true;
+        await this.persistNow();
+      } catch (error) {
+        if (!committed) db.run("ROLLBACK");
+        else {
+          db.close();
+          const SQL = await initSqlJs();
+          this.db = new SQL.Database(snapshot);
+          this.db.run("PRAGMA foreign_keys=ON");
+          await this.persistNow().catch(() => undefined);
+        }
+        throw error;
+      }
+    });
   }
   async upsertTask(task: BackupTask) {
     return this.enqueue(async () => {
@@ -262,11 +452,11 @@ export class CatalogDatabase {
           ? " AND f.kind IN ('.mov','.mp4','.mxf','.mkv','.avi','.m4v')"
           : kind === "image"
             ? " AND f.kind IN ('.jpg','.jpeg','.png','.arw','.cr3','.nef','.dng','.raf','.heic')"
-             : kind === "audio"
+            : kind === "audio"
               ? " AND f.kind IN ('.wav','.mp3','.aif','.aiff','.m4a','.flac')"
               : kind === "color"
-              ? " AND f.kind IN ('.cube','.cdl','.cc','.ccc','.clf')"
-              : "";
+                ? " AND f.kind IN ('.cube','.cdl','.cc','.ccc','.clf')"
+                : "";
     const where = `${options.projectId ? "t.project_id=? AND " : ""}f.relative_path LIKE ? ESCAPE '\\'${kindSql}`,
       params: Array<string | number> = [
         ...(options.projectId ? [options.projectId] : []),
@@ -344,7 +534,8 @@ export class CatalogDatabase {
       try {
         const candidate = await fs.readFile(`${this.file}${suffix}`),
           database = new SQL.Database(candidate),
-          integrity = database.exec("PRAGMA integrity_check")[0]?.values[0]?.[0];
+          integrity = database.exec("PRAGMA integrity_check")[0]
+            ?.values[0]?.[0];
         database.close();
         if (integrity !== "ok") continue;
         const temp = `${this.file}.recover-${process.pid}-${Date.now()}`;
@@ -365,8 +556,7 @@ export class CatalogDatabase {
           await directory.sync();
         } catch (error) {
           const code = (error as NodeJS.ErrnoException).code;
-          if (!["EINVAL", "ENOTSUP", "EBADF"].includes(code || ""))
-            throw error;
+          if (!["EINVAL", "ENOTSUP", "EBADF"].includes(code || "")) throw error;
         } finally {
           await directory.close();
         }
