@@ -359,6 +359,36 @@ describe("workspace authority and reconciliation", () => {
     ).toEqual(["canonical"]);
   });
 
+  it("repairs same-count file-row drift instead of trusting index metadata", async () => {
+    const { root, storage, catalog } = await fixture();
+    const workspace = new WorkspaceRepository(storage, catalog);
+    await workspace.initialize();
+    await workspace.commit({
+      tasks: [taskWithFiles("canonical-media", ["A.mov", "B.mov"])],
+      projects: [{ ...project("project-files"), id: "project-files" }],
+      syncCatalog: true,
+    });
+    const db = await catalog.open();
+    db.run(
+      "UPDATE files SET relative_path='DCIM/TAMPERED.mov',size=999 WHERE task_id='canonical-media' AND relative_path='DCIM/A.mov'",
+    );
+    await catalog.flush();
+
+    await new WorkspaceRepository(
+      new Storage(root),
+      new CatalogDatabase(root),
+    ).initialize();
+    const repaired = await new CatalogDatabase(root).pageFiles({
+      projectId: "project-files",
+      limit: 10,
+    });
+    expect(repaired.map((file) => file.relativePath)).toEqual([
+      "DCIM/A.mov",
+      "DCIM/B.mov",
+    ]);
+    expect(repaired.map((file) => file.size)).toEqual([1, 2]);
+  });
+
   it("reconciles file rows when a committed task changes and when it is removed", async () => {
     const { storage, catalog } = await fixture();
     const workspace = new WorkspaceRepository(storage, catalog);

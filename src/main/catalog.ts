@@ -1,10 +1,67 @@
 import initSqlJs, { type Database } from "sql.js";
+import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import type { BackupTask, ProjectConfig } from "./types";
 import { entityDigest, type WorkspaceState } from "./workspace-contract";
 
 const SCHEMA = 4;
+const EMPTY_FILE_DIGEST = createHash("sha256").digest("hex");
+
+function taskHeader(task: BackupTask) {
+  return [
+    task.projectId || "",
+    task.name || "",
+    task.shootingDate || "",
+    task.status || "",
+    task.provenance || "kocpy-transfer",
+    task.createdAt || 0,
+    task.totalFiles,
+    task.totalBytes,
+    JSON.stringify({ ...task, fileRecords: [] }),
+  ];
+}
+
+function projectRow(project: ProjectConfig) {
+  return [
+    project.name || "",
+    project.status || "active",
+    JSON.stringify(project),
+  ];
+}
+
+function fileRow(
+  taskId: string,
+  file: BackupTask["fileRecords"][number],
+  ordinal: number,
+) {
+  return [
+    taskId,
+    file.relativePath,
+    file.size,
+    file.srcChecksum,
+    file.destinations.some((item) => item.verified) ? 1 : 0,
+    path.extname(file.name).toLowerCase(),
+    JSON.stringify(file),
+    ordinal,
+  ];
+}
+
+function appendDigest(hash: ReturnType<typeof createHash>, value: unknown[]) {
+  const encoded = JSON.stringify(value);
+  hash
+    .update(String(Buffer.byteLength(encoded)))
+    .update(":")
+    .update(encoded);
+}
+
+function taskFilesDigest(task: BackupTask) {
+  const hash = createHash("sha256");
+  for (const [ordinal, file] of task.fileRecords.entries())
+    appendDigest(hash, fileRow(task.id, file, ordinal));
+  return hash.digest("hex");
+}
+
 export class CatalogDatabase {
   private db?: Database;
   private writes: Promise<void> = Promise.resolve();
@@ -180,33 +237,84 @@ export class CatalogDatabase {
           projectIds = new Set(state.projects.map((project) => project.id)),
           storedTaskIds = new Set<string>(),
           storedProjectIds = new Set<string>(),
-          storedTaskJson = new Map<string, string>(),
-          storedProjectJson = new Map<string, string>(),
+          storedTaskHeaders = new Map<string, string>(),
+          storedProjectRows = new Map<string, string>(),
           storedFileCounts = new Map<string, number>(),
-          taskRows = db.prepare("SELECT id,json FROM tasks"),
-          projectRows = db.prepare("SELECT id,json FROM projects"),
+          storedFileDigests = new Map<string, string>(),
+          taskRows = db.prepare(
+            "SELECT id,project_id,name,shooting_date,status,provenance,created_at,total_files,total_bytes,json FROM tasks",
+          ),
+          projectRows = db.prepare("SELECT id,name,status,json FROM projects"),
           fileCountRows = db.prepare(
             "SELECT task_id,count(*) FROM files GROUP BY task_id",
+          ),
+          fileRows = db.prepare(
+            "SELECT task_id,relative_path,size,checksum,verified,kind,json,ordinal FROM files ORDER BY task_id,ordinal,relative_path",
           );
         while (taskRows.step()) {
           const values = taskRows.get(),
             id = String(values[0]);
           storedTaskIds.add(id);
-          storedTaskJson.set(id, String(values[1]));
+          storedTaskHeaders.set(
+            id,
+            JSON.stringify([
+              String(values[1] || ""),
+              String(values[2] || ""),
+              String(values[3] || ""),
+              String(values[4] || ""),
+              String(values[5] || ""),
+              Number(values[6] || 0),
+              Number(values[7] || 0),
+              Number(values[8] || 0),
+              String(values[9] || ""),
+            ]),
+          );
         }
         while (projectRows.step()) {
           const values = projectRows.get(),
             id = String(values[0]);
           storedProjectIds.add(id);
-          storedProjectJson.set(id, String(values[1]));
+          storedProjectRows.set(
+            id,
+            JSON.stringify([
+              String(values[1] || ""),
+              String(values[2] || ""),
+              String(values[3] || ""),
+            ]),
+          );
         }
         while (fileCountRows.step()) {
           const values = fileCountRows.get();
           storedFileCounts.set(String(values[0]), Number(values[1]));
         }
+        let digestTaskId = "",
+          digestHash: ReturnType<typeof createHash> | undefined;
+        while (fileRows.step()) {
+          const values = fileRows.get(),
+            taskId = String(values[0]);
+          if (taskId !== digestTaskId) {
+            if (digestHash)
+              storedFileDigests.set(digestTaskId, digestHash.digest("hex"));
+            digestTaskId = taskId;
+            digestHash = createHash("sha256");
+          }
+          appendDigest(digestHash!, [
+            taskId,
+            String(values[1] || ""),
+            Number(values[2] || 0),
+            String(values[3] || ""),
+            Number(values[4] || 0),
+            String(values[5] || ""),
+            String(values[6] || ""),
+            Number(values[7] || 0),
+          ]);
+        }
+        if (digestHash)
+          storedFileDigests.set(digestTaskId, digestHash.digest("hex"));
         taskRows.free();
         projectRows.free();
         fileCountRows.free();
+        fileRows.free();
         for (const id of storedTaskIds)
           if (!taskIds.has(id)) {
             db.run("DELETE FROM files WHERE task_id=?", [id]);
@@ -251,7 +359,8 @@ export class CatalogDatabase {
           if (
             existing.get(`project:${project.id}`) === digest &&
             storedProjectIds.has(project.id) &&
-            storedProjectJson.get(project.id) === JSON.stringify(project)
+            storedProjectRows.get(project.id) ===
+              JSON.stringify(projectRow(project))
           )
             continue;
           db.run("INSERT OR REPLACE INTO projects VALUES(?,?,?,?)", [
@@ -270,9 +379,11 @@ export class CatalogDatabase {
           if (
             existing.get(`task:${task.id}`) === digest &&
             storedTaskIds.has(task.id) &&
-            storedTaskJson.get(task.id) ===
-              JSON.stringify({ ...task, fileRecords: [] }) &&
-            (storedFileCounts.get(task.id) || 0) === task.fileRecords.length
+            storedTaskHeaders.get(task.id) ===
+              JSON.stringify(taskHeader(task)) &&
+            (storedFileCounts.get(task.id) || 0) === task.fileRecords.length &&
+            (storedFileDigests.get(task.id) || EMPTY_FILE_DIGEST) ===
+              taskFilesDigest(task)
           )
             continue;
           db.run("DELETE FROM files WHERE task_id=?", [task.id]);
