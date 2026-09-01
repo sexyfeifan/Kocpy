@@ -1,4 +1,4 @@
-# Kocpy 0.1.27 architecture
+# Kocpy 0.1.28 architecture
 
 ## Workspace authority and commit boundary
 
@@ -25,6 +25,12 @@ Library pages use a scope-bound opaque keyset cursor ordered by creation time, t
 Proxy processing cannot begin while a backup action is queued or the transfer engine is active. Before starting copy, resume, failed-target retry, recovery or reverification, a running proxy receives an abort request and settles as paused with `pauseReason: backup-priority`. The backup action waits for this safe boundary rather than competing for sustained reads and writes.
 
 After the backup engine is idle and the authoritative workspace settlement succeeds, only backup-priority pauses return to pending. A user pause is recorded as `pauseReason: user` and is never auto-resumed. On application restart there is no surviving active backup process, so an old backup-priority pause may return to the pending queue; stale proxy `running` states remain failures requiring an explicit retry.
+
+## Proxy evidence and delivery publication
+
+Each new proxy job freezes a source task identifier, relative path, exact verified-copy path, byte count, original hash algorithm and digest, media snapshot, and complete parameter snapshot. Processing starts with a full source rehash; a matching size is not accepted as proof. FFmpeg writes to an owned temporary directory and publishes a uniquely named output without replacement. Kocpy then hashes that output with SHA-256 and records its measured media properties before the job becomes deliverable.
+
+Delivery preflight fully rehashes every selected output and rejects case-folded basename collisions. A formal package is built in an owned hidden directory beside the final destination: copied media is rehashed and synchronized, generated manifests reference the eventual package `Media` paths, and files/directories are synchronized before one same-filesystem rename publishes the package. Failure removes only the owned staging directory. Older completed jobs without source/parameter/output evidence remain historical records and must be regenerated for formal delivery.
 
 ## Shared trust decisions
 

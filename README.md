@@ -8,9 +8,9 @@
 
 ![Kocpy 工作台](docs/screenshots/dashboard.png)
 
-当前代码版本：**0.1.27** · [完整使用手册](docs/USER_GUIDE.md) · [0.1.27 更新说明](docs/RELEASE_NOTES_0.1.27.md) · [已公开发布版本](https://github.com/sexyfeifan/Kocpy/releases/latest)
+当前代码版本：**0.1.28** · [完整使用手册](docs/USER_GUIDE.md) · [0.1.28 更新说明](docs/RELEASE_NOTES_0.1.28.md) · [已公开发布版本](https://github.com/sexyfeifan/Kocpy/releases/latest)
 
-0.1.27 面向大型项目优化热路径：权威工作区减少重复序列化，素材索引在修订和摘要一致且无变更标记时快速启动，深页素材列表改用稳定游标；代理任务在备份到来时会安全让路，并且只自动恢复由“备份优先”造成的暂停。索引仍会对任何任务、项目、文件或实体变更执行完整漂移核对，复制哈希、逐目标独立回读、落盘和恢复标准没有降低。已公开安装包以 Release 实际附件为准，草稿不是公开发行；合成基准、真实环境边界及已知限制见 [验证记录](docs/VERIFICATION.md)。
+0.1.28 为代理与媒体交付建立可追溯证据链：入队时冻结源文件哈希、媒体信息和转码参数，转码前完整重读源文件，完成后记录输出 SHA-256、大小与媒体属性；正式交付先重新校验全部输出，再经同目录暂存、逐文件回读和原子发布生成交付目录。固定 H.264 与 ProRes Proxy 合成样本已在 DaVinci Resolve 实际导入；Premiere CSV 和 Final Cut XML 因本机未安装对应软件，仅声明格式检查，不冒充实际兼容验证。已公开安装包以 Release 实际附件为准，草稿不是公开发行；验证边界及已知限制见 [验证记录](docs/VERIFICATION.md)。
 
 ## 中文
 
@@ -132,8 +132,8 @@ Kocpy 支持真实深色与浅色外观，任务、项目、偏好、缩略图�
 
 从 [GitHub Releases](https://github.com/sexyfeifan/Kocpy/releases) 下载对应架构：
 
-- `Kocpy-0.1.27-arm64.dmg`：Apple Silicon Mac
-- `Kocpy-0.1.27-x64.dmg`：Intel Mac
+- `Kocpy-0.1.28-arm64.dmg`：Apple Silicon Mac
+- `Kocpy-0.1.28-x64.dmg`：Intel Mac
 
 当前代码对应上述版本；远端可下载版本以 Release 实际附件为准。
 
