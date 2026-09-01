@@ -20,11 +20,13 @@
   --muted: #888992;
   --sub: #b0b1ba;
   --purple: #a99aff;
+  --accent: var(--purple);
   --primary: #b2a3ff;
   --primary-ink: #201a39;
   --green: #81c9aa;
   --danger: #ef999b;
   --amber: #d6a35f;
+  --warning: var(--amber);
   --input: #15161a;
   --shadow: 0 24px 100px #0008;
   --overlay: #050509b8;
@@ -32,6 +34,15 @@
   --control-border-hover: #66616f;
   --quiet: #6f7079;
   --scrollbar: #8883;
+  --line: var(--border);
+  --accent-soft: #a99aff12;
+  --font-mono: "SFMono-Regular", Consolas, monospace;
+  --control-height: 38px;
+  --control-height-compact: 32px;
+  --control-radius: 8px;
+  --panel-radius: 12px;
+  --dialog-radius: 16px;
+  --focus-ring: 0 0 0 3px #a99aff2e;
   font-family:
     -apple-system, BlinkMacSystemFont, "SF Pro Display", "PingFang SC",
     "Helvetica Neue", sans-serif;
@@ -51,11 +62,13 @@
   --muted: #787482;
   --sub: #625d6f;
   --purple: #7253c7;
+  --accent: var(--purple);
   --primary: #8c72da;
   --primary-ink: #fff;
   --green: #25865e;
   --danger: #bb4b50;
   --amber: #a86b17;
+  --warning: var(--amber);
   --input: #faf9fc;
   --shadow: 0 24px 100px #33234f30;
   --overlay: #2f29374d;
@@ -63,6 +76,9 @@
   --control-border-hover: #aaa4b5;
   --quiet: #77727f;
   --scrollbar: #6c687233;
+  --line: var(--border);
+  --accent-soft: #7253c712;
+  --focus-ring: 0 0 0 3px #7253c72b;
 }
 * {
   box-sizing: border-box;
@@ -73,7 +89,8 @@ body {
 }
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 button {
@@ -94,31 +111,44 @@ button {
 button:focus-visible,
 input:focus-visible,
 select:focus-visible,
-summary:focus-visible {
+textarea:focus-visible,
+summary:focus-visible,
+[role="button"]:focus-visible,
+[role="switch"]:focus-visible {
   outline: 2px solid var(--purple);
   outline-offset: 3px;
+  box-shadow: var(--focus-ring);
 }
 input,
-select {
+select,
+textarea {
   width: 100%;
   min-width: 0;
+  min-height: var(--control-height);
   background: var(--input);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--control-radius);
   color: var(--text);
   padding: 11px 12px;
   outline: none;
+}
+textarea {
+  resize: vertical;
+  line-height: 1.65;
 }
 input::placeholder {
   color: var(--muted);
 }
 input:focus,
-select:focus {
+select:focus,
+textarea:focus {
   border-color: var(--purple);
 }
 input[type="checkbox"] {
-  width: 15px;
-  height: 15px;
+  width: 17px;
+  height: 17px;
+  min-height: 17px;
+  padding: 0;
   accent-color: var(--purple);
 }
 svg {
@@ -166,7 +196,7 @@ small {
   font-size: 11px;
 }
 .mono {
-  font-family: "SFMono-Regular", Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
 }
 .path {
@@ -190,7 +220,8 @@ small {
   gap: 8px;
   border: 1px solid var(--border);
   background: var(--panel2);
-  border-radius: 8px;
+  min-height: var(--control-height);
+  border-radius: var(--control-radius);
   padding: 10px 14px;
   font-size: 12px;
   font-weight: 550;
@@ -216,7 +247,10 @@ small {
   color: var(--sub);
 }
 .btn.icon {
-  padding: 8px;
+  width: var(--control-height-compact);
+  height: var(--control-height-compact);
+  min-height: var(--control-height-compact);
+  padding: 0;
   background: transparent;
   border-color: transparent;
   color: var(--muted);
@@ -229,6 +263,9 @@ small {
   color: var(--danger);
   background: #dc667416;
   border-color: #dc667425;
+}
+.btn[aria-busy="true"] {
+  cursor: progress;
 }
 .text-button {
   display: inline-flex;
@@ -871,7 +908,7 @@ small {
 .panel {
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 11px;
+  border-radius: var(--panel-radius);
   overflow: hidden;
 }
 .section-title {
@@ -1217,6 +1254,7 @@ small {
   background: var(--panel2);
   color: var(--muted);
   white-space: nowrap;
+  min-height: 24px;
 }
 .badge i {
   width: 4px;
@@ -1923,7 +1961,7 @@ small {
 .form-modal,
 .detail-modal {
   border: 1px solid var(--modal-border);
-  border-radius: 15px;
+  border-radius: var(--dialog-radius);
   background: var(--bg);
   box-shadow: var(--shadow);
   max-height: calc(100vh - 48px);
@@ -5277,4 +5315,111 @@ small {
 }
 .recovery-dialog .modal-header {
   flex-shrink: 0;
+}
+
+/* 0.1.25 design-system guardrails: retain readable controls and let dense
+   content wrap or scroll instead of shrinking labels and icons. */
+.btn {
+  max-width: 100%;
+}
+.btn:not(.icon) {
+  overflow-wrap: anywhere;
+}
+.section-title,
+.list-toolbar,
+.modal-footer,
+.modal-footer > .row,
+.page-heading,
+.setting-row {
+  flex-wrap: wrap;
+}
+.modal-footer > .row {
+  justify-content: flex-end;
+}
+.wizard-steps {
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.wizard-step {
+  min-width: 172px;
+}
+.detail-body,
+.form-body,
+.composer-main {
+  min-width: 0;
+}
+.detail-path,
+.chosen-path,
+.directory-picker,
+.path-input {
+  min-width: 0;
+}
+.detail-path > span,
+.chosen-path .path,
+.directory-picker input,
+.path-input input {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.project-matrix-head,
+.project-task-breakdown-head,
+.library-head {
+  min-height: 40px;
+}
+.project-matrix-row,
+.project-task-breakdown-row,
+.library-row {
+  min-height: 50px;
+  font-variant-numeric: tabular-nums;
+}
+.project-task-breakdown-row {
+  align-items: center;
+}
+.project-task-breakdown-row > * {
+  align-self: center;
+}
+@media (max-width: 1200px) {
+  .detail-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .candidate-mapping-grid,
+  .daily-plan-temp {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .handoff-evidence-list > div {
+    grid-template-columns: 1fr;
+  }
+  .handoff-evidence-list ul,
+  .handoff-evidence-list small {
+    grid-column: 1;
+  }
+}
+@media (max-width: 980px) {
+  .modal-backdrop {
+    padding: 14px;
+  }
+  .composer-modal,
+  .form-modal,
+  .detail-modal,
+  .recovery-dialog {
+    max-height: calc(100vh - 28px);
+  }
+  .modal-header,
+  .modal-footer {
+    padding: 15px 18px;
+  }
+  .form-body,
+  .detail-body,
+  .composer-main {
+    padding-left: 18px;
+    padding-right: 18px;
+  }
+  .setting-row {
+    align-items: flex-start;
+  }
+  .candidate-mapping-grid,
+  .daily-plan-temp,
+  .recovery-list > div {
+    grid-template-columns: 1fr;
+  }
 }

@@ -20,8 +20,32 @@ import { OperationRegistry } from "../src/main/operations";
 import { BackupEngine } from "../src/main/backup/BackupEngine";
 import { LanProjectIndex, readLanProjectIndex } from "../src/main/lan-index";
 import type { BackupTask } from "../src/main/types";
+import {
+  dialogControlName,
+  isDialogCloseControl,
+} from "../src/common/dialog";
 
 describe("explicit scope and human confirmation", () => {
+  it("recognizes dialog close controls by explicit metadata and accessible name", () => {
+    const element = (attributes: Record<string, string>, text = "") =>
+      ({
+        textContent: text,
+        getAttribute(name: string) {
+          return attributes[name] || null;
+        },
+      }) as unknown as Element;
+    expect(dialogControlName(element({ "aria-label": "关闭差异窗口" }))).toBe(
+      "关闭差异窗口",
+    );
+    expect(
+      isDialogCloseControl(element({ "aria-label": "关闭差异窗口" })),
+    ).toBe(true);
+    expect(isDialogCloseControl(element({ title: "关闭" }))).toBe(true);
+    expect(
+      isDialogCloseControl(element({ "data-dialog-close": "true" }, "返回")),
+    ).toBe(true);
+    expect(isDialogCloseControl(element({}, "删除项目记录"))).toBe(false);
+  });
   it.each(["card", "file"] as const)(
     "rejects empty %s instead of widening",
     (kind) => {

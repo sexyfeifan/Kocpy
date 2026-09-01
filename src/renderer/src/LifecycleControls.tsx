@@ -16,7 +16,7 @@ import {
   type NasPreset,
   type ArchiveChangeRecord,
 } from "./api";
-import { Button } from "./App";
+import { Button } from "./Ui";
 import {
   validateArchiveScope,
   readableOperationError,

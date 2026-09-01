@@ -54,6 +54,7 @@ describe("backup layout and live detail", () => {
   });
   it("uses one supported drop resolver for both folder entry points and labels scanned counts", () => {
     const composer = readFileSync("src/renderer/src/Composer.tsx", "utf8");
+    const interaction = readFileSync("src/renderer/src/Interaction.tsx", "utf8");
     expect(composer).toContain('dropFolders(event, "source")');
     expect(composer).toContain('dropFolders(event, "destination")');
     expect(composer).not.toContain("File & { path?: string }");
@@ -62,7 +63,7 @@ describe("backup layout and live detail", () => {
     expect(composer).toContain('<details className="backup-advanced">');
     expect(composer).toContain("存储关系待核对");
     expect(composer).not.toContain("个目的地已通过容量检查");
-    expect(composer).toContain("element.getClientRects().length > 0");
+    expect(interaction).toContain("node.getClientRects().length > 0");
   });
 });
 

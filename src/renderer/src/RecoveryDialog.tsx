@@ -9,7 +9,7 @@ import {
   X,
 } from "lucide-react";
 import { api, bytes, type BackupTask } from "./api";
-import { Button } from "./App";
+import { Button } from "./Ui";
 import { readableOperationError } from "../../common/interaction";
 import { recoveryAdvice, type RecoveryReport } from "../../common/recovery";
 

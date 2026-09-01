@@ -17,7 +17,7 @@ import {
   type ProjectConfig,
   type ProjectStructureReport,
 } from "./api";
-import { Button } from "./App";
+import { Button } from "./Ui";
 
 export const DEVICE_SUGGESTIONS = [
   "FX3",
@@ -507,6 +507,7 @@ export function ProjectEditor({
           </div>
           <div className="manual-path">
             <input
+              aria-label="自定义设备或机位"
               value={customDevice}
               onChange={(e) => setCustomDevice(e.target.value)}
               onKeyDown={(e) => {

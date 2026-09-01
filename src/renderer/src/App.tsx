@@ -8,7 +8,6 @@ import {
   useEffect,
   useCallback,
   useRef,
-  type ReactNode,
 } from "react";
 import { selectLiveTask, transferPhaseText, transferTiming, transferProgressLabel } from "./task-state";
 import {
@@ -117,6 +116,10 @@ import { APP_VERSION } from "../../common/version";
 import { taskTrustState, projectCoverage, savedDestinationBytes } from "../../common/task-trust";
 import { projectDates, shootingDateKey } from "../../common/shooting-dates";
 import { groupLogicalVolumes } from "../../common/logical-volumes";
+import { Badge, Button, Empty } from "./Ui";
+import { modalDialogSelector } from "../../common/dialog";
+
+export { Badge, Button, Empty } from "./Ui";
 
 type Page =
   | "overview"
@@ -166,63 +169,14 @@ const duration = (seconds = 0) => {
     s = value % 60;
   return `${h ? `${h}时` : ""}${h || m ? `${String(m).padStart(h ? 2 : 1, "0")}分` : ""}${String(s).padStart(h || m ? 2 : 1, "0")}秒`;
 };
-export function Button({
-  children,
-  onClick,
-  kind = "",
-  disabled = false,
-  title,
-  type = "button",
-}: {
-  children: ReactNode;
-  onClick?: () => void;
-  kind?: string;
-  disabled?: boolean;
-  title?: string;
-  type?: "button" | "submit";
-}) {
-  return (
-    <button
-      type={type}
-      className={`btn ${kind}`}
-      onClick={onClick}
-      disabled={disabled}
-      title={title}
-    >
-      {children}
-    </button>
-  );
-}
-export function Empty({
-  icon: Icon = FolderOpen,
-  title,
-  detail,
-  action,
-}: {
-  icon?: typeof FolderOpen;
-  title: string;
-  detail: string;
-  action?: ReactNode;
-}) {
-  return (
-    <div className="empty">
-      <span className="empty-icon">
-        <Icon size={28} strokeWidth={1.3} />
-      </span>
-      <h3>{title}</h3>
-      <p>{detail}</p>
-      {action}
-    </div>
-  );
-}
-export function Badge({ status }: { status: string }) {
-  return (
-    <span className={`badge ${status}`}>
-      <i />
-      {statusText[status] || status}
-    </span>
-  );
-}
+const focusProjectMenuTrigger = (projectId: string) =>
+  [
+    ...document.querySelectorAll<HTMLButtonElement>(
+      "[data-project-menu-trigger]",
+    ),
+  ]
+    .find((button) => button.dataset.projectMenuTrigger === projectId)
+    ?.focus();
 function SpeedSparkline({
   values,
   color = "var(--purple)",
@@ -318,6 +272,7 @@ export function App() {
       danger?: boolean;
       requiredText?: string;
       acknowledgement?: string;
+      returnFocusId?: string;
     } | null>(null),
     [confirmInput, setConfirmInput] = useState(""),
     [confirmAcknowledged, setConfirmAcknowledged] = useState(false),
@@ -331,6 +286,19 @@ export function App() {
     [completion, setCompletion] = useState<BackupTask | null>(null),
     [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   useEffect(() => setTaskLimit(100), [query, filter]);
+  useEffect(() => {
+    if (!projectMenuId) return;
+    const closeMenu = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      const projectId = projectMenuId;
+      setProjectMenuId(null);
+      requestAnimationFrame(() => focusProjectMenuTrigger(projectId));
+    };
+    window.addEventListener("keydown", closeMenu, true);
+    return () => window.removeEventListener("keydown", closeMenu, true);
+  }, [projectMenuId]);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
     undefined,
   );
@@ -470,14 +438,20 @@ export function App() {
   }, [settings.theme]);
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
-      if (e.metaKey && e.key === "n") {
+      const modalOpen = [...document.querySelectorAll<HTMLElement>(modalDialogSelector)].some(
+        (node) => node.getClientRects().length > 0,
+      );
+      if (e.metaKey && e.key.toLowerCase() === "n" && !modalOpen) {
         e.preventDefault();
         setComposer({});
       }
       if (
         e.key === "/" &&
+        !modalOpen &&
         !(e.target instanceof HTMLInputElement) &&
-        !(e.target instanceof HTMLTextAreaElement)
+        !(e.target instanceof HTMLTextAreaElement) &&
+        !(e.target instanceof HTMLSelectElement) &&
+        !(e.target instanceof HTMLElement && e.target.isContentEditable)
       ) {
         e.preventDefault();
         document.querySelector<HTMLInputElement>(".search input")?.focus();
@@ -485,7 +459,7 @@ export function App() {
     };
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
-  }, [proxyBusy]);
+  }, []);
   const go = (p: Page) => {
     document.querySelector(".page-content")?.scrollTo({ top: 0 });
     setPage(p);
@@ -555,6 +529,7 @@ export function App() {
             key={t.id}
             role="button"
             tabIndex={0}
+            aria-label={`查看任务 ${t.name}，当前状态 ${statusText[t.status] || t.status}`}
             onClick={() => setDetail(t.id)}
             onKeyDown={(event) => {
               if (
@@ -603,6 +578,7 @@ export function App() {
                       key={`${item.label}-${item.path}`}
                       role="button"
                       tabIndex={0}
+                      aria-label={`在 Finder 中显示${item.label}：${item.path}`}
                       title={`${item.label}：${item.path}\n点击在 Finder 中显示`}
                       onClick={(event) => {
                         event.stopPropagation();
@@ -833,6 +809,7 @@ export function App() {
     }
   };
   const requestProjectDeletion = async (project: ProjectConfig) => {
+    focusProjectMenuTrigger(project.id);
     setProjectMenuId(null);
     try {
       const preview = await api.previewProjectDeletion(project.id);
@@ -850,6 +827,7 @@ export function App() {
         requiredText: project.name,
         acknowledgement:
           "我理解此操作只删除 Kocpy 内部记录，且删除后无法在软件内撤销。",
+        returnFocusId: `project-menu-${project.id}`,
         run: async () => {
           const result = await api.deleteProject(project.id, project.name);
           setProjects(result.projects);
@@ -882,11 +860,12 @@ export function App() {
           新建备份<span className="key-hint">⌘ N</span>
         </Button>
         <div className="nav-label">工作空间</div>
-        <nav>
+        <nav aria-label="主要功能">
           {navigation.map(([id, label, Icon]) => (
             <button
               key={id}
               className={`nav-item ${page === id ? "selected" : ""}`}
+              aria-current={page === id ? "page" : undefined}
               onClick={() => go(id)}
             >
               <Icon size={18} />
@@ -909,6 +888,7 @@ export function App() {
           </div>
           <button
             className={`nav-item ${page === "settings" ? "selected" : ""}`}
+            aria-current={page === "settings" ? "page" : undefined}
             onClick={() => go("settings")}
           >
             <Settings2 size={18} />
@@ -1384,7 +1364,7 @@ export function App() {
               {page === "transfers" && (
                 <section className="panel">
                   <div className="list-toolbar">
-                    <div className="tabs">
+                    <div className="tabs" role="group" aria-label="传输任务状态">
                       {[
                         ["all", "全部任务"],
                         ["active", "进行中"],
@@ -1394,6 +1374,7 @@ export function App() {
                       ].map(([id, label]) => (
                         <button
                           key={id}
+                          aria-pressed={filter === id}
                           className={filter === id ? "active" : ""}
                           onClick={() => setFilter(id)}
                         >
@@ -1602,13 +1583,14 @@ export function App() {
               {page === "projects" && (
                 <>
                   <div className="list-toolbar plain">
-                    <div className="tabs">
+                    <div className="tabs" role="group" aria-label="项目状态">
                       {[
                         ["all", "进行中"],
                         ["archived", "已归档"],
                       ].map(([id, label]) => (
                         <button
                           key={id}
+                          aria-pressed={filter === id}
                           className={filter === id ? "active" : ""}
                           onClick={() => setFilter(id)}
                         >
@@ -1671,6 +1653,10 @@ export function App() {
                                 <Button
                                   kind="icon"
                                   title="更多项目操作"
+                                  data-project-menu-trigger={p.id}
+                                  data-focus-id={`project-menu-${p.id}`}
+                                  aria-haspopup="menu"
+                                  aria-expanded={projectMenuId === p.id}
                                   onClick={() =>
                                     setProjectMenuId((current) =>
                                       current === p.id ? null : p.id,
@@ -1680,8 +1666,13 @@ export function App() {
                                   <MoreHorizontal size={17} />
                                 </Button>
                                 {projectMenuId === p.id && (
-                                  <div className="project-action-menu">
+                                  <div
+                                    className="project-action-menu"
+                                    role="menu"
+                                    aria-label={`${p.name} 项目操作`}
+                                  >
                                     <button
+                                      role="menuitem"
                                       onClick={() => {
                                         setProjectMenuId(null);
                                         setEditor(p);
@@ -1691,6 +1682,7 @@ export function App() {
                                       编辑项目
                                     </button>
                                     <button
+                                      role="menuitem"
                                       onClick={() => {
                                         setProjectMenuId(null);
                                         void act(
@@ -1719,6 +1711,7 @@ export function App() {
                                         : "归档项目"}
                                     </button>
                                     <button
+                                      role="menuitem"
                                       className="danger"
                                       onClick={() =>
                                         void requestProjectDeletion(p)
@@ -2956,7 +2949,7 @@ export function App() {
                 </div>
               )}
               {selected.errorMessage && (
-                <div className="error-box task-recovery-callout">
+                <div className="error-box task-recovery-callout" role="alert">
                   <AlertTriangle size={18} />
                   <div>
                     <strong>
@@ -3307,10 +3300,13 @@ export function App() {
             className="confirm-modal"
             role="alertdialog"
             aria-modal="true"
+            aria-labelledby="confirm-dialog-title"
+            aria-describedby="confirm-dialog-description"
+            data-return-focus-id={confirm.returnFocusId}
           >
             <AlertTriangle size={27} />
-            <h2>请确认此操作</h2>
-            <p>{confirm.text}</p>
+            <h2 id="confirm-dialog-title">请确认此操作</h2>
+            <p id="confirm-dialog-description">{confirm.text}</p>
             {confirm.acknowledgement && (
               <label className="confirm-acknowledgement">
                 <input
@@ -3370,7 +3366,10 @@ export function App() {
         </div>
       )}
       {toast && (
-        <div role="status" className={`toast ${toast.error ? "error" : ""}`}>
+        <div
+          role={toast.error ? "alert" : "status"}
+          className={`toast ${toast.error ? "error" : ""}`}
+        >
           {toast.error ? (
             <AlertTriangle size={17} />
           ) : (
@@ -3518,7 +3517,7 @@ function Library({
   return (
     <section className="panel">
       <div className="list-toolbar">
-        <div className="tabs">
+        <div className="tabs" role="group" aria-label="素材类型">
           {[
             ["all", "全部文件"],
             ["video", "视频"],
@@ -3528,6 +3527,7 @@ function Library({
           ].map(([id, label]) => (
             <button
               key={id}
+              aria-pressed={kind === id}
               className={kind === id ? "active" : ""}
               onClick={() => {
                 setKind(id);
@@ -3741,7 +3741,11 @@ function Library({
         />
       )}
       {preview && (
-        <div className="media-preview" role="dialog" aria-label="媒体预览">
+        <aside
+          className="media-preview"
+          role="complementary"
+          aria-label="媒体检查器"
+        >
           <button
             className="media-preview-close"
             title="关闭"
@@ -3776,7 +3780,7 @@ function Library({
             {preview.audio && <p>{preview.audio}</p>}
             {preview.creationTime && <p>拍摄时间 {preview.creationTime}</p>}
           </div>
-        </div>
+        </aside>
       )}
     </section>
   );
@@ -4115,7 +4119,7 @@ function ExistingImportModal({
             </div>
           )}
           {error && (
-            <div className="error-box">
+            <div className="error-box" role="alert">
               {error}
               <Button
                 disabled={busy}
@@ -4713,12 +4717,12 @@ function ManifestIssueModal({
             </div>
           )}
           {success && (
-            <div className="success-box">
+            <div className="success-box" role="status">
               <CheckCircle2 size={17} />
               {success}
             </div>
           )}
-          {error && <div className="error-box">{error}</div>}
+          {error && <div className="error-box" role="alert">{error}</div>}
         </div>
         <div className="modal-footer">
           <Button kind="subtle" onClick={onClose}>
@@ -4828,7 +4832,7 @@ function ExistingBaselineModal({
               )}
             </div>
           )}
-          {error && <div className="error-box">{error}</div>}
+          {error && <div className="error-box" role="alert">{error}</div>}
         </div>
         <div className="modal-footer">
           <Button kind="subtle" onClick={onClose}>
@@ -6789,8 +6793,10 @@ function SettingsPage({
             <h3>界面外观</h3>
             <p>为现场与工作室选择舒适的亮度。</p>
           </div>
-          <div className="segmented">
+          <div className="segmented" role="radiogroup" aria-label="界面主题">
             <button
+              role="radio"
+              aria-checked={draft.theme === "dark"}
               className={draft.theme === "dark" ? "selected" : ""}
               onClick={() => setDraft({ ...draft, theme: "dark" })}
             >
@@ -6798,6 +6804,8 @@ function SettingsPage({
               深色
             </button>
             <button
+              role="radio"
+              aria-checked={draft.theme === "light"}
               className={draft.theme === "light" ? "selected" : ""}
               onClick={() => setDraft({ ...draft, theme: "light" })}
             >
@@ -6853,6 +6861,7 @@ function SettingsPage({
             <p>超过限制时优先清理最久未使用的缓存，不会删除素材。</p>
           </div>
           <select
+            aria-label="缩略图与波形缓存上限"
             value={draft.thumbnailCacheGiB}
             onChange={(e) =>
               setDraft({ ...draft, thumbnailCacheGiB: Number(e.target.value) })
@@ -6872,6 +6881,7 @@ function SettingsPage({
           </div>
           <button
             role="switch"
+            aria-label="通知声音"
             aria-checked={draft.notificationSound}
             className={`switch ${draft.notificationSound ? "on" : ""}`}
             onClick={() =>
@@ -7203,12 +7213,12 @@ function ProxyDialog({
             FFmpeg，不保证专有 RAW 格式。
           </p>
           {result && (
-            <div className="success-box">
+            <div className="success-box" role="status">
               <CheckCircle2 size={17} />
               {result}，可在「代理队列」查看进度、取消或重试。
             </div>
           )}
-          {error && <div className="error-box">{error}</div>}
+          {error && <div className="error-box" role="alert">{error}</div>}
         </div>
         <div className="modal-footer">
           <span className="small muted">唯一文件名 · 不覆盖已有文件</span>

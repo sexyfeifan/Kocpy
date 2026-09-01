@@ -2,7 +2,7 @@ import { previewProjectPath } from "../../common/project-layout";
 import { useState } from "react";
 import { Check, Copy, Plus, Trash2, X } from "lucide-react";
 import { api, type ProjectTemplate } from "./api";
-import { Button } from "./App";
+import { Button } from "./Ui";
 import { DEVICE_SUGGESTIONS } from "./ProjectEditor";
 
 const DEFAULT_RULE =
@@ -309,6 +309,7 @@ export function TemplateEditor({
           </div>
           <div className="manual-path">
             <input
+              aria-label="自定义模板设备"
               value={newDevice}
               onChange={(event) => setNewDevice(event.target.value)}
               onKeyDown={(event) => {
@@ -448,7 +449,7 @@ export function TemplateEditor({
               placeholder={"DIT:姓名\ndata-manager:姓名"}
             />
           </label>
-          {error && <div className="error-box">{error}</div>}
+          {error && <div className="error-box" role="alert">{error}</div>}
         </div>
         <div className="modal-footer">
           <span className="small muted">模板不会保存目的地磁盘路径</span>
@@ -555,7 +556,7 @@ export function TemplateApplyDialog({
               </label>
             ))}
           </div>
-          {error && <div className="error-box">{error}</div>}
+          {error && <div className="error-box" role="alert">{error}</div>}
         </div>
         <div className="modal-footer">
           <span className="small muted">只覆盖已勾选的配置</span>

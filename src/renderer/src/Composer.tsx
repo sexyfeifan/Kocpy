@@ -38,7 +38,7 @@ import {
   type Settings,
   type Scan,
 } from "./api";
-import { Button } from "./App";
+import { Button } from "./Ui";
 interface Source {
   path: string;
   scan?: Scan;
@@ -112,7 +112,6 @@ export function Composer({
     >({});
   const [draggingDestination, setDraggingDestination] = useState(false);
   const [draggingSource, setDraggingSource] = useState(false);
-  const dialog = useRef<HTMLElement>(null);
   const project = projects.find((p) => p.id === projectId),
     total = sources.reduce((n, s) => n + (s.scan?.totalBytes || 0), 0),
     externalVolumes = volumes.filter(
@@ -137,28 +136,6 @@ export function Composer({
     const collision = previous + index + 1;
     return `${previewPrefix}${previewStamp}${collision > 0 ? `_${String(collision + 1).padStart(2, "0")}` : ""}`;
   };
-  useEffect(() => {
-    dialog.current?.focus();
-    const trap = (e: KeyboardEvent) => {
-      if (e.key !== "Tab") return;
-      const all = [
-        ...dialog.current!.querySelectorAll<HTMLElement>(
-          'button:not(:disabled),input:not(:disabled),select:not(:disabled),summary,[tabindex="0"]',
-        ),
-      ].filter((element) => element.getClientRects().length > 0);
-      const first = all[0],
-        last = all[all.length - 1];
-      if (e.shiftKey && document.activeElement === first) {
-        e.preventDefault();
-        last?.focus();
-      } else if (!e.shiftKey && document.activeElement === last) {
-        e.preventDefault();
-        first?.focus();
-      }
-    };
-    dialog.current?.addEventListener("keydown", trap);
-    return () => dialog.current?.removeEventListener("keydown", trap);
-  }, []);
   useEffect(() => {
     if (!initial.project?.id) return;
     setMode("project");
@@ -458,7 +435,6 @@ export function Composer({
         aria-busy={busy}
         aria-label="新建备份任务"
         tabIndex={-1}
-        ref={dialog}
       >
         <div className="modal-header">
           <div>
@@ -536,6 +512,7 @@ export function Composer({
                     return (
                       <button
                         key={String(id)}
+                        aria-pressed={mode === id}
                         className={`mode-card ${mode === id ? "selected" : ""}`}
                         disabled={busy}
                         onClick={() => setMode(id as typeof mode)}
@@ -563,6 +540,7 @@ export function Composer({
                         .map((item) => (
                           <button
                             key={item.id}
+                            aria-pressed={projectId === item.id}
                             className={projectId === item.id ? "selected" : ""}
                             onClick={() => chooseProject(item.id)}
                           >
@@ -687,6 +665,7 @@ export function Composer({
                         return (
                           <button
                             key={volume.path}
+                            aria-pressed={selected}
                             className={selected ? "selected" : ""}
                             disabled={busy}
                             onClick={() =>
@@ -739,7 +718,7 @@ export function Composer({
                 {sources.some(
                   (source) => source.scan?.suggestion?.duplicateTaskId,
                 ) && (
-                  <div className="error-box">
+                  <div className="error-box" role="alert">
                     <AlertTriangle size={16} />
                     检测到与历史任务“
                     {
@@ -904,6 +883,7 @@ export function Composer({
                           ).map((date) => (
                             <button
                               key={date}
+                              aria-pressed={shootDate === date}
                               className={shootDate === date ? "selected" : ""}
                               onClick={() => setShootDate(date)}
                             >
@@ -932,6 +912,7 @@ export function Composer({
                           ).map((device) => (
                             <button
                               key={device}
+                              aria-pressed={camera === device}
                               className={camera === device ? "selected" : ""}
                               onClick={() => {
                                 const configured =
@@ -956,6 +937,7 @@ export function Composer({
                         {project?.devicePositions?.[camera]?.length ? (
                           <div className="column-options">
                             <button
+                              aria-pressed={!multiPosition}
                               className={!multiPosition ? "selected" : ""}
                               onClick={() => setMultiPosition(false)}
                             >
@@ -965,6 +947,9 @@ export function Composer({
                             {availablePositions.map((position) => (
                               <button
                                 key={position}
+                                aria-pressed={
+                                  multiPosition && cameraPosition === position
+                                }
                                 className={
                                   multiPosition && cameraPosition === position
                                     ? "selected"

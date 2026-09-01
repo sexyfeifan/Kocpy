@@ -2,6 +2,21 @@ import { useEffect, useState } from "react";
 import { api, bytes } from "./api";
 import type { OperationRecord } from "../../main/operations";
 import { readableOperationError } from "../../common/interaction";
+import {
+  isDialogCloseControl,
+  modalDialogSelector,
+} from "../../common/dialog";
+
+const focusableControls = (dialog: HTMLElement) =>
+  [
+    ...dialog.querySelectorAll<HTMLElement>(
+      'button:not(:disabled),input:not(:disabled),select:not(:disabled),textarea:not(:disabled),summary,a[href],[contenteditable="true"],[tabindex="0"]',
+    ),
+  ].filter(
+    (node) =>
+      node.getClientRects().length > 0 &&
+      node.getAttribute("aria-hidden") !== "true",
+  );
 
 export function useModalStack() {
   useEffect(() => {
@@ -9,29 +24,49 @@ export function useModalStack() {
     const dirty = new WeakSet<Element>();
     let top: HTMLElement | undefined;
     const dialogs = () =>
-      [...document.querySelectorAll<HTMLElement>('[role="dialog"]')].filter(
+      [...document.querySelectorAll<HTMLElement>(modalDialogSelector)].filter(
         (node) => node.getClientRects().length > 0,
       );
     const sync = () => {
       const next = dialogs().at(-1);
       if (next === top) return;
-      if (top && !top.isConnected)
+      const nextIsNew = Boolean(next && !previous.has(next));
+      if (top && !nextIsNew)
         (previous.get(top) as HTMLElement | null)?.focus?.();
       top = next;
       if (top && !previous.has(top)) {
-        previous.set(top, document.activeElement);
+        const explicitReturnId = top.dataset.returnFocusId;
+        const explicitReturn = explicitReturnId
+          ? [...document.querySelectorAll<HTMLElement>("[data-focus-id]")].find(
+              (node) => node.dataset.focusId === explicitReturnId,
+            )
+          : undefined;
+        previous.set(top, explicitReturn || document.activeElement);
+        top.setAttribute("aria-modal", "true");
         if (!top.hasAttribute("tabindex")) top.tabIndex = -1;
-        top.focus();
+        const target =
+          top.querySelector<HTMLElement>("[data-initial-focus]") ||
+          focusableControls(top).find(
+            (node) =>
+              !node.matches('[data-dialog-close="true"]') &&
+              !node.classList.contains("danger"),
+          ) ||
+          focusableControls(top)[0] ||
+          top;
+        requestAnimationFrame(() => {
+          if (top === next && target.isConnected) target.focus();
+        });
       }
     };
     const observer = new MutationObserver(sync);
     observer.observe(document.body, { childList: true, subtree: true });
     sync();
     const input = (event: Event) => {
-      const dialog = (event.target as Element).closest?.('[role="dialog"]');
+      const dialog = (event.target as Element).closest?.(modalDialogSelector);
       if (dialog) dirty.add(dialog);
     };
     const closeAllowed = (dialog: HTMLElement) =>
+      dialog.getAttribute("role") === "alertdialog" ||
       !dirty.has(dialog) ||
       dialog.getAttribute("aria-busy") === "true" ||
       window.confirm(
@@ -39,13 +74,18 @@ export function useModalStack() {
       );
     const click = (event: MouseEvent) => {
       const button = (event.target as Element).closest?.("button");
-      const dialog = button?.closest<HTMLElement>('[role="dialog"]');
+      const dialog = button?.closest<HTMLElement>(modalDialogSelector);
       if (
         button &&
         dialog &&
-        /^(关闭.*|取消|稍后|后台继续)$/.test(
-          button.textContent?.trim() || button.title,
-        ) &&
+        !button.hasAttribute("disabled") &&
+        !isDialogCloseControl(button)
+      )
+        dirty.add(dialog);
+      if (
+        button &&
+        dialog &&
+        isDialogCloseControl(button) &&
         !closeAllowed(dialog)
       ) {
         event.preventDefault();
@@ -67,21 +107,12 @@ export function useModalStack() {
           ...dialog.querySelectorAll<HTMLButtonElement>(
             "button:not(:disabled)",
           ),
-        ].find(
-          (button) =>
-            /^(关闭.*|取消|稍后|后台继续)$/.test(
-              button.textContent?.trim() || button.title,
-            ) || button.title === "关闭",
-        );
+        ].find(isDialogCloseControl);
         close?.click();
         return;
       }
       if (event.key !== "Tab") return;
-      const elements = [
-        ...dialog.querySelectorAll<HTMLElement>(
-          'button:not(:disabled),input:not(:disabled),select:not(:disabled),textarea:not(:disabled),a[href],[tabindex="0"]',
-        ),
-      ].filter((node) => node.getClientRects().length);
+      const elements = focusableControls(dialog);
       const first = elements[0],
         last = elements.at(-1);
       if (!first) {
