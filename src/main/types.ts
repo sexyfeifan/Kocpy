@@ -13,6 +13,41 @@ export type DuplicateStrategy = "skip" | "suffix";
 export type ProxyStatus =
   "pending" | "running" | "paused" | "completed" | "failed" | "cancelled";
 export type ProxyPreset = "review" | "editorial" | "offline";
+export interface ProxyMediaSnapshot {
+  duration?: string;
+  frameRate?: string;
+  timecode?: string;
+  audio?: string;
+  audioTracks?: number;
+  rotation?: number;
+  colorSpace?: string;
+  resolution?: string;
+}
+export interface ProxySourceEvidence {
+  taskId: string;
+  relativePath: string;
+  path: string;
+  bytes: number;
+  modifiedAt: number;
+  hashAlgorithm: HashAlgorithm;
+  checksum: string;
+  capturedAt: number;
+  media: ProxyMediaSnapshot;
+}
+export interface ProxyParameterSnapshot {
+  purpose: ProxyPreset;
+  format: "h264" | "prores";
+  resolution: string;
+  bitrateMbps?: number;
+  container: "mp4" | "mov" | "mkv";
+  namingTemplate: string;
+}
+export interface ProxyOutputEvidence extends ProxyMediaSnapshot {
+  path: string;
+  bytes: number;
+  sha256: string;
+  checkedAt: number;
+}
 export interface SavedProxyPreset {
   id: string;
   name: string;
@@ -21,6 +56,7 @@ export interface SavedProxyPreset {
   bitrateMbps?: number;
   container: "mp4" | "mov" | "mkv";
   namingTemplate: string;
+  purpose?: ProxyPreset;
   createdAt: number;
   updatedAt: number;
 }
@@ -41,6 +77,12 @@ export interface ProxyJob {
   outputPath?: string;
   error?: string;
   pauseReason?: "user" | "backup-priority";
+  stage?:
+    | "queued"
+    | "validating-source"
+    | "transcoding"
+    | "validating-output"
+    | "ready";
   timecode?: string;
   preset?: ProxyPreset;
   namingTemplate?: string;
@@ -51,11 +93,19 @@ export interface ProxyJob {
   sourceDuration?: string;
   sourceColorSpace?: string;
   dependsOn?: string[];
+  sourceEvidence?: ProxySourceEvidence;
+  parameterSnapshot?: ProxyParameterSnapshot;
+  outputEvidence?: ProxyOutputEvidence;
   validation?: {
     frameRate: "match" | "changed" | "unknown";
     timecode: "match" | "changed" | "unknown";
-    audio: "present" | "missing" | "unknown";
+    audio: "present" | "missing" | "none" | "unknown";
+    duration?: "match" | "changed" | "unknown";
+    audioTracks?: "match" | "changed" | "unknown";
+    rotation?: "match" | "changed" | "unknown";
     colorSpace?: "match" | "changed" | "unknown";
+    readiness?: "ready" | "warning" | "blocked";
+    checkedAt?: number;
     notes: string[];
   };
 }

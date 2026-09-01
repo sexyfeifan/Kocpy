@@ -404,12 +404,14 @@ export interface API {
     duration?: string;
     video?: string;
     audio?: string;
+    audioTracks?: number;
     timecode?: string;
     camera?: string;
     creationTime?: string;
     resolution?: string;
     frameRate?: string;
     colorSpace?: string;
+    rotation?: number;
     thumbnail?: string;
     thumbnailPath?: string;
     waveform?: string;

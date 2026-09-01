@@ -5168,15 +5168,17 @@ function HelpPage({
       purpose: "生成 H.264 或 ProRes 剪辑代理并检查媒体一致性。",
       steps: [
         "在素材库选择一个或多个已校验视频。",
-        "选择审片、剪辑或离线预设，并设置命名规则。",
+        "选择审片、剪辑或离线预设，并设置尺寸、封装和命名规则。ProRes Proxy 只允许 MOV。",
         "需要复用参数时输入名称保存自定义预设；项目也可设置完成后自动加入代理队列。",
-        "在队列中暂停、继续、取消或重试。",
-        "完成后检查帧率、时间码和音轨提示。",
-        "导出 Resolve、Premiere 或 Final Cut 交付清单。",
+        "入队后参数与源哈希被冻结；转码前完整重读源文件，在队列中可暂停、继续、取消或重试。",
+        "完成后检查输出 SHA-256，以及时长、帧率、时间码、音轨、旋转和色彩提示。未知字段不会自动算作通过。",
+        "优先使用“生成交付目录”，让 Kocpy 在发布前重新校验输出并生成媒体、清单和检查报告。",
       ],
       tips: [
         "代理始终写入独立目录，不修改原素材。",
         "暂停会清理不完整输出，继续时安全重建。",
+        "0.1.28 以前完成的代理没有新输出证据，需从素材库重新生成后才能进入正式交付。",
+        "固定 H.264／ProRes Proxy 样本已在 Resolve 实际导入；Premiere CSV 与 Final Cut XML 因本机未安装对应软件，仅完成格式检查。",
         "内置 FFmpeg 9.0.1 与 x264 的完整许可证、对应源码、构建脚本和摘要随应用资源及同版 Release 提供，无需另装组件。",
       ],
       page: "processing",
@@ -5432,15 +5434,15 @@ function HelpPage({
       <section className="help-release-note">
         <RefreshCw size={20} />
         <div>
-          <strong>0.1.27：大型项目性能与备份优先</strong>
+          <strong>0.1.28：代理证据链与原子交付</strong>
           <p>
-            大型工作区减少重复序列化；素材索引仅在修订、摘要和变更标记完全一致时快速启动，任何记录变化仍会触发完整漂移核对。
+            入队时冻结源哈希、媒体信息与转码参数；转码前完整重读已校验源，完成后记录输出 SHA-256、大小与媒体属性。
           </p>
           <p>
-            素材库改用稳定游标分页并限制在线路径检查并发。修改项目、搜索或素材类型后会回到第一页，不复用旧范围游标。
+            正式交付会重新校验全部输出，阻止重名或被修改文件；媒体、三类清单和检查报告通过独占暂存与原子发布生成，不留下半成品正式目录。
           </p>
           <p>
-            开始备份时，运行中的代理会安全暂停并标记“备份优先”；备份空闲且记录保存成功后只恢复此类任务，用户手动暂停不会自动恢复。复制哈希与独立回读标准没有降低。
+            Resolve 固定 H.264／ProRes Proxy 样本已实际导入。Premiere 与 Final Cut 当前未安装，对应格式明确标注未实测；旧代理需重新生成输出证据后再正式交付。
           </p>
         </div>
       </section>
@@ -6509,6 +6511,14 @@ export function ProxyQueue({
           </span>
         </div>
       </div>
+      <div className="notice proxy-compatibility-notice">
+        <ShieldCheck size={16} />
+        <span>
+          DaVinci Resolve：固定 H.264／ProRes Proxy 合成样本实际导入验证。
+          Premiere CSV 与 Final Cut XML 当前只完成格式检查，未在本机 NLE
+          实际导入；导出文件会保留这一兼容性说明。
+        </span>
+      </div>
       <div
         className="proxy-delivery-actions"
         role="group"
@@ -6529,6 +6539,7 @@ export function ProxyQueue({
         </Button>
         <Button
           kind="subtle"
+          title="固定 H.264／ProRes Proxy 样本已在本机 DaVinci Resolve 实际导入"
           onClick={() =>
             void act(async () => {
               const file = await api.exportProxyDelivery("resolve", exportIds);
@@ -6549,10 +6560,11 @@ export function ProxyQueue({
             }, "Premiere 交付清单已导出")
           }
         >
-          Premiere CSV
+          Premiere CSV · 未实测
         </Button>
         <Button
           kind="subtle"
+          title="当前机器未安装 Final Cut Pro：FCPXML 结构已检查，未做本机实际导入"
           onClick={() =>
             void act(async () => {
               const file = await api.exportProxyDelivery("fcpxml", exportIds);
@@ -6561,7 +6573,7 @@ export function ProxyQueue({
             }, "Final Cut XML 已导出")
           }
         >
-          Final Cut XML
+          Final Cut XML · 未实测
         </Button>
       </div>
       {rows.length > queueLimit && (
@@ -6611,6 +6623,16 @@ export function ProxyQueue({
                   · {job.format.toUpperCase()} · {job.resolution}
                   {job.timecode ? ` · TC ${job.timecode}` : ""}
                 </p>
+                <p className="small">
+                  阶段：
+                  {{
+                    queued: "等待源证据核验",
+                    "validating-source": "正在完整核验已校验源",
+                    transcoding: "正在转码",
+                    "validating-output": "正在建立输出哈希证据",
+                    ready: "输出证据已建立",
+                  }[job.stage || "queued"] || "历史任务 · 阶段未知"}
+                </p>
                 <div className="progress-track">
                   <i style={{ width: `${job.progress}%` }} />
                 </div>
@@ -6619,6 +6641,17 @@ export function ProxyQueue({
                   <br />
                   目的地：{job.outputPath || job.outputDir}
                 </p>
+                {job.sourceEvidence && (
+                  <p className="mono small">
+                    源证据：{job.sourceEvidence.hashAlgorithm.toUpperCase()} ·{" "}
+                    {job.sourceEvidence.checksum}
+                  </p>
+                )}
+                {job.outputEvidence && (
+                  <p className="mono small">
+                    输出证据：SHA-256 · {job.outputEvidence.sha256}
+                  </p>
+                )}
                 {!!job.dependsOn?.length && (
                   <p className="small">等待依赖：{job.dependsOn.join("、")}</p>
                 )}
@@ -6630,7 +6663,7 @@ export function ProxyQueue({
                   >
                     {job.validation.notes.length
                       ? job.validation.notes.join(" · ")
-                      : "帧率、时间码与音轨检查未发现异常"}
+                      : "时长、帧率、时间码、音轨、旋转与色彩检查未发现异常"}
                   </small>
                 )}
                 {job.error && <small className="red-text">{job.error}</small>}
@@ -7097,10 +7130,11 @@ function ProxyDialog({
     const value = savedPresets.find((item) => item.id === id);
     if (!value) return;
     setPresetName(value.name);
+    setPreset(value.purpose || (value.format === "prores" ? "editorial" : "review"));
     setFormat(value.format);
     setRes(value.resolution);
     setBitrate(value.bitrateMbps || 0);
-    setContainer(value.container);
+    setContainer(value.format === "prores" ? "mov" : value.container);
     setNamingTemplate(value.namingTemplate);
   }
   async function savePreset() {
@@ -7114,6 +7148,7 @@ function ProxyDialog({
           bitrateMbps: bitrate || undefined,
           container,
           namingTemplate,
+          purpose: preset,
         }),
       );
       setSavedPresetId("");
@@ -7230,12 +7265,15 @@ function ProxyDialog({
                   if (value === "editorial") {
                     setFormat("prores");
                     setRes("1080p");
+                    setContainer("mov");
                   } else if (value === "offline") {
                     setFormat("h264");
                     setRes("720p");
+                    setContainer("mp4");
                   } else {
                     setFormat("h264");
                     setRes("1080p");
+                    setContainer("mp4");
                   }
                 }}
                 disabled={busy}
@@ -7249,7 +7287,11 @@ function ProxyDialog({
               编码格式
               <select
                 value={format}
-                onChange={(e) => setFormat(e.target.value as "h264" | "prores")}
+                onChange={(e) => {
+                  const value = e.target.value as "h264" | "prores";
+                  setFormat(value);
+                  if (value === "prores") setContainer("mov");
+                }}
                 disabled={busy}
               >
                 <option value="h264">H.264 · 通用预览</option>
@@ -7257,15 +7299,24 @@ function ProxyDialog({
               </select>
             </label>
             <label>
-              最大高度
+              常用输出尺寸
               <select
-                value={res}
-                onChange={(e) => setRes(e.target.value)}
+                value={
+                  ["1080p", "720p", "2160p"].includes(res) ? res : "custom"
+                }
+                onChange={(e) =>
+                  setRes(
+                    e.target.value === "custom"
+                      ? "1920x1080"
+                      : e.target.value,
+                  )
+                }
                 disabled={busy}
               >
                 <option value="1080p">1080p</option>
                 <option value="720p">720p</option>
                 <option value="2160p">2160p</option>
+                <option value="custom">自定义宽×高</option>
               </select>
             </label>
             <label>
@@ -7288,22 +7339,43 @@ function ProxyDialog({
                 onChange={(e) =>
                   setContainer(e.target.value as typeof container)
                 }
+                disabled={busy || format === "prores"}
               >
-                <option value="mp4">MP4</option>
-                <option value="mov">MOV</option>
-                <option value="mkv">MKV</option>
+                {format === "prores" ? (
+                  <option value="mov">MOV · ProRes 必需</option>
+                ) : (
+                  <>
+                    <option value="mp4">MP4</option>
+                    <option value="mov">MOV</option>
+                    <option value="mkv">MKV</option>
+                  </>
+                )}
               </select>
             </label>
           </div>
-          <label>
-            自定义分辨率
-            <input
-              value={res}
-              onChange={(e) => setRes(e.target.value)}
-              placeholder="1080p 或 1920x1080"
-            />
-            <small>支持高度格式或明确宽×高。</small>
-          </label>
+          {!["1080p", "720p", "2160p"].includes(res) && (
+            <label>
+              自定义分辨率
+              <input
+                value={res}
+                onChange={(e) => setRes(e.target.value)}
+                placeholder="例如 1920x1080"
+              />
+              <small>使用明确的宽×高；不会用未知比例补成 16:9。</small>
+            </label>
+          )}
+          <div className="notice">
+            <Info size={16} />
+            <span>
+              {preset === "editorial"
+                ? "剪辑代理：ProRes Proxy / MOV，文件通常较大，适合剪辑交换。"
+                : preset === "offline"
+                  ? "离线剪辑：H.264 720p，体积较小，适合轻量剪辑与传输。"
+                  : "通用审片：H.264 1080p，兼顾画面检查与交付体积。"}
+              参数会在入队时冻结；转码前重新完整核验已校验源，完成后建立输出
+              SHA-256 证据。
+            </span>
+          </div>
           <label>
             输出命名规则
             <input

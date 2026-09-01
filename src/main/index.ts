@@ -85,7 +85,17 @@ import {
   buildDiagnosticSnapshot,
   type BenchmarkResult,
 } from "./diagnostics";
-import { generateDeliveryManifest } from "./delivery";
+import {
+  generateDeliveryManifest,
+  preflightProxyDelivery,
+  publishProxyDeliveryPackage,
+} from "./delivery";
+import {
+  captureProxyOutput,
+  compareProxyMedia,
+  validateProxyParameters,
+  verifyProxySource,
+} from "./proxy-evidence";
 import {
   mergeWorkspace,
   normalizeProjectTemplate,
@@ -842,6 +852,7 @@ async function processProxyQueue() {
   proxyController = new AbortController();
   Object.assign(job, {
     status: "running",
+    stage: "validating-source",
     progress: 0,
     startedAt: Date.now(),
     error: undefined,
@@ -849,82 +860,66 @@ async function processProxyQueue() {
   emitProxyJobs();
   await persistProxyJobs();
   const lock = powerSaveBlocker.start("prevent-app-suspension");
+  let unpublishedProxyOutput: string | undefined;
   try {
-    if (!job.sourceDuration) {
-      const sourceMetadata = await inspectMedia(
-        job.input,
-        path.join(app.getPath("userData"), "thumbnails"),
-      ).catch(() => ({}) as any);
-      job.sourceDuration = sourceMetadata.duration;
-      job.sourceFrameRate ||= sourceMetadata.frameRate;
-      job.sourceAudio ||= sourceMetadata.audio;
-      job.timecode ||= sourceMetadata.timecode;
-      job.sourceColorSpace ||= sourceMetadata.colorSpace;
-    }
+    const parameters = job.parameterSnapshot;
+    if (!parameters)
+      throw new Error("旧代理任务缺少参数快照，请从素材库重新加入队列");
+    validateProxyParameters(parameters);
+    await verifyProxySource(job, proxyController.signal);
+    job.stage = "transcoding";
+    emitProxyJobs();
+    await persistProxyJobs();
     const result = await makeProxy(
       job.input,
       job.outputDir,
-      job.format,
-      job.resolution,
+      parameters.format,
+      parameters.resolution,
       {
         signal: proxyController.signal,
-        namingTemplate: job.namingTemplate,
-        bitrateMbps: job.bitrateMbps,
-        container: job.container,
+        namingTemplate: parameters.namingTemplate,
+        bitrateMbps: parameters.bitrateMbps,
+        container: parameters.container,
         onProgress: (progress) => {
           job.progress = progress;
           emitProxyJobs();
         },
       },
     );
+    unpublishedProxyOutput = result.outputPath;
+    job.stage = "validating-output";
+    emitProxyJobs();
     const outputMetadata = await inspectMedia(
       result.outputPath,
       path.join(app.getPath("userData"), "thumbnails"),
     ).catch(() => ({}) as any);
-    const notes: string[] = [],
-      frameRate =
-        !job.sourceFrameRate || !outputMetadata.frameRate
-          ? "unknown"
-          : Math.abs(
-                Number(job.sourceFrameRate) - Number(outputMetadata.frameRate),
-              ) < 0.02
-            ? "match"
-            : "changed",
-      timecode =
-        !job.timecode || !outputMetadata.timecode
-          ? "unknown"
-          : job.timecode === outputMetadata.timecode
-            ? "match"
-            : "changed",
-      audio = !job.sourceAudio
-        ? "unknown"
-        : outputMetadata.audio
-          ? "present"
-          : "missing",
-      colorSpace =
-        !job.sourceColorSpace || !outputMetadata.colorSpace
-          ? "unknown"
-          : job.sourceColorSpace === outputMetadata.colorSpace
-            ? "match"
-            : "changed";
-    if (frameRate === "changed")
-      notes.push(
-        `帧率由 ${job.sourceFrameRate} 变为 ${outputMetadata.frameRate}`,
-      );
-    if (timecode === "changed") notes.push("输出时间码与源素材不同");
-    if (audio === "missing") notes.push("源素材包含音轨，但代理未检测到音轨");
-    if (colorSpace === "changed")
-      notes.push(
-        `色彩空间由 ${job.sourceColorSpace} 变为 ${outputMetadata.colorSpace}`,
+    const outputEvidence = await captureProxyOutput(result.outputPath, {
+        duration: outputMetadata.duration,
+        frameRate: outputMetadata.frameRate,
+        timecode: outputMetadata.timecode,
+        audio: outputMetadata.audio,
+        audioTracks: outputMetadata.audioTracks,
+        rotation: outputMetadata.rotation,
+        colorSpace: outputMetadata.colorSpace,
+        resolution: outputMetadata.resolution,
+      }, proxyController.signal),
+      validation = compareProxyMedia(
+        job.sourceEvidence!.media,
+        outputEvidence,
       );
     Object.assign(job, {
       status: "completed",
+      stage: "ready",
       progress: 100,
       outputPath: result.outputPath,
+      outputEvidence,
       completedAt: Date.now(),
-      validation: { frameRate, timecode, audio, colorSpace, notes },
+      validation,
     });
+    unpublishedProxyOutput = undefined;
   } catch (e: any) {
+    if (unpublishedProxyOutput)
+      await fs.unlink(unpublishedProxyOutput).catch(() => {});
     const paused = proxyPauseRequested === job.id;
     Object.assign(job, {
       status: paused
@@ -934,6 +929,7 @@ async function processProxyQueue() {
           : "failed",
       error: paused ? undefined : e.message || String(e),
       pauseReason: paused ? job.pauseReason || "user" : undefined,
+      stage: paused ? "queued" : job.stage,
       completedAt: paused ? undefined : Date.now(),
     });
   } finally {
@@ -5093,20 +5089,24 @@ app.whenReady().then(async () => {
       if (!namingTemplate || !namingTemplate.includes("{name}"))
         throw new Error("命名规则必须包含 {name}");
       const existing = savedProxyPresets.find((item) => item.id === value.id),
-        now = Date.now();
+        now = Date.now(),
+        format = value.format === "prores" ? "prores" : "h264",
+        container = value.container || (format === "prores" ? "mov" : "mp4"),
+        parameters = validateProxyParameters({
+          purpose: value.purpose || "review",
+          format,
+          resolution,
+          bitrateMbps:
+            value.bitrateMbps && value.bitrateMbps > 0
+              ? Math.min(500, value.bitrateMbps)
+              : undefined,
+          container,
+          namingTemplate,
+        });
       const preset: SavedProxyPreset = {
         id: existing?.id || randomUUID(),
         name,
-        format: value.format === "prores" ? "prores" : "h264",
-        resolution,
-        bitrateMbps:
-          value.bitrateMbps && value.bitrateMbps > 0
-            ? Math.min(500, value.bitrateMbps)
-            : undefined,
-        container: ["mov", "mkv"].includes(value.container || "")
-          ? (value.container as "mov" | "mkv")
-          : "mp4",
-        namingTemplate,
+        ...parameters,
         createdAt: existing?.createdAt || now,
         updatedAt: now,
       };
@@ -5140,6 +5140,15 @@ app.whenReady().then(async () => {
       } = {},
     ) => {
       if (!inputs.length) throw new Error("请选择至少一个视频");
+      const parameters = validateProxyParameters({
+        purpose:
+          options.preset || (format === "prores" ? "editorial" : "review"),
+        format,
+        resolution,
+        bitrateMbps: options.bitrateMbps,
+        container: options.container || (format === "prores" ? "mov" : "mp4"),
+        namingTemplate: options.namingTemplate || "{name}_proxy_{resolution}",
+      });
       const canonicalOut = await canonical(out);
       for (const task of engine.getAllTasks())
         if (inside(canonicalOut, await canonical(task.sourcePath)))
@@ -5155,7 +5164,7 @@ app.whenReady().then(async () => {
                   (destination) =>
                     [
                       destination.path,
-                      { taskId: task.id, relativePath: record.relativePath },
+                      { task, record, destination },
                     ] as const,
                 ),
             ),
@@ -5166,26 +5175,52 @@ app.whenReady().then(async () => {
           throw new Error("只能为已校验的备份文件生成代理");
       const jobs: ProxyJob[] = [];
       for (const input of inputs) {
+        const source = tracked.get(input)!;
+        if (!source.destination.checksum && !source.record.srcChecksum)
+          throw new Error(`已校验记录缺少哈希证据：${path.basename(input)}`);
+        const stat = await fs.stat(input);
+        if (!stat.isFile()) throw new Error("请选择视频文件");
+        if (stat.size !== source.record.size)
+          throw new Error(`素材大小已变化，请先重新校验：${path.basename(input)}`);
         const metadata = await inspectMedia(
             input,
             path.join(app.getPath("userData"), "thumbnails"),
           ).catch(() => ({}) as any),
-          source = tracked.get(input)!;
+          sourceEvidence = {
+            taskId: source.task.id,
+            relativePath: source.record.relativePath,
+            path: input,
+            bytes: stat.size,
+            modifiedAt: stat.mtimeMs,
+            hashAlgorithm: source.task.hashAlgorithm,
+            checksum: source.destination.checksum || source.record.srcChecksum,
+            capturedAt: Date.now(),
+            media: {
+              duration: metadata.duration,
+              frameRate: metadata.frameRate,
+              timecode: metadata.timecode,
+              audio: metadata.audio,
+              audioTracks: metadata.audioTracks,
+              rotation: metadata.rotation,
+              colorSpace: metadata.colorSpace,
+              resolution: metadata.resolution,
+            },
+          };
         jobs.push({
           id: randomUUID(),
           input,
           name: path.basename(input),
           outputDir: out,
-          format,
-          resolution,
-          bitrateMbps: options.bitrateMbps,
-          container: options.container,
-          preset:
-            options.preset || (format === "prores" ? "editorial" : "review"),
-          namingTemplate: options.namingTemplate || "{name}_proxy_{resolution}",
-          sourceTaskId: source.taskId,
-          sourceRelativePath: source.relativePath,
+          format: parameters.format,
+          resolution: parameters.resolution,
+          bitrateMbps: parameters.bitrateMbps,
+          container: parameters.container,
+          preset: parameters.purpose,
+          namingTemplate: parameters.namingTemplate,
+          sourceTaskId: source.task.id,
+          sourceRelativePath: source.record.relativePath,
           status: "pending",
+          stage: "queued",
           progress: 0,
           createdAt: Date.now(),
           timecode: metadata.timecode,
@@ -5193,6 +5228,8 @@ app.whenReady().then(async () => {
           sourceAudio: metadata.audio,
           sourceDuration: metadata.duration,
           sourceColorSpace: metadata.colorSpace,
+          sourceEvidence,
+          parameterSnapshot: { ...parameters },
           dependsOn:
             options.chain && jobs.length
               ? [jobs[jobs.length - 1].id]
@@ -5233,6 +5270,7 @@ app.whenReady().then(async () => {
     if (!job || job.status !== "paused") throw new Error("该代理任务未暂停");
     Object.assign(job, {
       status: "pending",
+      stage: "queued",
       progress: 0,
       error: undefined,
       pauseReason: undefined,
@@ -5248,6 +5286,7 @@ app.whenReady().then(async () => {
       throw new Error("该任务不能重试");
     Object.assign(job, {
       status: "pending",
+      stage: "queued",
       progress: 0,
       error: undefined,
       pauseReason: undefined,
@@ -5275,7 +5314,14 @@ app.whenReady().then(async () => {
     ) => {
       if (!["resolve", "premiere", "fcpxml", "json"].includes(format))
         throw new Error("不支持的交付格式");
-      const extension =
+      const selected = await preflightProxyDelivery(
+          proxyJobs.filter(
+            (job) =>
+              job.status === "completed" &&
+              (!jobIds || jobIds.includes(job.id)),
+          ),
+        ),
+        extension =
           format === "fcpxml" ? "fcpxml" : format === "json" ? "json" : "csv",
         result = await dialog.showSaveDialog({
           defaultPath: `Kocpy_代理交付_${format}.${extension}`,
@@ -5284,14 +5330,7 @@ app.whenReady().then(async () => {
       if (!result.filePath) return null;
       await fs.writeFile(
         result.filePath,
-        generateDeliveryManifest(
-          proxyJobs.filter(
-            (job) =>
-              job.status === "completed" &&
-              (!jobIds || jobIds.includes(job.id)),
-          ),
-          format,
-        ),
+        generateDeliveryManifest(selected, format),
         "utf8",
       );
       return result.filePath;
@@ -5309,57 +5348,11 @@ app.whenReady().then(async () => {
       properties: ["openDirectory", "createDirectory"],
     });
     if (chosen.canceled) return null;
-    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-    const root = path.join(chosen.filePaths[0], `Kocpy_Delivery_${stamp}`),
-      mediaDir = path.join(root, "Media");
-    await fs.mkdir(mediaDir, { recursive: true });
-    const checks = [];
-    for (const job of completed) {
-      const source = job.outputPath!,
-        output = path.join(mediaDir, path.basename(source));
-      await fs.copyFile(source, output);
-      checks.push({
-        jobId: job.id,
-        sourceTaskId: job.sourceTaskId,
-        sourceRelativePath: job.sourceRelativePath,
-        file: path.relative(root, output),
-        bytes: (await fs.stat(output)).size,
-        sha256: await hashFile(output, "sha256"),
-        validation: job.validation,
-      });
-    }
-    await Promise.all([
-      fs.writeFile(
-        path.join(root, "Resolve.csv"),
-        generateDeliveryManifest(completed, "resolve"),
-        "utf8",
-      ),
-      fs.writeFile(
-        path.join(root, "Premiere.csv"),
-        generateDeliveryManifest(completed, "premiere"),
-        "utf8",
-      ),
-      fs.writeFile(
-        path.join(root, "FinalCut.fcpxml"),
-        generateDeliveryManifest(completed, "fcpxml"),
-        "utf8",
-      ),
-      fs.writeFile(
-        path.join(root, "Delivery_Check.json"),
-        JSON.stringify(
-          {
-            application: "Kocpy",
-            version: app.getVersion(),
-            generatedAt: Date.now(),
-            files: checks,
-          },
-          null,
-          2,
-        ),
-        "utf8",
-      ),
-    ]);
-    return root;
+    return publishProxyDeliveryPackage(
+      completed,
+      chosen.filePaths[0],
+      app.getVersion(),
+    );
   });
   engine.on("progress", (payload) => {
     if (operations.active)
@@ -5475,6 +5468,27 @@ app.whenReady().then(async () => {
             )) {
               const copy = record.destinations.find((item) => item.verified);
               if (!copy) continue;
+              const checksum = copy.checksum || record.srcChecksum;
+              if (!checksum)
+                throw new Error(
+                  `完成后代理缺少已校验哈希证据：${record.relativePath}`,
+                );
+              const stat = await fs.stat(copy.path).catch(() => undefined);
+              if (!stat?.isFile() || stat.size !== record.size)
+                throw new Error(
+                  `完成后代理源已离线或大小变化：${record.relativePath}`,
+                );
+              const metadata = await inspectMedia(
+                copy.path,
+                path.join(app.getPath("userData"), "thumbnails"),
+              ).catch(() => ({}) as any);
+              const parameters = validateProxyParameters({
+                purpose: "review",
+                format: "h264",
+                resolution: "1080p",
+                container: "mp4",
+                namingTemplate: "{name}_proxy_{resolution}",
+              });
               jobs.push({
                 id: randomUUID(),
                 input: copy.path,
@@ -5488,8 +5502,35 @@ app.whenReady().then(async () => {
                 sourceTaskId: task.id,
                 sourceRelativePath: record.relativePath,
                 status: "pending",
+                stage: "queued",
                 progress: 0,
                 createdAt: Date.now(),
+                timecode: metadata.timecode,
+                sourceFrameRate: metadata.frameRate,
+                sourceAudio: metadata.audio,
+                sourceDuration: metadata.duration,
+                sourceColorSpace: metadata.colorSpace,
+                sourceEvidence: {
+                  taskId: task.id,
+                  relativePath: record.relativePath,
+                  path: copy.path,
+                  bytes: stat.size,
+                  modifiedAt: stat.mtimeMs,
+                  hashAlgorithm: task.hashAlgorithm,
+                  checksum,
+                  capturedAt: Date.now(),
+                  media: {
+                    duration: metadata.duration,
+                    frameRate: metadata.frameRate,
+                    timecode: metadata.timecode,
+                    audio: metadata.audio,
+                    audioTracks: metadata.audioTracks,
+                    rotation: metadata.rotation,
+                    colorSpace: metadata.colorSpace,
+                    resolution: metadata.resolution,
+                  },
+                },
+                parameterSnapshot: parameters,
               });
             }
             proxyJobs.push(...jobs);

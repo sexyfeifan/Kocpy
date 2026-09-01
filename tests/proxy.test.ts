@@ -8,9 +8,33 @@ import { makeProxy } from "../src/main/proxy";
 import { ffmpegPath } from "../src/main/ffmpeg";
 import { generateDeliveryManifest } from "../src/main/delivery";
 import { BackupEngine } from "../src/main/backup/BackupEngine";
-import { inspectMedia } from "../src/main/media";
+import { inspectMedia, parseMediaProbe } from "../src/main/media";
 const exec = promisify(execFile);
 const ffmpeg = ffmpegPath();
+it("parses media fields without supplying defaults for absent values", () => {
+  const parsed = parseMediaProbe(`
+Duration: 00:00:12.500, start: 0.000000
+Stream #0:0: Video: h264, yuv420p(bt709), 1920x1080, 25 fps
+      rotation        : 90
+Stream #0:1: Audio: aac, 48000 Hz, stereo
+Stream #0:2: Audio: pcm_s16le, 48000 Hz, mono
+    Audio: 01:00:00:00
+    timecode        : 01:00:00:00
+Output #0, null, to 'pipe:':
+  Stream #0:0: Video: wrapped_avframe
+  Stream #0:1: Audio: pcm_s16le, 48000 Hz, stereo
+`);
+  expect(parsed).toMatchObject({
+    duration: "00:00:12.500",
+    resolution: "1920x1080",
+    frameRate: "25",
+    colorSpace: "bt709",
+    rotation: 90,
+    audioTracks: 2,
+    timecode: "01:00:00:00",
+  });
+  expect(parseMediaProbe("unrecognized").audioTracks).toBeUndefined();
+});
 it("reads metadata from successful probing and produces an audio waveform", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "kocpy-media-metadata-"));
   try {
@@ -118,7 +142,7 @@ it("applies proxy naming templates without overwriting existing files", async ()
   } finally { await fs.rm(root, { recursive: true, force: true }); }
 });
 it("exports Resolve, Premiere, Final Cut and JSON proxy delivery manifests", () => {
-  const jobs: any[] = [{ id: "p1", input: "/media/A001.mov", name: "A001.mov", outputDir: "/proxy", outputPath: "/proxy/A001_proxy.mov", format: "prores", resolution: "1080p", status: "completed", progress: 100, createdAt: 1, timecode: "01:00:00:00", sourceFrameRate: "25", sourceAudio: "pcm",sourceDuration:"00:00:12.500" }];
+  const jobs: any[] = [{ id: "p1", input: "/media/A001.mov", name: "A001.mov", outputDir: "/proxy", outputPath: "/proxy/A001_proxy.mov", format: "prores", resolution: "1080p", status: "completed", progress: 100, createdAt: 1, timecode: "01:00:00:00", sourceFrameRate: "25", sourceAudio: "pcm",sourceDuration:"00:00:12.500", outputEvidence: { path: "/proxy/A001_proxy.mov", bytes: 100, sha256: "abc", checkedAt: 1, duration: "00:00:12.500", frameRate: "25", timecode: "01:00:00:00", audio: "pcm", audioTracks: 1, resolution: "1920x1080" }, validation: { readiness: "ready", notes: [] } }];
   expect(generateDeliveryManifest(jobs, "resolve")).toContain("Media Path,Clip Name");
   expect(generateDeliveryManifest(jobs, "premiere")).toContain("Start Timecode");
   expect(generateDeliveryManifest(jobs, "fcpxml")).toContain("duration=\"12500/1000s\"");

@@ -31,7 +31,10 @@ export async function makeProxy(input: string, outputDir: string, format: "h264"
     .replaceAll("{name}", name).replaceAll("{resolution}", resolution).replaceAll("{format}", format)
     .replace(/[/\\:\0]/g, "_").trim() || `${name}_proxy_${resolution}`;
   const container = options.container || (format === "prores" ? "mov" : "mp4");
-  if (!["mp4", "mov", "mkv"].includes(container) || (format === "prores" && container === "mp4"))
+  if (
+    !["mp4", "mov", "mkv"].includes(container) ||
+    (format === "prores" && container !== "mov")
+  )
     throw new Error("所选编码与封装不兼容");
   const output = path.join(outputDir, `${safeTemplate}_${randomUUID().slice(0, 6)}.${container}`);
   const filter = resolution.includes("x") ? `scale=${resolution.replace("x", ":")}` : `scale=-2:'min(${Number(resolution.replace("p", ""))},ih)'`;
