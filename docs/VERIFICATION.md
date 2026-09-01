@@ -10,6 +10,9 @@
 - 使用仓库外 `/tmp` 隔离数据实际启动开发候选并通过渲染调试通道检查：1080×720 下代理范围、兼容性说明、交付按钮、长路径、源／输出证据和内部滚动可用；代理弹窗标题／底栏固定，ProRes 自动锁定 MOV；软件内 0.1.28 说明只有点击后显示，20 个模块全部默认折叠。
 - 本地 arm64 与 x64 DMG 均通过镜像校验，版本为 0.1.28，主程序架构分别为 arm64／x86_64；两包 `app.asar` SHA-256 均为 `1a343a71c3de3d5c50638aaa548e82fed8d9abb337772e0217a83379a60e766c`。本地 DMG SHA-256：arm64 `f6b064da4523ae97e50ff0a409596212fe3c5347be5b39ab62af818912e879dd`，x64 `c579653de9165e64908d752421f1d7548c1fe29a8a52ff6ead4f3277031602b8`；它们不是最终 GitHub Release 附件。
 - arm64 原生与 x64 Rosetta 包内运行时均通过 SHA-256／SHA-1／MD5 传输恢复专项、H.264／ProRes 媒体专项及新的代理证据／原子交付专项。两个打包候选均以隔离数据进入 1080×720 代理队列并显示 0.1.28、输出证据和兼容性边界；Rosetta 不冒充原生 Intel，仍以标签 CI 原生 Intel 为最终架构证据。
+- 提交 `0f20f8f` 的双架构预发布流水线 [33511254310](https://github.com/sexyfeifan/Kocpy/actions/runs/33511254310) 成功：原生 arm64 与原生 Intel 均完成 264 项回归、4 项条件跳过、来源门禁、生产构建、DMG 打包及三组包内运行时专项。分支运行按规则跳过聚合发布步骤，没有创建或公开 Release。
+- 两份 CI 候选附件已完整回下载且摘要与 GitHub Artifact 记录一致：arm64 压缩附件为 `f5b1fc8c6f0459a944fc2989cd101a2f81c355e1feda4f492718e98a9cc5bdfd`，x64 为 `5b0a0d90a65622b7f8d2f5c0d27082bf1b182a14639df17f049d23e745177669`。其中 arm64 DMG SHA-256 为 `ea40bb2f7e858eaa7070f9961cc7b1289b6a31086fe7460e42094443affe2cb0`，x64 为 `56f804600d4b245da205065bd937b4dd45c551c9b5d4fc9fde338cda7f29585b`；两份镜像均通过 `hdiutil verify`，只读挂载版本为 0.1.28，主程序分别为 arm64／x86_64。
+- 两个 CI 候选包的 `app.asar` 摘要均为 `e84bfdcaa6d2d46faa7dd97ab2c2a029533dfb9a19738358f5e39e461cbed3c2`；内置 arm64／x64 FFmpeg 摘要分别为 `388c97bb09f54ca4efbd64bdc822e9adb7aebf4aa3f73b949993f3379fd3d11c` 与 `1473d8e78105a64280f4b65f3efbd61c6d9ebc186ce341000c1cd7b1f04c13f0`，架构与名称相符。回下载包在本机再次直接通过三哈希传输／恢复、媒体编解码与代理证据／原子交付专项；x64 本机复核运行于 Rosetta，原生 Intel 证据来自上述 CI。
 - 本版仍无 Developer ID 签名／公证；真实摄影机 RAW、Premiere、Final Cut、NAS、拔盘、断电、睡眠、空间耗尽和全部文件系统矩阵未全面验证。标签流水线、最终附件回下载和 GitHub Release 核对完成前，本节只代表本地候选验收。
 
 ## 0.1.27 最终发布验收（2026-09-01）
