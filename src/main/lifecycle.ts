@@ -362,6 +362,10 @@ export function mergeWorkspace(
           projects[index].checklistRuns,
           project.checklistRuns,
         ),
+        takeoverEvents: mergeEvidence(
+          projects[index].takeoverEvents,
+          project.takeoverEvents,
+        ),
       };
       projectsUpdated++;
       conflicts.push(`项目 ${project.name} 配置已合并`);

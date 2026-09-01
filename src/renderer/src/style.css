@@ -1373,6 +1373,43 @@ small {
   border: 1px solid var(--border);
   border-radius: 7px;
 }
+.import-candidates > span.needs-confirmation {
+  border-color: color-mix(in srgb, var(--amber) 55%, var(--border));
+  background: color-mix(in srgb, var(--amber) 5%, transparent);
+}
+.candidate-mapping-grid {
+  display: grid;
+  grid-template-columns: minmax(132px, 0.85fr) repeat(3, minmax(118px, 1fr));
+  gap: 7px;
+  margin-top: 9px;
+}
+.candidate-mapping-grid input {
+  min-width: 0;
+  height: 35px;
+  padding: 0 9px;
+  font-size: 12px;
+}
+.existing-audit-trail {
+  margin-top: 10px;
+}
+.audit-event-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+.audit-event-list > div {
+  display: grid;
+  gap: 3px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel) 80%, transparent);
+}
+.audit-event-list span,
+.audit-event-list small {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
 .import-candidates small {
   color: var(--muted);
   margin-top: 3px;
@@ -5022,6 +5059,7 @@ small {
   border-top: 1px solid var(--border);
 }
 .import-candidates {
+  grid-template-columns: 1fr;
   max-height: 320px;
   overflow: auto;
 }

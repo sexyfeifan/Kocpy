@@ -5,6 +5,7 @@ import type {
   ArchiveHealthRecord,
   ArchiveReminder,
   BackupTask,
+  ExistingCandidateDecision,
   ExistingImportPreview,
   ExistingImportProgress,
   ExistingReanalysisResult,
@@ -26,6 +27,7 @@ export type {
   ArchiveHealthRecord,
   ArchiveReminder,
   BackupTask,
+  ExistingCandidateDecision,
   ExistingImportPreview,
   ExistingImportProgress,
   ExistingReanalysisResult,
@@ -233,6 +235,9 @@ export interface API {
     scope: "card" | "day" | "project",
     selectedDate?: string,
     jobId?: string,
+    previewDigest?: string,
+    candidateDecisions?: ExistingCandidateDecision[],
+    associateMatchingCopies?: boolean,
   ): Promise<BackupTask[]>;
   reanalyzeExistingProject(
     projectId: string,

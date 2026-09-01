@@ -9,6 +9,7 @@ import {
   previewExistingBackup,
   projectCoverage,
   repairMissingManifestFiles,
+  resolveExistingCandidates,
   reviseMhlMissingEntries,
 } from "../src/main/production-lifecycle";
 import { generateMhl } from "../src/main/backup/ManifestGenerator";
@@ -103,6 +104,72 @@ describe("0.1.0 production lifecycle", () => {
         cameraPosition: "A",
         name: "FX3_202608011005",
       });
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("freezes a takeover preview and requires every ambiguous mapping to be resolved", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "kocpy-preview-lock-"));
+    try {
+      await fs.writeFile(path.join(root, "clip.mov"), "first");
+      const preview = await previewExistingBackup(root, project, "card");
+      expect(preview.scanDigest).toMatch(/^[a-f0-9]{64}$/);
+      expect(preview.canImport).toBe(false);
+      expect(preview.blockingIssues.map((item) => item.code)).toEqual(
+        expect.arrayContaining(["missing-date", "missing-device"]),
+      );
+      expect(() => resolveExistingCandidates(preview)).toThrow(
+        /确认有效拍摄日期/,
+      );
+      const resolved = resolveExistingCandidates(preview, [
+        {
+          relativeRoot: preview.candidates[0].relativeRoot,
+          shootingDate: "2026-08-25",
+          device: "FX3",
+          cameraPosition: "A",
+          card: "A001",
+        },
+      ]);
+      expect(resolved).toEqual([
+        expect.objectContaining({
+          shootingDate: "2026-08-25",
+          device: "FX3",
+          card: "A001",
+        }),
+      ]);
+      const unchanged = await previewExistingBackup(root, project, "card");
+      expect(unchanged.scanDigest).toBe(preview.scanDigest);
+      await fs.writeFile(path.join(root, "clip-2.mov"), "changed");
+      const changed = await previewExistingBackup(root, project, "card");
+      expect(changed.scanDigest).not.toBe(preview.scanDigest);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects two folders mapped to the same logical material roll", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "kocpy-preview-duplicate-"));
+    try {
+      for (const folder of ["one", "two"]) {
+        const cardRoot = path.join(root, "20260825", "FX3", "A", folder);
+        await fs.mkdir(cardRoot, { recursive: true });
+        await fs.writeFile(path.join(cardRoot, "clip.mov"), folder);
+      }
+      const configured = {
+        ...project,
+        devicePositions: { FX3: ["A"] },
+      };
+      const preview = await previewExistingBackup(root, configured, "project");
+      const decisions = preview.candidates.map((item) => ({
+        relativeRoot: item.relativeRoot,
+        shootingDate: "2026-08-25",
+        device: "FX3",
+        card: "A001",
+      }));
+      expect(() => resolveExistingCandidates(preview, decisions)).toThrow(
+        /映射到同一个/,
+      );
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }

@@ -19,6 +19,7 @@ import {
   Notification,
   nativeTheme,
   screen,
+  type MessageBoxOptions,
 } from "electron";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
@@ -52,6 +53,8 @@ import type {
   ArchiveHealthRecord,
   ArchiveReminder,
   BackupTask,
+  ExistingAuditEvent,
+  ExistingCandidateDecision,
   NasPreset,
   ProjectConfig,
   ProjectTemplate,
@@ -96,6 +99,7 @@ import {
   importExistingBackup,
   inspectExternalManifest,
   previewExistingBackup,
+  resolveExistingCandidates,
   projectCoverage,
   repairMissingManifestFiles,
   reviseMhlMissingEntries,
@@ -227,6 +231,58 @@ const sameManifestDifferences = (
           checksumMismatches: right.checksumMismatches,
         }),
   );
+
+const existingEvent = (
+  input: Omit<ExistingAuditEvent, "id" | "at" | "operator"> & {
+    at?: number;
+    operator?: string;
+  },
+): ExistingAuditEvent => ({
+  id: randomUUID(),
+  at: input.at || Date.now(),
+  operator: input.operator?.trim() || "本机用户",
+  action: input.action,
+  sourcePath: input.sourcePath,
+  previousPath: input.previousPath,
+  manifestPath: input.manifestPath,
+  digest: input.digest,
+  summary: input.summary,
+  details: input.details,
+});
+const existingOperator = async () =>
+  (
+    await store.read("settings.json", defaultSettings)
+  ).operator?.trim() || "本机用户";
+
+const appendExistingTaskEvent = (
+  task: BackupTask,
+  event: ExistingAuditEvent,
+) => {
+  task.existingAuditTrail = [...(task.existingAuditTrail || []), event];
+  return task;
+};
+
+const appendProjectTakeoverEvent = (
+  project: ProjectConfig,
+  event: ExistingAuditEvent,
+) => {
+  project.takeoverEvents = [...(project.takeoverEvents || []), event];
+};
+
+const attachExistingVolumeIdentity = async (task: BackupTask) => {
+  const identity = await volumeIdentity(task.sourcePath);
+  task.sourceVolumeId = identity.id;
+  task.sourceVolumeUuid = identity.uuid;
+  task.sourceVolumeName = identity.name;
+  const destination = task.destinations[0];
+  if (destination)
+    Object.assign(destination, {
+      volumeId: identity.id,
+      volumeUuid: identity.uuid,
+      volumeName: identity.name,
+    });
+  return task;
+};
 
 const consolidateProjectExistingRecords = (projectId: string) => {
   const imported = engine
@@ -2022,12 +2078,50 @@ app.whenReady().then(async () => {
       if (!project) throw new Error("项目不存在");
       if (!hasProjectRuleEvidence(project))
         Object.assign(project, ensureProjectRuleEvidence(project));
+      const preview = await previewExistingBackup(
+          root,
+          project,
+          "card",
+          metadata?.shootingDate,
+        ),
+        decisions = resolveExistingCandidates(preview, [
+          {
+            relativeRoot: ".",
+            shootingDate:
+              metadata?.shootingDate || preview.suggestedDate || "",
+            device: metadata?.device || preview.suggestedDevice || "",
+            cameraPosition: metadata?.cameraPosition,
+            card: metadata?.card || preview.suggestedCard || "",
+          },
+        ]);
+      root = preview.root;
       const task = await importExistingBackup(
         project,
         root,
         mode,
-        metadata || {},
+        decisions[0],
       );
+      const finalPreview = await previewExistingBackup(
+        root,
+        project,
+        "card",
+        metadata?.shootingDate,
+      );
+      if (finalPreview.scanDigest !== preview.scanDigest)
+        throw new Error(
+          "接管期间目录内容或映射发生变化，未写入记录；请重新预览后再试",
+        );
+      await attachExistingVolumeIdentity(task);
+      const event = existingEvent({
+        operator: await existingOperator(),
+        action: "import",
+        sourcePath: root,
+        digest: preview.scanDigest,
+        summary: `接管 1 个素材卷；模式 ${mode}`,
+        details: { scope: "card", candidates: 1, files: task.totalFiles },
+      });
+      appendExistingTaskEvent(task, event);
+      appendProjectTakeoverEvent(project, event);
       engine.loadTask(task);
       const consolidated = consolidateProjectExistingRecords(projectId);
       project.boundRoots = deduplicateBoundRoots([
@@ -2054,6 +2148,9 @@ app.whenReady().then(async () => {
       scope: "card" | "day" | "project",
       selectedDate?: string,
       jobId = randomUUID(),
+      previewDigest?: string,
+      candidateDecisions: ExistingCandidateDecision[] = [],
+      associateMatchingCopies = false,
     ) => {
       const startedAt = Date.now();
       let completedBytes = 0,
@@ -2103,6 +2200,10 @@ app.whenReady().then(async () => {
         ).map(normalizeProject),
         project = projects.find((item) => item.id === projectId);
       if (!project) throw new Error("项目不存在");
+      if (!associateMatchingCopies)
+        throw new Error(
+          "请确认相同完整哈希的目录应关联为同一逻辑素材卷；同一物理盘不会重复计数",
+        );
       if (!hasProjectRuleEvidence(project))
         Object.assign(project, ensureProjectRuleEvidence(project));
       const preview = await previewExistingBackup(
@@ -2111,7 +2212,20 @@ app.whenReady().then(async () => {
         scope,
         selectedDate,
       );
-      const candidates = preview.candidates;
+      root = preview.root;
+      if (!/^[a-f0-9]{64}$/.test(previewDigest || ""))
+        throw new Error("接管预览已失效，请重新检查目录映射后再接管");
+      if (preview.scanDigest !== previewDigest)
+        throw new Error(
+          "目录内容或识别映射已变化，请重新检查预览后再接管",
+        );
+      const decisions = resolveExistingCandidates(preview, candidateDecisions),
+        candidates = preview.candidates.map((candidate) => ({
+          ...candidate,
+          ...decisions.find(
+            (decision) => decision.relativeRoot === candidate.relativeRoot,
+          )!,
+        }));
       if (!candidates.length)
         throw new Error(
           scope === "day"
@@ -2198,6 +2312,17 @@ app.whenReady().then(async () => {
             },
           );
         }
+        const finalPreview = await previewExistingBackup(
+          root,
+          project,
+          scope,
+          selectedDate,
+        );
+        if (finalPreview.scanDigest !== preview.scanDigest)
+          throw new Error(
+            "接管期间目录内容或识别映射发生变化，未写入记录；请重新预览后再试",
+          );
+        await Promise.all(tasks.map(attachExistingVolumeIdentity));
       } catch (error) {
         emitImportProgress("failed", String(error), {
           totalFiles,
@@ -2213,7 +2338,26 @@ app.whenReady().then(async () => {
         totalCandidates,
         force: true,
       });
-      for (const task of tasks) engine.loadTask(task);
+      const event = existingEvent({
+        operator: await existingOperator(),
+        action: "import",
+        sourcePath: root,
+        digest: preview.scanDigest,
+        summary: `接管 ${tasks.length} 个素材卷；范围 ${scope}；模式 ${mode}`,
+        details: {
+          scope,
+          mode,
+          candidates: tasks.length,
+          files: totalFiles,
+          bytes: totalBytes,
+          matchingCopiesAssociated: true,
+        },
+      });
+      for (const task of tasks) {
+        appendExistingTaskEvent(task, event);
+        engine.loadTask(task);
+      }
+      appendProjectTakeoverEvent(project, event);
       const consolidated = consolidateProjectExistingRecords(projectId);
       project.boundRoots = deduplicateBoundRoots([
         ...(project.boundRoots || []),
@@ -2372,6 +2516,39 @@ app.whenReady().then(async () => {
         ])
           engine.deleteTask(duplicateId);
         project.boundRoots = uniqueRoots;
+        appendProjectTakeoverEvent(
+          project,
+          existingEvent({
+            operator: await existingOperator(),
+            action: "refresh",
+            sourcePath:
+              project.boundRoots[0]?.path ||
+              project.projectFolderName ||
+              project.name,
+            digest: createHash("sha256")
+              .update(
+                JSON.stringify({
+                  importedTasks: importedTasks.length,
+                  metadataUpdated,
+                  duplicates: consolidated.duplicateIds,
+                  aggregates: consolidated.aggregateIds,
+                  unavailable: [...unavailableSources].sort(),
+                  manifestsInspected,
+                  manifestDifferences,
+                }),
+              )
+              .digest("hex"),
+            summary: `刷新接管信息：${importedTasks.length} 条记录，${unavailableSources.size} 个来源离线`,
+            details: {
+              importedTasks: importedTasks.length,
+              metadataUpdated,
+              duplicatesMerged: consolidated.duplicateIds.length,
+              aggregateRecordsRemoved: consolidated.aggregateIds.length,
+              unavailableSources: unavailableSources.size,
+              manifestDifferences,
+            },
+          }),
+        );
         await Promise.all([store.write("projects.json", projects), persist()]);
         await catalog.rebuild(engine.getAllTasks(), projects);
       }
@@ -2512,6 +2689,31 @@ app.whenReady().then(async () => {
             ...task.verifyLog,
             "已重新读取全部现存文件并建立首次哈希基线；不代表原始现场接收校验",
           ].slice(-120);
+          appendExistingTaskEvent(
+            task,
+            existingEvent({
+              operator: await existingOperator(),
+              action: "baseline",
+              sourcePath: task.sourcePath,
+              digest: createHash("sha256")
+                .update(
+                  JSON.stringify(
+                    task.fileRecords.map((record) => [
+                      record.relativePath,
+                      record.size,
+                      record.srcChecksum,
+                    ]),
+                  ),
+                )
+                .digest("hex"),
+              summary: `建立首次哈希基线：${task.totalFiles} 个文件`,
+              details: {
+                files: task.totalFiles,
+                bytes: task.totalBytes,
+                algorithm: task.hashAlgorithm,
+              },
+            }),
+          );
           await Promise.all([persist(), catalog.upsertTask(task)]);
           completedBytes = totalBytes;
           completedFiles = totalFiles;
@@ -2545,7 +2747,9 @@ app.whenReady().then(async () => {
         });
         if (chosen.canceled) return null;
         const healthyRoot = await canonical(chosen.filePaths[0]),
-          targetRoot = await canonical(task.sourcePath);
+          targetRoot = await canonical(task.sourcePath),
+          manifestDigest = await hashFile(comparison.path, "sha256"),
+          operator = await existingOperator();
         if (healthyRoot === targetRoot)
           throw new Error("健康副本不能与待修复目录相同");
 
@@ -2623,6 +2827,23 @@ app.whenReady().then(async () => {
             ...task.verifyLog,
             `已从健康副本映射 ${result.sourceRoot} → ${result.manifestRoot} 补回 ${result.files} 个文件（${result.bytes} 字节）；随后必须完整重校验外部清单`,
           ].slice(-120);
+          appendExistingTaskEvent(
+            task,
+            existingEvent({
+              operator,
+              action: "manifest-repair",
+              sourcePath: task.sourcePath,
+              manifestPath: comparison.path,
+              digest: manifestDigest,
+              summary: `从健康副本补回 ${result.files} 个文件，等待完整重校验`,
+              details: {
+                files: result.files,
+                bytes: result.bytes,
+                healthySourceRoot: result.sourceRoot,
+                manifestRoot: result.manifestRoot,
+              },
+            }),
+          );
           await Promise.all([persist(), catalog.upsertTask(task)]);
           emit(
             "completed",
@@ -2654,7 +2875,12 @@ app.whenReady().then(async () => {
           ).map(normalizeProject),
           project = projects.find((item) => item.id === task.projectId);
         if (!project) throw new Error("项目不存在");
-        const preview = await previewExistingBackup(
+        const manifestDigest = await hashFile(
+            task.externalManifest.path,
+            "sha256",
+          ),
+          operator = await existingOperator(),
+          preview = await previewExistingBackup(
             task.sourcePath,
             project,
             "card",
@@ -2763,7 +2989,11 @@ app.whenReady().then(async () => {
                   completedAt: Date.now(),
                 },
               ],
-              log = task.verifyLog;
+              log = task.verifyLog,
+              existingAuditTrail = task.existingAuditTrail,
+              sourceVolumeId = task.sourceVolumeId,
+              sourceVolumeUuid = task.sourceVolumeUuid,
+              sourceVolumeName = task.sourceVolumeName;
             Object.assign(task, verified, {
               id: originalId,
               createdAt: originalCreatedAt,
@@ -2772,7 +3002,23 @@ app.whenReady().then(async () => {
               operationAttemptId: operationAttempts.at(-1)!.id,
               operationAttempts,
               verifyLog: [...log, ...verified.verifyLog].slice(-120),
+              existingAuditTrail,
+              sourceVolumeId,
+              sourceVolumeUuid,
+              sourceVolumeName,
             });
+            appendExistingTaskEvent(
+              task,
+              existingEvent({
+                operator,
+                action: "manifest-reverify",
+                sourcePath: task.sourcePath,
+                manifestPath: task.externalManifest?.path,
+                digest: manifestDigest,
+                summary: `外部清单完整重校验后仍有差异：${task.errorMessage || "需要处理"}`,
+                details: { status: task.status },
+              }),
+            );
             await Promise.all([persist(), catalog.upsertTask(task)]);
             completedBytes = totalBytes;
             completedFiles = totalFiles;
@@ -2811,7 +3057,11 @@ app.whenReady().then(async () => {
                 completedAt: Date.now(),
               },
             ],
-            log = task.verifyLog;
+            log = task.verifyLog,
+            existingAuditTrail = task.existingAuditTrail,
+            sourceVolumeId = task.sourceVolumeId,
+            sourceVolumeUuid = task.sourceVolumeUuid,
+            sourceVolumeName = task.sourceVolumeName;
           Object.assign(task, verified, {
             id: originalId,
             createdAt: originalCreatedAt,
@@ -2820,7 +3070,23 @@ app.whenReady().then(async () => {
             operationAttemptId: operationAttempts.at(-1)!.id,
             operationAttempts,
             verifyLog: [...log, ...verified.verifyLog].slice(-120),
+            existingAuditTrail,
+            sourceVolumeId,
+            sourceVolumeUuid,
+            sourceVolumeName,
           });
+          appendExistingTaskEvent(
+            task,
+            existingEvent({
+              operator,
+              action: "manifest-reverify",
+              sourcePath: task.sourcePath,
+              manifestPath: task.externalManifest?.path,
+              digest: manifestDigest,
+              summary: "外部清单完整重校验通过",
+              details: { status: task.status, files: task.totalFiles },
+            }),
+          );
           await Promise.all([persist(), catalog.upsertTask(task)]);
           completedBytes = totalBytes;
           completedFiles = totalFiles;
@@ -2863,6 +3129,8 @@ app.whenReady().then(async () => {
         )
       )
         throw new Error("请先完整读取现存文件并建立可信哈希基线");
+      const manifestDigest = await hashFile(comparison.path, "sha256"),
+        operator = await existingOperator();
       comparison.resolution = {
         type: "accepted-extra",
         resolvedAt: Date.now(),
@@ -2872,6 +3140,18 @@ app.whenReady().then(async () => {
         -120,
       );
       task.errorMessage = undefined;
+      appendExistingTaskEvent(
+        task,
+        existingEvent({
+          operator,
+          action: "manifest-accept-extra",
+          sourcePath: task.sourcePath,
+          manifestPath: comparison.path,
+          digest: manifestDigest,
+          summary: `确认保留 ${comparison.extra.length} 个额外文件；原清单差异保留`,
+          details: { extra: [...comparison.extra] },
+        }),
+      );
       await Promise.all([persist(), catalog.upsertTask(task)]);
       return task;
     }),
@@ -2929,6 +3209,24 @@ app.whenReady().then(async () => {
           ...task.verifyLog,
           `用户经重要确认从 MHL 排除 ${result.excluded.length} 个缺失记录；原因：${note}；原始清单 SHA-256 ${result.originalManifestSha256}；审计副本 ${result.auditPath}`,
         ].slice(-120);
+        appendExistingTaskEvent(
+          task,
+          existingEvent({
+            operator: await existingOperator(),
+            action: "manifest-revise",
+            sourcePath: task.sourcePath,
+            manifestPath,
+            digest: result.revisedManifestSha256,
+            summary: `经重要确认从 MHL 排除 ${result.excluded.length} 个记录`,
+            details: {
+              excluded: result.excluded,
+              reason: note,
+              originalManifestSha256: result.originalManifestSha256,
+              revisedManifestSha256: result.revisedManifestSha256,
+              auditPath: result.auditPath,
+            },
+          }),
+        );
         await Promise.all([persist(), catalog.upsertTask(task)]);
         return result;
       }),
@@ -2980,10 +3278,23 @@ app.whenReady().then(async () => {
           ),
         ),
       ),
-      targetIndex = Math.max(
-        0,
-        availability.findIndex((value) => !value),
-      );
+      unavailableIndex = availability.findIndex((value) => !value),
+      associatingCopy = unavailableIndex < 0,
+      targetIndex = associatingCopy ? task.destinations.length : unavailableIndex,
+      destination = associatingCopy ? undefined : task.destinations[targetIndex],
+      previousRoot = destination
+        ? destination.resolvedPath || destination.path
+        : "",
+      previousSourcePath = task.sourcePath;
+    if (
+      task.destinations.some(
+        (item, index) =>
+          index !== targetIndex &&
+          existingSourceKey(item.resolvedPath || item.path) ===
+            existingSourceKey(root),
+      )
+    )
+      throw new Error("所选目录已经是这份素材卷的已记录副本");
     let matched = "";
     for (const suffix of [relativePath, path.basename(relativePath)]) {
       const candidate = await safeChild(root, suffix);
@@ -3010,32 +3321,137 @@ app.whenReady().then(async () => {
       if ((await hashFile(candidate, task.hashAlgorithm)) !== item.srcChecksum)
         throw new Error(`${item.relativePath} 的哈希与原记录不一致`);
     }
-    const identity = await volumeIdentity(root),
-      destination = task.destinations[targetIndex];
+    const confirmationOptions: MessageBoxOptions = {
+      type: associatingCopy ? "question" : "warning",
+      title: associatingCopy ? "确认关联健康副本" : "确认更新副本位置",
+      message: associatingCopy
+        ? "已完整核对全部文件，是否关联为同一逻辑素材卷的另一份健康副本？"
+        : "已完整核对全部文件，是否更新这份离线副本的位置？",
+      detail: associatingCopy
+        ? `新位置：${root}\n文件：${task.totalFiles} 个\n确认后会再次完整读取哈希；若位于同一物理磁盘，仍只计一份独立副本。`
+        : `旧位置：${previousRoot}\n新位置：${root}\n文件：${task.totalFiles} 个\n确认后会再次完整读取哈希，并保留旧路径审计。`,
+      buttons: ["取消", associatingCopy ? "确认关联" : "确认更新位置"],
+      defaultId: 0,
+      cancelId: 0,
+      noLink: true,
+    };
+    const confirmation = await (main && !main.isDestroyed()
+      ? dialog.showMessageBox(main, confirmationOptions)
+      : dialog.showMessageBox(confirmationOptions));
+    if (confirmation.response !== 1) return null;
+    // The first pass is the user-visible preview. Repeat full hashes after the
+    // confirmation so a file changed while the dialog was open cannot be
+    // associated or relinked on stale evidence.
     for (const item of task.fileRecords) {
-      const copy = item.destinations[targetIndex];
-      if (copy) {
-        copy.path = await safeChild(root, item.relativePath);
+      const candidate = await safeChild(root, item.relativePath);
+      if ((await hashFile(candidate, task.hashAlgorithm)) !== item.srcChecksum)
+        throw new Error(
+          `${item.relativePath} 在确认期间发生变化，未更新任何位置记录`,
+        );
+    }
+    const existingCopies = associatingCopy
+      ? []
+      : task.fileRecords.map((item) =>
+          item.destinations.find((entry) => inside(entry.path, previousRoot)),
+        );
+    if (!associatingCopy && existingCopies.some((copy) => !copy))
+      throw new Error("原副本文件映射不完整，未更新任何位置记录");
+    const identity = await volumeIdentity(root),
+      operator = await existingOperator();
+    for (const [index, item] of task.fileRecords.entries()) {
+      const nextPath = await safeChild(root, item.relativePath);
+      if (associatingCopy)
+        item.destinations.push({
+          path: nextPath,
+          checksum: item.srcChecksum,
+          verified: true,
+        });
+      else {
+        const copy = existingCopies[index]!;
+        copy.path = nextPath;
         copy.checksum = item.srcChecksum;
         copy.verified = true;
       }
     }
-    Object.assign(destination, {
+    const destinationValue = {
+      id: destination?.id || randomUUID(),
       path: root,
       resolvedPath: root,
+      label: path.basename(root),
       volumeId: identity.id,
       volumeUuid: identity.uuid,
       volumeName: identity.name,
       verified: true,
       available: true,
+      bytesWritten: destination?.bytesWritten || 0,
+      verifiedBytes: task.totalBytes,
+      copyProgress: 100,
+      verifyProgress: 100,
       error: undefined,
+    };
+    if (associatingCopy) task.destinations.push(destinationValue);
+    else Object.assign(destination!, destinationValue);
+    if (
+      !associatingCopy &&
+      existingSourceKey(previousSourcePath) === existingSourceKey(previousRoot)
+    )
+      task.sourcePath = root;
+    const event = existingEvent({
+      operator,
+      action: associatingCopy ? "associate-copy" : "relink",
+      sourcePath: root,
+      previousPath: associatingCopy ? undefined : previousRoot,
+      digest: createHash("sha256")
+        .update(
+          JSON.stringify(
+            task.fileRecords.map((item) => [
+              item.relativePath,
+              item.size,
+              item.srcChecksum,
+            ]),
+          ),
+        )
+        .digest("hex"),
+      summary: associatingCopy
+        ? `完整校验后关联另一份健康副本：${root}`
+        : `完整校验后将副本位置由 ${previousRoot} 更新为 ${root}`,
+      details: {
+        files: task.totalFiles,
+        volumeUuid: identity.uuid || "unknown",
+        physicalCopyCountConservative: verifiedPhysicalCopyCount(task),
+      },
     });
-    await persist();
+    appendExistingTaskEvent(task, event);
+    const projects = (
+        await store.read<ProjectConfig[]>("projects.json", [])
+      ).map(normalizeProject),
+      project = task.projectId
+        ? projects.find((item) => item.id === task.projectId)
+        : undefined;
+    if (project) {
+      project.boundRoots = deduplicateBoundRoots([
+        ...(project.boundRoots || []).filter(
+          (item) =>
+            associatingCopy ||
+            existingSourceKey(item.path) !== existingSourceKey(previousRoot),
+        ),
+        {
+          id: randomUUID(),
+          path: root,
+          boundAt: Date.now(),
+          provenance:
+            task.provenance === "manifest-import" ||
+            task.provenance === "external-baseline"
+              ? task.provenance
+              : "unverified-import",
+        },
+      ]);
+      appendProjectTakeoverEvent(project, event);
+    }
+    await Promise.all([persist(), store.write("projects.json", projects)]);
     await catalog.rebuild(
       engine.getAllTasks(),
-      (await store.read<ProjectConfig[]>("projects.json", [])).map(
-        normalizeProject,
-      ),
+      projects,
     );
     return matched;
   });

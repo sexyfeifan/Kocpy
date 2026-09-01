@@ -176,6 +176,8 @@ export interface BackupTask {
     status: TaskStatus;
     completedAt?: number;
   }>;
+  /** Append-only evidence for adopted media maintenance and trust decisions. */
+  existingAuditTrail?: ExistingAuditEvent[];
   /** Immutable project rules that were active when this attempt was created. */
   projectRuleSnapshotId?: string;
   projectFolderName?: string;
@@ -462,6 +464,8 @@ export interface ProjectConfig {
     boundAt: number;
     provenance: "manifest-import" | "external-baseline" | "unverified-import";
   }>;
+  /** Append-only project-level record of takeover and refresh operations. */
+  takeoverEvents?: ExistingAuditEvent[];
   nasPresetId?: string;
 }
 
@@ -614,10 +618,19 @@ export interface ProjectCoverage {
 }
 export interface ExistingImportPreview {
   root: string;
+  scannedAt: number;
+  /** Digest of the scanned inventory and inferred mapping shown to the user. */
+  scanDigest: string;
   files: number;
   bytes: number;
   detectedStructure: "card" | "day" | "project" | "unknown";
   warnings: string[];
+  blockingIssues: Array<{
+    code: "unknown-structure" | "missing-date" | "missing-device" | "missing-card" | "duplicate-mapping";
+    message: string;
+    relativeRoot?: string;
+  }>;
+  canImport: boolean;
   manifest?: string;
   suggestedDate?: string;
   suggestedDevice?: string;
@@ -632,6 +645,7 @@ export interface ExistingImportPreview {
     suggestedCard?: string;
   }>;
   candidates: Array<{
+    id: string;
     relativeRoot: string;
     files: number;
     bytes: number;
@@ -639,7 +653,38 @@ export interface ExistingImportPreview {
     device?: string;
     cameraPosition?: string;
     card?: string;
+    issues: Array<"missing-date" | "missing-device" | "missing-card" | "duplicate-mapping">;
   }>;
+}
+
+export interface ExistingCandidateDecision {
+  relativeRoot: string;
+  shootingDate: string;
+  device: string;
+  cameraPosition?: string;
+  card: string;
+}
+
+export interface ExistingAuditEvent {
+  id: string;
+  at: number;
+  operator: string;
+  action:
+    | "import"
+    | "refresh"
+    | "baseline"
+    | "manifest-reverify"
+    | "manifest-repair"
+    | "manifest-accept-extra"
+    | "manifest-revise"
+    | "relink"
+    | "associate-copy";
+  sourcePath: string;
+  previousPath?: string;
+  manifestPath?: string;
+  digest?: string;
+  summary: string;
+  details?: Record<string, string | number | boolean | string[]>;
 }
 
 export interface ProjectStructureDestination {

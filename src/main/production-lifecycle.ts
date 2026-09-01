@@ -8,6 +8,7 @@ import type {
   BackupTask,
   ExternalManifestComparison,
   ExistingImportPreview,
+  ExistingCandidateDecision,
   HashAlgorithm,
   ProjectConfig,
   ProjectTemplate,
@@ -313,6 +314,7 @@ export async function previewExistingBackup(
   requestedScope: ExistingScope = "auto",
   selectedDate?: string,
 ): Promise<ExistingImportPreview> {
+  root = await canonical(root);
   const stat = await fs.stat(root);
   if (!stat.isDirectory()) throw new Error("接管路径必须是文件夹");
   const result = await scan(root, false),
@@ -346,7 +348,7 @@ export async function previewExistingBackup(
     .join("/");
   const candidateMap = new Map<
       string,
-      ExistingImportPreview["candidates"][number]
+      Omit<ExistingImportPreview["candidates"][number], "id" | "issues">
     >(),
     mediaFiles = result.files.filter((file) => !isManifestName(file.name));
   const detectedStructure = detectScope(
@@ -392,9 +394,16 @@ export async function previewExistingBackup(
     value.bytes += file.size;
     candidateMap.set(relativeRoot, value);
   }
-  const candidates = [...candidateMap.values()].sort((a, b) =>
-    a.relativeRoot.localeCompare(b.relativeRoot),
-  );
+  const candidates = [...candidateMap.values()]
+    .sort((a, b) => a.relativeRoot.localeCompare(b.relativeRoot))
+    .map((candidate) => ({
+      ...candidate,
+      id: createHash("sha256")
+        .update(`${path.resolve(root).normalize("NFC")}\0${candidate.relativeRoot.normalize("NFC")}`)
+        .digest("hex")
+        .slice(0, 24),
+      issues: [] as ExistingImportPreview["candidates"][number]["issues"],
+    }));
   const warnings: string[] = [];
   if (!candidates.length && mediaFiles.length)
     warnings.push("所选范围内没有识别到符合层级的素材卷");
@@ -414,12 +423,88 @@ export async function previewExistingBackup(
     !candidates.every((candidate) => candidate.shootingDate)
   )
     warnings.push("部分目录没有可识别的拍摄日期");
+  const duplicateKeys = new Map<string, number>();
+  for (const candidate of candidates) {
+    if (!candidate.shootingDate) candidate.issues.push("missing-date");
+    if (!candidate.device) candidate.issues.push("missing-device");
+    if (!candidate.card) candidate.issues.push("missing-card");
+    const key = [
+      candidate.shootingDate || "",
+      candidate.device || "",
+      candidate.cameraPosition || "",
+      candidate.card || "",
+    ].join("\0");
+    duplicateKeys.set(key, (duplicateKeys.get(key) || 0) + 1);
+  }
+  for (const candidate of candidates) {
+    const key = [
+      candidate.shootingDate || "",
+      candidate.device || "",
+      candidate.cameraPosition || "",
+      candidate.card || "",
+    ].join("\0");
+    if ((duplicateKeys.get(key) || 0) > 1)
+      candidate.issues.push("duplicate-mapping");
+  }
+  const blockingIssues: ExistingImportPreview["blockingIssues"] = [];
+  if (scope === "unknown")
+    blockingIssues.push({
+      code: "unknown-structure",
+      message: "无法确定所选目录是单卷、单日还是整个项目，请明确选择接管范围",
+    });
+  const issueLabels = {
+    "missing-date": "拍摄日期未识别",
+    "missing-device": "设备 / 机位未识别",
+    "missing-card": "素材卷名称未识别",
+    "duplicate-mapping": "与另一目录映射到同一素材卷",
+  } as const;
+  for (const candidate of candidates)
+    for (const code of candidate.issues)
+      blockingIssues.push({
+        code,
+        relativeRoot: candidate.relativeRoot,
+        message: `${candidate.relativeRoot === "." ? path.basename(root) : candidate.relativeRoot}：${issueLabels[code]}`,
+      });
+  const scannedAt = Date.now(),
+    scanDigest = createHash("sha256")
+      .update(
+        JSON.stringify({
+          root: path.resolve(root).normalize("NFC"),
+          scope,
+          selectedDate,
+          files: result.files
+            .map((file) => [
+              file.relativePath.normalize("NFC"),
+              file.size,
+              file.mtimeMs,
+            ])
+            .sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
+          directories: result.directoryMetadata
+            .map((directory) => [
+              directory.relativePath.normalize("NFC"),
+              directory.mtimeMs,
+            ])
+            .sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
+          candidates: candidates.map((candidate) => [
+            candidate.relativeRoot,
+            candidate.shootingDate,
+            candidate.device,
+            candidate.cameraPosition,
+            candidate.card,
+          ]),
+        }),
+      )
+      .digest("hex");
   return {
     root,
+    scannedAt,
+    scanDigest,
     files: result.files.length,
     bytes: result.totalBytes,
     detectedStructure,
     warnings,
+    blockingIssues,
+    canImport: candidates.length > 0 && blockingIssues.length === 0,
     manifest: manifestFile?.absolutePath,
     suggestedDate:
       candidates[0]?.shootingDate ||
@@ -432,6 +517,42 @@ export async function previewExistingBackup(
     ),
     candidates,
   };
+}
+
+export function resolveExistingCandidates(
+  preview: ExistingImportPreview,
+  decisions: ExistingCandidateDecision[] = [],
+): ExistingCandidateDecision[] {
+  const byRoot = new Map(decisions.map((item) => [item.relativeRoot, item]));
+  const resolved = preview.candidates.map((candidate) => {
+    const decision = byRoot.get(candidate.relativeRoot);
+    return {
+      relativeRoot: candidate.relativeRoot,
+      shootingDate: (decision?.shootingDate || candidate.shootingDate || "").trim(),
+      device: (decision?.device || candidate.device || "").trim(),
+      cameraPosition: (decision?.cameraPosition || candidate.cameraPosition || "").trim() || undefined,
+      card: (decision?.card || candidate.card || "").trim(),
+    };
+  });
+  for (const item of resolved) {
+    if (!parseDateFolder(item.shootingDate))
+      throw new Error(`请为 ${item.relativeRoot} 确认有效拍摄日期`);
+    if (!item.device || item.device.length > 160 || /[\\/]/.test(item.device))
+      throw new Error(`请为 ${item.relativeRoot} 确认设备 / 机位名称`);
+    if (
+      item.cameraPosition &&
+      (item.cameraPosition.length > 160 || /[\\/]/.test(item.cameraPosition))
+    )
+      throw new Error(`请为 ${item.relativeRoot} 确认有效机位名称`);
+    if (!item.card || item.card.length > 160 || /[\\/]/.test(item.card))
+      throw new Error(`请为 ${item.relativeRoot} 确认素材卷名称`);
+  }
+  const identities = resolved.map((item) =>
+    [item.shootingDate, item.device, item.cameraPosition || "", item.card].join("\0"),
+  );
+  if (new Set(identities).size !== identities.length)
+    throw new Error("仍有多个目录映射到同一个日期 / 设备 / 机位 / 素材卷，请修正后再接管");
+  return resolved;
 }
 
 function checksumAlgorithm(

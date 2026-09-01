@@ -90,6 +90,7 @@ export function appendProjectRuleSnapshot(
     result.handoffNotes = clone(previous.handoffNotes || []);
     result.checklistRuns = clone(previous.checklistRuns || []);
     result.boundRoots = clone(previous.boundRoots || []);
+    result.takeoverEvents = clone(previous.takeoverEvents || []);
   } else {
     result.restDays = [];
     result.unusedDevicesByDate = {};
@@ -99,6 +100,7 @@ export function appendProjectRuleSnapshot(
     result.handoffNotes = [];
     result.checklistRuns = [];
     result.boundRoots = [];
+    result.takeoverEvents = [];
   }
 
   if (!snapshots.length && previous) {

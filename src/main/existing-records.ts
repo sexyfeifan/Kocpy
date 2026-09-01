@@ -143,6 +143,13 @@ function mergeGroup(group: BackupTask[]): {
   });
   const primary = ordered[0];
   for (const duplicate of ordered.slice(1)) {
+    const evidence = new Map(
+      [...(primary.existingAuditTrail || []), ...(duplicate.existingAuditTrail || [])]
+        .map((event) => [event.id, event]),
+    );
+    primary.existingAuditTrail = [...evidence.values()].sort(
+      (left, right) => left.at - right.at,
+    );
     for (const destination of duplicate.destinations) {
       const key = destinationKey(destination);
       if (

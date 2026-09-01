@@ -137,11 +137,34 @@ describe("existing backup record consolidation", () => {
       unknown = importedTask("unknown", {
         sourcePath: "/Volumes/C/CARD01",
       });
+    first.existingAuditTrail = [
+      {
+        id: "import-a",
+        at: 1,
+        operator: "A",
+        action: "import",
+        sourcePath: first.sourcePath,
+        summary: "first import",
+      },
+    ];
+    second.existingAuditTrail = [
+      {
+        id: "import-b",
+        at: 2,
+        operator: "B",
+        action: "import",
+        sourcePath: second.sourcePath,
+        summary: "second import",
+      },
+    ];
     const result = consolidateExistingRecords([first, second, unknown]);
     expect(result.records).toHaveLength(2);
     expect(result.duplicateIds).toEqual(["second"]);
     expect(result.records.find((task) => task.id === "first")?.destinations)
       .toHaveLength(2);
+    expect(
+      result.records.find((task) => task.id === "first")?.existingAuditTrail,
+    ).toHaveLength(2);
   });
 
   it("removes a device parent that is exactly the union of its card folders", () => {
@@ -236,5 +259,30 @@ describe("existing backup record consolidation", () => {
     expect(roots).toEqual([
       { id: "new", path: "/Volumes/Disk/Project", boundAt: 2, provenance: "external-baseline" },
     ]);
+  });
+
+  it("keeps record counts stable across three refresh consolidations", () => {
+    let records = [
+      importedTask("first", {
+        sourcePath: "/Volumes/A/CARD01",
+        checksum: "same",
+        status: "completed",
+        confidence: "baseline",
+      }),
+      importedTask("second", {
+        sourcePath: "/Volumes/B/CARD01",
+        checksum: "same",
+        status: "completed",
+        confidence: "baseline",
+      }),
+    ];
+    const counts: number[] = [];
+    for (let pass = 0; pass < 3; pass++) {
+      const result = consolidateExistingRecords(records);
+      records = result.records;
+      counts.push(records.length);
+    }
+    expect(counts).toEqual([1, 1, 1]);
+    expect(records[0].destinations).toHaveLength(2);
   });
 });

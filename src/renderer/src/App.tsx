@@ -93,6 +93,7 @@ import {
   type UpdateInfo,
   type TransferPerformance,
   type ExistingImportPreview,
+  type ExistingCandidateDecision,
   type ExistingImportProgress,
 } from "./api";
 import { Composer } from "./Composer";
@@ -2986,6 +2987,39 @@ export function App() {
                 <span>{selected.sourcePath}</span>
                 <ExternalLink size={14} />
               </button>
+              {!!selected.existingAuditTrail?.length && (
+                <details className="context-help existing-audit-trail">
+                  <summary>
+                    接管与维护审计（{selected.existingAuditTrail.length}）
+                  </summary>
+                  <p>
+                    记录接管、首次基线、清单处理、刷新与重定位；旧路径和旧结论不会因后续操作被覆盖。
+                  </p>
+                  <div className="audit-event-list">
+                    {selected.existingAuditTrail
+                      .slice()
+                      .reverse()
+                      .map((event) => (
+                        <div key={event.id}>
+                          <strong>{event.summary}</strong>
+                          <span>
+                            {new Date(event.at).toLocaleString()} · {event.operator}
+                          </span>
+                          <small className="mono">
+                            {event.previousPath
+                              ? `${event.previousPath} → ${event.sourcePath}`
+                              : event.sourcePath}
+                          </small>
+                          {event.digest && (
+                            <small className="mono">
+                              证据摘要 {event.digest.slice(0, 16)}…
+                            </small>
+                          )}
+                        </div>
+                      ))}
+                  </div>
+                </details>
+              )}
               {selected.mediaBreakdown && (
                 <div className="media-breakdown">
                   {(["video", "photo", "audio", "other"] as const).map(
@@ -3609,7 +3643,7 @@ function Library({
                   </Button>
                   <Button
                     kind="icon"
-                    title="重新定位已移动或重新挂载的素材"
+                    title="重新定位已移动的副本，或关联另一份完整健康副本"
                     onClick={() =>
                       void api
                         .relinkLibraryFile(f.taskId, f.relativePath)
@@ -3779,7 +3813,11 @@ function ExistingImportModal({
     [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
     [progress, setProgress] = useState<ExistingImportProgress | null>(null);
+  const [associationConfirmed, setAssociationConfirmed] = useState(false);
   const [preview, setPreview] = useState(value.preview);
+  const [candidateDecisions, setCandidateDecisions] = useState<
+    ExistingCandidateDecision[]
+  >([]);
   const [previewRetry, setPreviewRetry] = useState(0);
   const [previewBusy, setPreviewBusy] = useState(false);
   useEffect(() => {
@@ -3815,6 +3853,17 @@ function ExistingImportModal({
     };
   }, [value.preview.root, value.project.id, scope, dateValue, previewRetry]);
   const jobIdRef = useRef("");
+  useEffect(() => {
+    setCandidateDecisions(
+      preview.candidates.map((item) => ({
+        relativeRoot: item.relativeRoot,
+        shootingDate: item.shootingDate || dateValue,
+        device: item.device || "",
+        cameraPosition: item.cameraPosition,
+        card: item.card || "",
+      })),
+    );
+  }, [preview.scanDigest]);
   useEffect(
     () =>
       api.onExistingImportProgress((payload) => {
@@ -3823,6 +3872,27 @@ function ExistingImportModal({
     [],
   );
   const count = preview.candidates.length;
+  const mappingKeys = candidateDecisions.map((item) =>
+    [item.shootingDate, item.device.trim(), item.cameraPosition?.trim() || "", item.card.trim()].join("\0"),
+  );
+  const mappingsReady =
+    candidateDecisions.length === count &&
+    candidateDecisions.every(
+      (item) =>
+        /^\d{4}-\d{2}-\d{2}$/.test(item.shootingDate) &&
+        Boolean(item.device.trim()) &&
+        Boolean(item.card.trim()),
+    ) &&
+    new Set(mappingKeys).size === mappingKeys.length;
+  const updateCandidate = (
+    relativeRoot: string,
+    patch: Partial<ExistingCandidateDecision>,
+  ) =>
+    setCandidateDecisions((current) =>
+      current.map((item) =>
+        item.relativeRoot === relativeRoot ? { ...item, ...patch } : item,
+      ),
+    );
   return (
     <div className="modal-backdrop top-layer">
       <section
@@ -3869,6 +3939,15 @@ function ExistingImportModal({
               {warning}
             </div>
           ))}
+          {!!preview.blockingIssues.length && (
+            <div className="notice amber">
+              <AlertTriangle size={15} />
+              <span>
+                发现 {preview.blockingIssues.length} 项映射需要确认。Kocpy
+                不会把未确认的日期、设备或素材卷写入项目。
+              </span>
+            </div>
+          )}
           <label>
             接管范围
             <select
@@ -3894,8 +3973,15 @@ function ExistingImportModal({
           )}
           {previewBusy && <p role="status">正在重新识别所选范围…</p>}
           <div className="import-candidates">
-            {preview.candidates.map((item) => (
-              <span key={item.relativeRoot}>
+            {preview.candidates.map((item) => {
+              const decision = candidateDecisions.find(
+                (candidate) => candidate.relativeRoot === item.relativeRoot,
+              );
+              return (
+              <span
+                key={item.relativeRoot}
+                className={item.issues.length ? "needs-confirmation" : ""}
+              >
                 <strong>{item.card}</strong>
                 <small>
                   {item.shootingDate || "日期未识别"} ·{" "}
@@ -3905,8 +3991,56 @@ function ExistingImportModal({
                     : ""}{" "}
                   · {item.files} 文件
                 </small>
+                <small className="mono">{item.relativeRoot}</small>
+                <div className="candidate-mapping-grid">
+                  <input
+                    type="date"
+                    aria-label={`${item.relativeRoot} 拍摄日期`}
+                    value={decision?.shootingDate || ""}
+                    disabled={busy || previewBusy}
+                    onChange={(event) =>
+                      updateCandidate(item.relativeRoot, {
+                        shootingDate: event.target.value,
+                      })
+                    }
+                  />
+                  <input
+                    aria-label={`${item.relativeRoot} 设备`}
+                    placeholder="设备 / 机位"
+                    value={decision?.device || ""}
+                    disabled={busy || previewBusy}
+                    onChange={(event) =>
+                      updateCandidate(item.relativeRoot, {
+                        device: event.target.value,
+                      })
+                    }
+                  />
+                  <input
+                    aria-label={`${item.relativeRoot} 机位`}
+                    placeholder="机位（可选）"
+                    value={decision?.cameraPosition || ""}
+                    disabled={busy || previewBusy}
+                    onChange={(event) =>
+                      updateCandidate(item.relativeRoot, {
+                        cameraPosition: event.target.value,
+                      })
+                    }
+                  />
+                  <input
+                    aria-label={`${item.relativeRoot} 素材卷`}
+                    placeholder="素材卷名称"
+                    value={decision?.card || ""}
+                    disabled={busy || previewBusy}
+                    onChange={(event) =>
+                      updateCandidate(item.relativeRoot, {
+                        card: event.target.value,
+                      })
+                    }
+                  />
+                </div>
               </span>
-            ))}
+              );
+            })}
           </div>
           <label>
             接管可信度
@@ -3923,6 +4057,19 @@ function ExistingImportModal({
               </option>
               <option value="unverified-import">仅导入结构，稍后校验</option>
             </select>
+          </label>
+          <label className="manifest-confirm">
+            <input
+              type="checkbox"
+              checked={associationConfirmed}
+              disabled={busy || previewBusy}
+              onChange={(event) =>
+                setAssociationConfirmed(event.target.checked)
+              }
+            />
+            <span>
+              我确认：只有路径、大小和完整哈希一致的目录才关联为同一逻辑素材卷；同一块物理磁盘上的多个文件夹仍只计一份副本。
+            </span>
           </label>
           {progress && (
             <div className="existing-import-progress">
@@ -3986,7 +4133,14 @@ function ExistingImportModal({
           </Button>
           <Button
             kind="primary"
-            disabled={busy || previewBusy || !!error || count < 1}
+            disabled={
+              busy ||
+              previewBusy ||
+              !!error ||
+              count < 1 ||
+              !mappingsReady ||
+              !associationConfirmed
+            }
             onClick={() => {
               const nextJobId = crypto.randomUUID();
               jobIdRef.current = nextJobId;
@@ -4001,6 +4155,9 @@ function ExistingImportModal({
                   scope,
                   dateValue,
                   nextJobId,
+                  preview.scanDigest,
+                  candidateDecisions,
+                  associationConfirmed,
                 )
                 .then(onImported)
                 .catch((reason) =>
@@ -4984,15 +5141,17 @@ function HelpPage({
       steps: [
         "在项目卡片选择“接管既有备份”。",
         "选择单张素材卡、拍摄日根目录或项目根目录。",
-        "检查按日期 → 设备/机位 → 素材卷识别出的结果；项目外名称会保留为实际设备名称。",
+        "逐卷检查日期、设备、机位、卷名和相对根目录；缺失或重复映射必须先修正，项目外名称会保留为实际设备名称。",
         "有 MHL/SHA 清单时选择清单比对；否则建立接管时基线或仅导入结构。",
-        "确认后通过素材卷、文件、字节、速度和预计时间查看读取进度。",
+        "确认完整哈希相同的路径关联为同一逻辑卷；同盘多个目录仍只计一份。",
+        "确认后通过素材卷、文件、字节、速度和预计时间查看读取进度；目录变化会整批停止且不落库。",
         "只有清单通过或首次基线建立完成的记录才计为可信物理副本。",
       ],
       tips: [
         "目录命名越规范，自动识别越准确。",
         "接管时基线只证明接管当时的内容，不等于原始现场校验。",
         "未验证导入不会显示为安全副本。",
+        "任务详情可展开接管与维护审计；旧路径、清单决定和证据摘要不会被后续操作覆盖。",
         "没有发现设备文件夹只表示待确认；确认未使用后才会从收工缺口中跳过。",
       ],
       page: "projects",
@@ -5155,10 +5314,10 @@ function HelpPage({
       <section className="help-release-note">
         <RefreshCw size={20} />
         <div>
-          <strong>0.1.23：项目日常操作与不可变证据</strong>
-          <p>每日设备计划必须记录操作人；“应该有素材”“当天未使用”“休息日”和恢复待确认都会追加日期、操作人、时间与规则版本，未确认状态继续保持未知。临时设备只加入所选拍摄日。</p>
-          <p>项目安全规则按版本追加。规则变化必须填写修改人；应用模板会保存模板版本、覆盖字段和真实前后值。历史素材卷、检查表签署与交接记录继续引用当时版本，不因之后修改规则而改写。</p>
-          <p>失败目标重试和恢复尝试共享逻辑素材卷身份，项目与收工统计不会把重试次数当成新增卡卷。单日或全项目交接会冻结当时的逻辑素材卷、达标、待处理和待确认摘要。</p>
+          <strong>0.1.24：专业接管与差异证据</strong>
+          <p>单卷、单日和整项目接管先逐卷预览日期、设备、机位和卷名；未解决映射不能写入。开始与完成读取后都会重新扫描，目录变化时整批安全停止。</p>
+          <p>完整哈希一致的不同目录可明确关联为同一逻辑素材卷；卷 UUID 与物理独立性分开判断，同盘多个目录仍只计一份。来源离线或物理关系未知时继续显示未知，不自动变绿。</p>
+          <p>接管、刷新、首次基线、清单修复／修订／复校验、额外文件确认和重定位均追加审计事件。素材库可在旧副本离线时重定位，或在全部旧副本在线时关联另一份完整核对的健康副本；旧路径不会被无痕覆盖。</p>
         </div>
       </section>
       <SearchBox
