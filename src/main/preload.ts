@@ -79,6 +79,7 @@ contextBridge.exposeInMainWorld("api", {
   deleteNasPreset: call("nas:delete"),
   testNasPreset: call("nas:test"),
   addProjectHandoff: call("projects:add-handoff"),
+  updateProjectDailyPlan: call("projects:daily-plan"),
   exportWorkspace: call("workspace:export"),
   importWorkspace: call("workspace:import"),
   backupWorkspaceData: call("workspace:backup-data"),

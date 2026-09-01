@@ -260,6 +260,7 @@ export function templateFromProject(
     crew: project.crew?.map((item) => ({ ...item })),
     createdAt: now,
     updatedAt: now,
+    revision: 1,
   };
 }
 
@@ -305,6 +306,7 @@ export function normalizeProjectTemplate(
     crew: template.crew?.map((item) => ({ ...item })),
     createdAt: template.createdAt || Date.now(),
     updatedAt: template.updatedAt || Date.now(),
+    revision: Math.max(1, Math.floor(template.revision || 1)),
   };
 }
 
@@ -329,15 +331,36 @@ export function mergeWorkspace(
       projects.push(project);
       projectsAdded++;
     } else if (JSON.stringify(projects[index]) !== JSON.stringify(project)) {
+      const mergeEvidence = <T extends { id: string }>(
+        left: T[] | undefined,
+        right: T[] | undefined,
+      ) =>
+        [...(left || []), ...(right || [])].filter(
+          (item, i, all) =>
+            all.findIndex((other) => other.id === item.id) === i,
+        );
       projects[index] = {
         ...projects[index],
         ...project,
-        handoffNotes: [
-          ...(projects[index].handoffNotes || []),
-          ...(project.handoffNotes || []),
-        ].filter(
-          (note, i, all) =>
-            all.findIndex((other) => other.id === note.id) === i,
+        handoffNotes: mergeEvidence(
+          projects[index].handoffNotes,
+          project.handoffNotes,
+        ),
+        ruleSnapshots: mergeEvidence(
+          projects[index].ruleSnapshots,
+          project.ruleSnapshots,
+        ),
+        dailyPlanDecisions: mergeEvidence(
+          projects[index].dailyPlanDecisions,
+          project.dailyPlanDecisions,
+        ),
+        templateApplications: mergeEvidence(
+          projects[index].templateApplications,
+          project.templateApplications,
+        ),
+        checklistRuns: mergeEvidence(
+          projects[index].checklistRuns,
+          project.checklistRuns,
         ),
       };
       projectsUpdated++;

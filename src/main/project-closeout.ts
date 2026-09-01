@@ -1,7 +1,7 @@
 import type { BackupTask, Destination, ProjectConfig } from "./types";
 import { copyEvidenceSummary, volumeCopyKey } from "../common/copy-evidence";
-import { taskMeetsCopyRequirement } from "../common/task-trust";
 import { shootingDateKey } from "../common/shooting-dates";
+import { groupLogicalVolumes } from "../common/logical-volumes";
 export { manifestRequirementMet, taskMeetsCopyRequirement } from "../common/task-trust";
 
 export function physicalDestinationKey(destination: Destination): string {
@@ -25,22 +25,41 @@ export function projectDeviceCells(
   tasks: BackupTask[] = [],
   shootingDate?: string,
 ): ProjectDeviceCell[] {
+  const tasksForDate = tasks.filter(
+    (task) =>
+      !shootingDate ||
+      shootingDateKey(task.shootingDate) === shootingDateKey(shootingDate),
+  );
+  const declaredKeys = [
+    ...Object.entries(project.expectedDevicesByDate || {}),
+    ...Object.entries(project.unusedDevicesByDate || {}),
+  ]
+    .filter(
+      ([date]) =>
+        !shootingDate ||
+        shootingDateKey(date) === shootingDateKey(shootingDate),
+    )
+    .flatMap(([, values]) => values)
+    .filter(Boolean);
   const devices = [
     ...new Set([
       ...project.devices,
-      ...tasks
-        .filter((task) => !shootingDate || shootingDateKey(task.shootingDate) === shootingDateKey(shootingDate))
-        .flatMap((task) => task.devices || []),
+      ...tasksForDate.flatMap((task) => task.devices || []),
+      ...declaredKeys.map((key) => key.split("::")[0]),
     ]),
   ];
   return devices.flatMap((device) => {
     const positions = [
       ...new Set([
         ...(project.devicePositions?.[device] || []),
-        ...tasks
+        ...tasksForDate
           .filter((task) => task.devices.includes(device))
           .map((task) => task.cameraPosition)
           .filter((position): position is string => Boolean(position)),
+        ...declaredKeys
+          .filter((key) => key.startsWith(device + "::"))
+          .map((key) => key.split("::")[1])
+          .filter((position) => position && position !== "unassigned"),
       ]),
     ];
     if (!positions.length)
@@ -52,16 +71,9 @@ export function projectDeviceCells(
       scheduleKey: `${device}::${cameraPosition}`,
     }));
     if (
-      tasks.some(
+      tasksForDate.some(
         (task) => task.devices.includes(device) && !task.cameraPosition,
-      ) &&
-      (!shootingDate ||
-        tasks.some(
-          (task) =>
-            shootingDateKey(task.shootingDate) === shootingDateKey(shootingDate) &&
-            task.devices.includes(device) &&
-            !task.cameraPosition,
-        ))
+      )
     )
       cells.push({
         device,
@@ -85,7 +97,7 @@ export function projectCellStatus(
   );
   const hasPositionedRows =
     Boolean(project.devicePositions?.[device]?.length) ||
-    tasks.some(
+    deviceTasks.some(
       (task) => task.devices.includes(device) && Boolean(task.cameraPosition),
     );
   const rows = cameraPosition
@@ -94,6 +106,8 @@ export function projectCellStatus(
       ? deviceTasks.filter((task) => !task.cameraPosition)
       : deviceTasks;
   const required = project.requiredCopies || 2;
+  const logicalVolumes = groupLogicalVolumes(rows, required);
+  const logicalRows = logicalVolumes.map((item) => item.representative);
   const rest = Boolean(project.restDays?.some(date => shootingDateKey(date) === shootingDateKey(shootingDate)));
   const keysFor = (byDate?: Record<string, string[]>) => Object.entries(byDate || {}).filter(([date]) => shootingDateKey(date) === shootingDateKey(shootingDate)).flatMap(([, keys]) => keys);
   const unusedKeys = keysFor(project.unusedDevicesByDate);
@@ -107,28 +121,28 @@ export function projectCellStatus(
     ? expectedKeys.includes(scheduleKey) || expectedKeys.includes(device)
     : expectedKeys.includes(device) ||
       expectedKeys.includes(`${device}::unassigned`);
-  const safe = rows.filter((task) =>
-    taskMeetsCopyRequirement(task, required),
-  ).length;
+  const safe = logicalVolumes.filter((item) => item.compliant).length;
   // A schedule declaration can explain an empty cell; it cannot waive the
   // verification requirements of material that is actually present.
-  const exempt = !rows.length && (rest || unused);
+  const exempt = !logicalRows.length && (rest || unused);
   return {
-    rows,
+    rows: logicalRows,
+    attempts: rows,
+    logicalVolumes,
     safe,
     expected,
-    unconfirmed: !rest && !unused && !expected && !rows.length,
-    attention: !exempt && (rows.length ? safe !== rows.length : expected),
+    unconfirmed: !rest && !unused && !expected && !logicalRows.length,
+    attention: !exempt && (logicalRows.length ? safe !== logicalRows.length : expected),
     exempt,
-    complete: exempt || Boolean(rows.length && safe === rows.length),
+    complete: exempt || Boolean(logicalRows.length && safe === logicalRows.length),
     label: exempt && rest
       ? "休息日"
       : exempt && unused
         ? "当天未使用"
-        : rows.length && safe === rows.length
+        : logicalRows.length && safe === logicalRows.length
           ? "已满足收工要求"
-          : rows.length
-            ? `${safe} / ${rows.length} 个素材卷达到 ${required} 份物理独立副本`
+          : logicalRows.length
+            ? `${safe} / ${logicalRows.length} 个素材卷达到 ${required} 份物理独立副本`
             : expected
               ? "应该有素材 · 缺少备份"
               : "当天未发现素材 · 待确认",

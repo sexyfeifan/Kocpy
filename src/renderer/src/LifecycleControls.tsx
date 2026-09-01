@@ -265,7 +265,14 @@ export function LifecycleControls({
             {[...(project?.checklistRuns || [])].reverse().map((item) => (
               <p key={item.id}>
                 {item.date} · {item.phase === "close" ? "收工" : "开工"} ·{" "}
-                {item.operator} · {item.completed.length} 项
+                {item.operator} · {item.completed.length} 项 · 规则{" "}
+                {project?.ruleSnapshots?.find(
+                  (snapshot) => snapshot.id === item.ruleSnapshotId,
+                )?.revision
+                  ? "v" + project.ruleSnapshots.find(
+                      (snapshot) => snapshot.id === item.ruleSnapshotId,
+                    )!.revision
+                  : "旧记录未快照"}
               </p>
             ))}
           </details>

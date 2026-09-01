@@ -8,9 +8,9 @@
 
 ![Kocpy 工作台](docs/screenshots/dashboard.png)
 
-当前代码版本：**0.1.22** · [完整使用手册](docs/USER_GUIDE.md) · [0.1.22 更新说明](docs/RELEASE_NOTES_0.1.22.md) · [已公开发布版本](https://github.com/sexyfeifan/Kocpy/releases/latest)
+当前代码版本：**0.1.23** · [完整使用手册](docs/USER_GUIDE.md) · [0.1.23 更新说明](docs/RELEASE_NOTES_0.1.23.md) · [已公开发布版本](https://github.com/sexyfeifan/Kocpy/releases/latest)
 
-0.1.22 简化普通备份入口与保存方式，专业选项默认折叠；暂停清除旧预计时间，容量未知不再显示已通过。包含 0.1.21 的统一可信状态、媒体对应源码分发及布局维护。0.1.20 候选因发布前发现后台统计不一致未公开安装包，标签保留不覆盖。已公开安装包以 Release 实际附件为准，草稿不是公开发行；测试范围及限制见 [验证记录](docs/VERIFICATION.md)。
+0.1.23 为项目日常操作建立可追溯证据链：每日设备计划必须记录操作人，项目规则和模板应用按版本追加，卡卷重试仍按同一逻辑素材卷统计，单日／全项目交接冻结当时规则和收工摘要。历史路径、检查表签署和交接证据不会因后续改规则而被重写。已公开安装包以 Release 实际附件为准，草稿不是公开发行；测试范围及限制见 [验证记录](docs/VERIFICATION.md)。
 
 ## 中文
 
@@ -130,8 +130,8 @@ Kocpy 支持真实深色与浅色外观，任务、项目、偏好、缩略图�
 
 从 [GitHub Releases](https://github.com/sexyfeifan/Kocpy/releases) 下载对应架构：
 
-- `Kocpy-0.1.22-arm64.dmg`：Apple Silicon Mac
-- `Kocpy-0.1.22-x64.dmg`：Intel Mac
+- `Kocpy-0.1.23-arm64.dmg`：Apple Silicon Mac
+- `Kocpy-0.1.23-x64.dmg`：Intel Mac
 
 当前代码对应上述版本；远端可下载版本以 Release 实际附件为准。
 

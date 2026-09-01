@@ -483,15 +483,17 @@ export function TemplateApplyDialog({
   onApplied: (projects: import("./api").ProjectConfig[]) => void;
 }) {
   const [selected, setSelected] = useState(changes.map((item) => item.field)),
+    [operator, setOperator] = useState(""),
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
   const apply = async () => {
     if (!selected.length) return setError("请至少选择一项要应用的配置");
+    if (!operator.trim()) return setError("请填写模板应用操作人");
     setBusy(true);
     setError("");
     try {
       onApplied(
-        await api.applyProjectTemplate(template.id, projectId, selected),
+        await api.applyProjectTemplate(template.id, projectId, selected, operator.trim()),
       );
       onClose();
     } catch (reason) {
@@ -522,6 +524,15 @@ export function TemplateApplyDialog({
             将模板应用到“{projectName}
             ”。项目名称、拍摄日期和目的地路径不会改变。
           </div>
+          <label>
+            应用操作人
+            <input
+              value={operator}
+              onChange={(event) => setOperator(event.target.value)}
+              placeholder="用于规则版本与模板应用审计"
+              aria-label="模板应用操作人"
+            />
+          </label>
           <div className="template-diff-list">
             {changes.map((change) => (
               <label key={change.field}>
@@ -550,7 +561,7 @@ export function TemplateApplyDialog({
           <span className="small muted">只覆盖已勾选的配置</span>
           <Button
             kind="primary"
-            disabled={busy || !selected.length}
+            disabled={busy || !selected.length || !operator.trim()}
             onClick={() => void apply()}
           >
             <Check size={15} />

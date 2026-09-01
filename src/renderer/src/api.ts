@@ -207,6 +207,7 @@ export interface API {
     templateId: string,
     projectId: string,
     selectedFields?: string[],
+    operator?: string,
   ): Promise<ProjectConfig[]>;
   previewExistingBackup(
     root: string,
@@ -281,6 +282,17 @@ export interface API {
     projectId: string,
     operator: string,
     note: string,
+    options?: { scope?: "day" | "project"; shootingDate?: string; exceptions?: string[] },
+  ): Promise<ProjectConfig[]>;
+  updateProjectDailyPlan(
+    projectId: string,
+    input: {
+      date: string;
+      scheduleKey?: string;
+      decision: "expected" | "unused" | "clear" | "rest" | "working";
+      operator: string;
+      note?: string;
+    },
   ): Promise<ProjectConfig[]>;
   exportWorkspace(): Promise<string | null>;
   importWorkspace(): Promise<WorkspaceMergeResult | null>;
@@ -348,6 +360,7 @@ export interface API {
   saveProject(
     project: ProjectConfig,
     createMissing?: boolean,
+    operator?: string,
   ): Promise<ProjectConfig[]>;
   claimProjectVolume(
     projectId: string,

@@ -185,15 +185,33 @@ export function projectCoverage(
   project: ProjectConfig,
   tasks: BackupTask[],
 ): ProjectCoverage {
-  const related = tasks.filter((task) => task.projectId === project.id);
+  const attempts = tasks.filter((task) => task.projectId === project.id);
+  const grouped = new Map<string, BackupTask[]>();
+  for (const task of attempts) {
+    const key = task.logicalVolumeId || task.id;
+    grouped.set(key, [...(grouped.get(key) || []), task]);
+  }
+  const related = [...grouped.values()];
   const byProvenance: Record<string, number> = {};
   let verified = 0,
     compliant = 0;
-  for (const task of related) {
+  for (const attemptsForVolume of related) {
+    const task = [...attemptsForVolume].sort(
+      (a, b) =>
+        (b.completedAt || b.createdAt || 0) -
+        (a.completedAt || a.createdAt || 0),
+    )[0];
     const source = task.provenance || "kocpy-transfer";
     byProvenance[source] = (byProvenance[source] || 0) + 1;
-    if (taskTrustState(task).contentVerified) verified++;
-    if (taskMeetsCopyRequirement(task, project.requiredCopies || 2))
+    if (
+      attemptsForVolume.some((item) => taskTrustState(item).contentVerified)
+    )
+      verified++;
+    if (
+      attemptsForVolume.some((item) =>
+        taskMeetsCopyRequirement(item, project.requiredCopies || 2),
+      )
+    )
       compliant++;
   }
   return {

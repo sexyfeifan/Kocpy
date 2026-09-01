@@ -1151,8 +1151,25 @@ export async function importExistingBackup(
         .filter(Boolean)
         .join("、")
     : "";
+  const taskId = randomUUID();
   return {
-    id: randomUUID(),
+    id: taskId,
+    logicalVolumeId: taskId,
+    operationAttemptId: taskId,
+    operationAttempts: [
+      {
+        id: taskId,
+        startedAt: now,
+        reason: "initial",
+        status: verified
+          ? "completed"
+          : mode === "unverified-import"
+            ? "unverified"
+            : "failed",
+        completedAt: now,
+      },
+    ],
+    projectRuleSnapshotId: project.activeRuleSnapshotId,
     projectId: project.id,
     projectFolderName: project.projectFolderName,
     shootingDate: metadata.shootingDate || preview.suggestedDate,
@@ -1306,4 +1323,5 @@ export const builtInProductionTemplates = (): ProjectTemplate[] =>
     ],
     createdAt: 0,
     updatedAt: 0,
+    revision: 1,
   }));

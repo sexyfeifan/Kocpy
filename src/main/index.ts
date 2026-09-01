@@ -75,7 +75,8 @@ import {
   verifiedPhysicalCopyCount,
 } from "./project-closeout";
 import { taskTrustState } from "../common/task-trust";
-import { shootingDateKey } from "../common/shooting-dates";
+import { projectDates, shootingDateKey } from "../common/shooting-dates";
+import { groupLogicalVolumes } from "../common/logical-volumes";
 import {
   benchmarkDirectory,
   buildDiagnosticSnapshot,
@@ -107,6 +108,13 @@ import {
 } from "./existing-records";
 import { ensureTaskMediaBreakdown } from "./media-kind";
 import { buildProjectDeletionPreview } from "./project-deletion";
+import {
+  appendProjectRuleSnapshot,
+  appendProjectHandoffEvidence,
+  appendTemplateApplicationEvidence,
+  attachTaskEvidence,
+  recordDailyPlanDecision,
+} from "./project-evidence";
 
 app.setName("Kocpy");
 const appDataRoot = app.getPath("appData");
@@ -164,9 +172,40 @@ const normalizeProject = (project: ProjectConfig): ProjectConfig => {
         ],
       ),
     ),
+    expectedDevicesByDate: Object.fromEntries(
+      Object.entries(project.expectedDevicesByDate || {}).map(
+        ([date, values]) => [
+          date,
+          [...new Set(values)].filter(
+            (key) =>
+              typeof key === "string" &&
+              key.length <= 160 &&
+              !/[\\/]/.test(key),
+          ),
+        ],
+      ),
+    ),
+    dailyPlanDecisions: (project.dailyPlanDecisions || []).filter(
+      (item) =>
+        item &&
+        typeof item.id === "string" &&
+        typeof item.operator === "string" &&
+        typeof item.at === "number",
+    ),
     requiredCopies: Math.max(1, Math.min(4, project.requiredCopies || 2)),
   };
 };
+const hasProjectRuleEvidence = (project: ProjectConfig) =>
+  Boolean(
+    project.activeRuleSnapshotId &&
+      project.ruleSnapshots?.some(
+        (snapshot) => snapshot.id === project.activeRuleSnapshotId,
+      ),
+  );
+const ensureProjectRuleEvidence = (project: ProjectConfig): ProjectConfig =>
+  hasProjectRuleEvidence(project)
+    ? project
+    : appendProjectRuleSnapshot(project, project);
 
 const sameManifestDifferences = (
   left: BackupTask["externalManifest"],
@@ -243,6 +282,15 @@ const prepareProject = (value: ProjectConfig): ProjectConfig => {
   project.restDays = [...new Set(project.restDays || [])];
   project.unusedDevicesByDate = Object.fromEntries(
     Object.entries(project.unusedDevicesByDate || {}).map(([date, values]) => [
+      date,
+      [...new Set(values)].filter(
+        (key) =>
+          typeof key === "string" && key.length <= 160 && !/[\\/]/.test(key),
+      ),
+    ]),
+  );
+  project.expectedDevicesByDate = Object.fromEntries(
+    Object.entries(project.expectedDevicesByDate || {}).map(([date, values]) => [
       date,
       [...new Set(values)].filter(
         (key) =>
@@ -431,7 +479,7 @@ const guardedCommands = new Set([
   "volumes:eject",
 ]);
 const changeChannels =
-  /^(tasks:(create|delete|reverify|retry-failed)|projects:(save|delete$|claim-volume|sign-checklist|handoff)|existing:(import|reanalyze|establish|repair|reverify|accept|revise)|archive:(verify|repair|move|audit)|workspace:(import|cold-archive|restore-cold)|templates:(apply|save|delete|import|hide)|catalog:rebuild|library:relink)/;
+  /^(tasks:(create|delete|reverify|retry-failed)|projects:(save|delete$|claim-volume|sign-checklist|add-handoff|daily-plan)|existing:(import|reanalyze|establish|repair|reverify|accept|revise)|archive:(verify|repair|move|audit)|workspace:(import|cold-archive|restore-cold)|templates:(apply|save|delete|import|hide)|catalog:rebuild|library:relink)/;
 const serialCreates = new Map<string, Promise<unknown>>();
 let commandInFlight = 0;
 async function confirmOperation(message: string, detail: string) {
@@ -1012,11 +1060,21 @@ app.whenReady().then(async () => {
     const destinationIdentities = await Promise.all(
       config.destinationPaths.map((destination) => volumeIdentity(destination)),
     );
+    let taskProject: ProjectConfig | undefined;
     if (config.projectId) {
-      const project = (await store.read<ProjectConfig[]>("projects.json", []))
-        .map(normalizeProject)
-        .find((item) => item.id === config.projectId);
+      const projects = (
+          await store.read<ProjectConfig[]>("projects.json", [])
+        ).map(normalizeProject),
+        projectIndex = projects.findIndex((item) => item.id === config.projectId);
+      let project = projects[projectIndex];
       if (!project) throw new Error("拍摄项目不存在");
+      if (!hasProjectRuleEvidence(project)) {
+        project = ensureProjectRuleEvidence(project);
+        projects[projectIndex] = project;
+        await store.write("projects.json", projects);
+        await catalog.upsertProject(project);
+      }
+      taskProject = project;
       const required = project.requiredCopies || 2;
       if (
         destinationIdentities.length < required ||
@@ -1028,7 +1086,7 @@ app.whenReady().then(async () => {
           `项目要求 ${required} 份独立副本，请先选择至少 ${required} 个不同卷的目的地；卷 UUID 不同仍不代表物理独立，收工时按存储关系核对`,
         );
     }
-    const task = engine.createTask(config);
+    const task = attachTaskEvidence(engine.createTask(config), taskProject);
     task.requestId = config.requestId;
     task.sourceVolumeId = sourceIdentity.id;
     task.sourceVolumeUuid = sourceIdentity.uuid;
@@ -1962,6 +2020,8 @@ app.whenReady().then(async () => {
         ).map(normalizeProject),
         project = projects.find((item) => item.id === projectId);
       if (!project) throw new Error("项目不存在");
+      if (!hasProjectRuleEvidence(project))
+        Object.assign(project, ensureProjectRuleEvidence(project));
       const task = await importExistingBackup(
         project,
         root,
@@ -2043,6 +2103,8 @@ app.whenReady().then(async () => {
         ).map(normalizeProject),
         project = projects.find((item) => item.id === projectId);
       if (!project) throw new Error("项目不存在");
+      if (!hasProjectRuleEvidence(project))
+        Object.assign(project, ensureProjectRuleEvidence(project));
       const preview = await previewExistingBackup(
         root,
         project,
@@ -2688,10 +2750,27 @@ app.whenReady().then(async () => {
             };
             const originalId = task.id,
               originalCreatedAt = task.createdAt,
+              logicalVolumeId = task.logicalVolumeId || task.id,
+              projectRuleSnapshotId =
+                task.projectRuleSnapshotId || verified.projectRuleSnapshotId,
+              operationAttempts = [
+                ...(task.operationAttempts || []),
+                {
+                  id: verified.operationAttemptId || randomUUID(),
+                  startedAt,
+                  reason: "recovery" as const,
+                  status: verified.status,
+                  completedAt: Date.now(),
+                },
+              ],
               log = task.verifyLog;
             Object.assign(task, verified, {
               id: originalId,
               createdAt: originalCreatedAt,
+              logicalVolumeId,
+              projectRuleSnapshotId,
+              operationAttemptId: operationAttempts.at(-1)!.id,
+              operationAttempts,
               verifyLog: [...log, ...verified.verifyLog].slice(-120),
             });
             await Promise.all([persist(), catalog.upsertTask(task)]);
@@ -2719,10 +2798,27 @@ app.whenReady().then(async () => {
           };
           const originalId = task.id,
             originalCreatedAt = task.createdAt,
+            logicalVolumeId = task.logicalVolumeId || task.id,
+            projectRuleSnapshotId =
+              task.projectRuleSnapshotId || verified.projectRuleSnapshotId,
+            operationAttempts = [
+              ...(task.operationAttempts || []),
+              {
+                id: verified.operationAttemptId || randomUUID(),
+                startedAt,
+                reason: "recovery" as const,
+                status: verified.status,
+                completedAt: Date.now(),
+              },
+            ],
             log = task.verifyLog;
           Object.assign(task, verified, {
             id: originalId,
             createdAt: originalCreatedAt,
+            logicalVolumeId,
+            projectRuleSnapshotId,
+            operationAttemptId: operationAttempts.at(-1)!.id,
+            operationAttempts,
             verifyLog: [...log, ...verified.verifyLog].slice(-120),
           });
           await Promise.all([persist(), catalog.upsertTask(task)]);
@@ -2961,6 +3057,8 @@ app.whenReady().then(async () => {
       ).map(normalizeProject),
       project = projects.find((item) => item.id === projectId);
     if (!project) throw new Error("项目不存在");
+    if (!hasProjectRuleEvidence(project))
+      Object.assign(project, ensureProjectRuleEvidence(project));
 
     if (
       !["start", "close"].includes(run.phase) ||
@@ -2980,11 +3078,13 @@ app.whenReady().then(async () => {
       if (
         status.pending.length ||
         status.unconfirmed.length ||
-        related.some(
-          (task) =>
-            shootingDateKey(task.shootingDate) === shootingDateKey(run.date) &&
-            !taskMeetsCopyRequirement(task, project.requiredCopies || 2),
-        )
+        groupLogicalVolumes(
+          related.filter(
+            (task) =>
+              shootingDateKey(task.shootingDate) === shootingDateKey(run.date),
+          ),
+          project.requiredCopies || 2,
+        ).some((volume) => !volume.compliant)
       )
         throw new Error(
           "该拍摄日仍有未达标素材或未确认的设备使用状态，请在项目详情处理后再签署收工。",
@@ -2992,6 +3092,7 @@ app.whenReady().then(async () => {
     }
     run.id = run.id || randomUUID();
     run.signedAt = Date.now();
+    run.ruleSnapshotId = project.activeRuleSnapshotId;
     project.checklistRuns = [
       ...(project.checklistRuns || []).filter((item) => item.id !== run.id),
       run,
@@ -3073,6 +3174,7 @@ app.whenReady().then(async () => {
       projectTemplates[index] = {
         ...template,
         createdAt: projectTemplates[index].createdAt,
+        revision: (projectTemplates[index].revision || 1) + 1,
       };
     await store.write("project-templates.json", projectTemplates);
     return projectTemplates;
@@ -3093,6 +3195,7 @@ app.whenReady().then(async () => {
         kind: "custom",
         createdAt: existing?.createdAt || input.createdAt || Date.now(),
         updatedAt: Date.now(),
+        revision: existing ? (existing.revision || 1) + 1 : 1,
       });
     const index = projectTemplates.findIndex((item) => item.id === template.id);
     if (index < 0) projectTemplates.push(template);
@@ -3277,6 +3380,7 @@ app.whenReady().then(async () => {
       templateId: string,
       projectId: string,
       selectedFields?: string[],
+      operator?: string,
     ) => {
       const template = projectTemplates.find((item) => item.id === templateId);
       if (!template) throw new Error("模板不存在");
@@ -3285,6 +3389,7 @@ app.whenReady().then(async () => {
         ).map(normalizeProject),
         project = projects.find((item) => item.id === projectId);
       if (!project) throw new Error("项目不存在");
+      const beforeProject = structuredClone(project);
       const allowedFields = [
         "devices",
         "requiredCopies",
@@ -3296,6 +3401,7 @@ app.whenReady().then(async () => {
       ];
       if (selectedFields && !selectedFields.length)
         throw new Error("请至少选择一项要应用的模板配置");
+      if (!operator?.trim()) throw new Error("请填写模板应用操作人");
       if (selectedFields?.some((field) => !allowedFields.includes(field)))
         throw new Error("模板包含不受支持的应用字段");
       const fields = new Set(selectedFields || allowedFields);
@@ -3330,30 +3436,110 @@ app.whenReady().then(async () => {
         project.productionType = template.productionType || "custom";
         project.expectedVolumes = template.expectedVolumes;
       }
+      const snapshotted = appendProjectRuleSnapshot(beforeProject, project, {
+        reason: "template-applied",
+        operator: operator.trim(),
+      });
+      const selected = [...fields];
+      const labels: Record<string, string> = {
+        devices: "设备、素材卷前缀与机位",
+        requiredCopies: "物理独立副本",
+        namingRule: "目录命名规则",
+        completionActions: "完成动作",
+        checklists: "开工与收工检查表",
+        crew: "制作人员与角色",
+        projectDefaults: "制作类型与预计素材卷",
+      };
+      const evidenceValue = (value: ProjectConfig, field: string) => {
+        if (field === "devices")
+          return {
+            devices: value.devices,
+            volumePrefix: value.volumePrefix,
+            volumePrefixByDevice: value.volumePrefixByDevice,
+            devicePositions: value.devicePositions,
+          };
+        if (field === "projectDefaults")
+          return {
+            productionType: value.productionType,
+            expectedVolumes: value.expectedVolumes,
+          };
+        return (value as unknown as Record<string, unknown>)[field] ?? null;
+      };
+      const changes = selected.map((field) => ({
+        field,
+        label: labels[field] || field,
+        before: JSON.stringify(evidenceValue(beforeProject, field)),
+        after: JSON.stringify(evidenceValue(snapshotted, field)),
+      }));
+      const evidenced = appendTemplateApplicationEvidence(
+        snapshotted,
+        template,
+        selected,
+        changes,
+        snapshotted.activeRuleSnapshotId!,
+        operator.trim(),
+      );
+      Object.assign(project, evidenced);
       await store.write("projects.json", projects);
       await catalog.upsertProject(project);
       return projects;
     },
   );
   handle(
+    "projects:daily-plan",
+    async (
+      projectId: string,
+      input: Parameters<typeof recordDailyPlanDecision>[1],
+    ) => {
+      const projects = (
+          await store.read<ProjectConfig[]>("projects.json", [])
+        ).map(normalizeProject),
+        index = projects.findIndex((item) => item.id === projectId);
+      if (index < 0) throw new Error("项目不存在");
+      const planDate = shootingDateKey(input.date),
+        related = engine
+          .getAllTasks()
+          .filter((task) => task.projectId === projectId);
+      if (!projectDates(projects[index], related).includes(planDate))
+        throw new Error("每日计划日期不在当前项目拍摄周期内");
+      projects[index] = recordDailyPlanDecision(
+        ensureProjectRuleEvidence(projects[index]),
+        input,
+      );
+      await store.write("projects.json", projects);
+      await catalog.upsertProject(projects[index]);
+      return projects;
+    },
+  );
+  handle(
     "projects:add-handoff",
-    async (projectId: string, operator: string, note: string) => {
+    async (
+      projectId: string,
+      operator: string,
+      note: string,
+      options?: { scope?: "day" | "project"; shootingDate?: string; exceptions?: string[] },
+    ) => {
       const projects = (
           await store.read<ProjectConfig[]>("projects.json", [])
         ).map(normalizeProject),
         project = projects.find((item) => item.id === projectId);
       if (!project) throw new Error("项目不存在");
+      if (!hasProjectRuleEvidence(project)) {
+        Object.assign(project, ensureProjectRuleEvidence(project));
+      }
       if (!note.trim()) throw new Error("请输入交接内容");
       if (!operator.trim()) throw new Error("请填写实际交接人姓名");
-      project.handoffNotes = [
-        ...(project.handoffNotes || []).slice(-199),
-        {
-          id: randomUUID(),
-          at: Date.now(),
-          operator: operator.trim() || "未署名",
-          note: note.trim(),
-        },
-      ];
+      const related = engine.getAllTasks().filter((task) => task.projectId === projectId);
+      Object.assign(
+        project,
+        appendProjectHandoffEvidence(project, related, {
+          operator,
+          note,
+          scope: options?.scope,
+          shootingDate: options?.shootingDate,
+          exceptions: options?.exceptions,
+        }),
+      );
       await store.write("projects.json", projects);
       return projects;
     },
@@ -3714,19 +3900,30 @@ app.whenReady().then(async () => {
   );
   handle(
     "projects:save",
-    async (value: ProjectConfig, createMissing = true) => {
-      const project = prepareProject(value);
+    async (value: ProjectConfig, createMissing = true, operator?: string) => {
+      let project = prepareProject(value);
       if (
         (project.destinationPaths?.length || 0) < (project.requiredCopies || 2)
       )
         throw new Error(
           `项目要求 ${project.requiredCopies || 2} 份物理独立副本，请配置至少同等数量的目的地`,
         );
-      if (createMissing) await createProjectStructure(project);
       const all = (await store.read<ProjectConfig[]>("projects.json", [])).map(
           normalizeProject,
         ),
         idx = all.findIndex((p) => p.id === project.id);
+      const previous = idx < 0 ? undefined : all[idx],
+        previousRevisions = previous?.ruleSnapshots?.length || 0;
+      project = appendProjectRuleSnapshot(previous, project, { operator });
+      const addedRevisions =
+        (project.ruleSnapshots?.length || 0) - previousRevisions;
+      if (
+        previous &&
+        addedRevisions > (previous.activeRuleSnapshotId ? 0 : 1) &&
+        !operator?.trim()
+      )
+        throw new Error("项目规则发生变化，请填写实际修改人后再保存");
+      if (createMissing) await createProjectStructure(project);
       if (idx < 0) all.push(project);
       else all[idx] = project;
       await store.write("projects.json", all);

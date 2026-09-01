@@ -2109,6 +2109,13 @@ small {
 .project-roll-link:hover {
   color: var(--purple);
 }
+.project-roll-attempts {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 8px;
+  font-weight: 500;
+}
 .project-live-transfer {
   display: block;
   color: var(--purple);
@@ -3079,6 +3086,18 @@ small {
   flex-wrap: wrap;
   margin-top: 12px;
 }
+.project-rule-note {
+  display: flex;
+  gap: 9px;
+  align-items: flex-start;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--purple) 36%, var(--line));
+  border-radius: 12px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+.project-rule-note svg { flex: 0 0 auto; color: var(--purple); }
 .project-day-progress {
   border-top: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
@@ -3228,6 +3247,76 @@ small {
   background: #81c9aa0d;
   color: var(--sub);
   font-size: 10px;
+}
+.daily-plan-operator {
+  display: grid;
+  grid-template-columns: minmax(260px, 420px) 1fr;
+  gap: 18px;
+  align-items: end;
+  padding: 16px 20px;
+  border: 1px solid var(--line);
+  border-top: 0;
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
+}
+.daily-plan-operator label {
+  display: grid;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.daily-plan-operator span {
+  align-self: center;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+.daily-plan-temp {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(150px, 0.7fr) auto;
+  gap: 9px;
+}
+.project-evidence-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  padding: 10px 20px;
+  border: 1px solid var(--line);
+  border-top: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+.project-evidence-strip b { color: var(--text); }
+.handoff-evidence-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+}
+.handoff-evidence-list > div {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.35fr) 1fr;
+  gap: 6px 16px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+.handoff-evidence-list p { margin: 0; }
+.handoff-evidence-list ul {
+  grid-column: 2;
+  margin: 0;
+  padding-left: 18px;
+  color: var(--warning);
+}
+.handoff-evidence-list small {
+  grid-column: 2;
+  color: var(--muted);
+}
+.handoff-exceptions { grid-column: 1 / -1; }
+@media (max-width: 920px) {
+  .daily-plan-operator { grid-template-columns: 1fr; }
+  .daily-plan-temp { grid-template-columns: 1fr; }
 }
 .closeout-actions {
   display: flex;

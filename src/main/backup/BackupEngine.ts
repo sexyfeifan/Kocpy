@@ -337,6 +337,16 @@ export class BackupEngine extends EventEmitter {
       projectCard = projectCardPath ? path.basename(projectCardPath) : folder;
     const task: BackupTask = {
       id,
+      logicalVolumeId: id,
+      operationAttemptId: id,
+      operationAttempts: [
+        {
+          id,
+          startedAt: Date.now(),
+          reason: "initial",
+          status: "pending",
+        },
+      ],
       name,
       sourcePath: config.sourcePath,
       devices: config.devices || [],
@@ -425,6 +435,17 @@ export class BackupEngine extends EventEmitter {
       .filter((destination) => !destination.verified)
       .map((destination) => destination.id);
     if (!failed.length) throw new Error("没有可重试的失败目标");
+    const attemptId = randomUUID();
+    task.operationAttemptId = attemptId;
+    task.operationAttempts = [
+      ...(task.operationAttempts || []),
+      {
+        id: attemptId,
+        startedAt: Date.now(),
+        reason: "retry-failed" as const,
+        status: "pending" as const,
+      },
+    ];
     this.retryTargets.set(id, new Set(failed));
     this.enqueueTask(id);
   }
@@ -568,6 +589,13 @@ export class BackupEngine extends EventEmitter {
       this.paused.delete(id);
       this.pausedPhase.delete(id);
       task.currentFile = "";
+      const attempt = task.operationAttempts?.find(
+        (item) => item.id === task.operationAttemptId,
+      );
+      if (attempt && !attempt.completedAt) {
+        attempt.status = task.status;
+        attempt.completedAt = Date.now();
+      }
       task.speedBps = 0;
       task.aggregateSpeedBps = 0;
       task.verifySpeedBps = 0;
@@ -1681,6 +1709,13 @@ export class BackupEngine extends EventEmitter {
       for (const d of task.destinations) {
         d.speedBps = 0;
         d.verifySpeedBps = 0;
+      }
+      const attempt = task.operationAttempts?.find(
+        (item) => item.id === task.operationAttemptId,
+      );
+      if (attempt && !attempt.completedAt) {
+        attempt.status = task.status;
+        attempt.completedAt = Date.now();
       }
       if (!completionNotified) {
         this.emitProgress(task, true);

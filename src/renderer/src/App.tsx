@@ -114,7 +114,8 @@ import { taskMediaKind } from "../../main/media-kind";
 import { copyEvidenceSummary } from "../../common/copy-evidence";
 import { APP_VERSION } from "../../common/version";
 import { taskTrustState, projectCoverage, savedDestinationBytes } from "../../common/task-trust";
-import { projectDates, shootingDateKey, updateSchedule } from "../../common/shooting-dates";
+import { projectDates, shootingDateKey } from "../../common/shooting-dates";
+import { groupLogicalVolumes } from "../../common/logical-volumes";
 
 type Page =
   | "overview"
@@ -271,6 +272,10 @@ export function App() {
     Array<{ message: string; error: boolean }>
   >([]);
   const [taskLimit, setTaskLimit] = useState(100);
+  const [dailyPlanOperator, setDailyPlanOperator] = useState("");
+  const [dailyPlanDate, setDailyPlanDate] = useState(today());
+  const [temporaryDailyDevice, setTemporaryDailyDevice] = useState("");
+  const [temporaryDailyPosition, setTemporaryDailyPosition] = useState("");
   const [reportDate, setReportDate] = useState(today()),
     [reportProject, setReportProject] = useState("");
 
@@ -712,8 +717,8 @@ export function App() {
       </div>
     </div>
   );
-  const saveProject = async (p: ProjectConfig, createMissing = true) => {
-    setProjects(await api.saveProject(p, createMissing));
+  const saveProject = async (p: ProjectConfig, createMissing = true, operator?: string) => {
+    setProjects(await api.saveProject(p, createMissing, operator));
     setComposer((current) => (current ? { ...current, project: p } : current));
     setEditor(null);
     notify("项目已保存");
@@ -732,6 +737,21 @@ export function App() {
   const projectDetail = projects.find(
     (project) => project.id === projectDetailId,
   );
+  const projectDetailStart = shootingDateKey(
+      projectDetail?.shootingDateStart || projectDetail?.shootingDate,
+    ),
+    projectDetailEnd = shootingDateKey(
+      projectDetail?.shootingDateEnd || projectDetailStart,
+    );
+  useEffect(() => {
+    if (!projectDetailId || !projectDetailStart) return;
+    const current = today();
+    setDailyPlanDate(
+      current >= projectDetailStart && current <= projectDetailEnd
+        ? current
+        : projectDetailStart,
+    );
+  }, [projectDetailId, projectDetailStart, projectDetailEnd]);
   const projectDetailTasks = tasks.filter(
     (task) => task.projectId === projectDetailId,
   );
@@ -742,6 +762,12 @@ export function App() {
         projectDates(projectDetail, projectDetailTasks),
       )
     : null;
+  const projectDetailLogicalVolumes = projectDetail
+    ? groupLogicalVolumes(
+        projectDetailTasks,
+        projectDetail.requiredCopies || 2,
+      )
+    : [];
   const activeProjectCloseouts = projects
     .filter((project) => project.status !== "archived")
     .map((project) => {
@@ -774,8 +800,36 @@ export function App() {
     device?: string,
     decision: "unused" | "expected" | "clear" = "unused",
   ) => {
-    const next = updateSchedule(project, dateValue, device, decision);
-    setProjects(await api.saveProject(next, false));
+    if (!dailyPlanOperator.trim()) {
+      notify("请先填写每日计划操作人，再确认设备使用状态", true);
+      return false;
+    }
+    try {
+      setProjects(
+        await api.updateProjectDailyPlan(project.id, {
+          date: dateValue,
+          scheduleKey: device,
+          decision: device
+            ? decision
+            : project.restDays?.some(
+                  (item) =>
+                    shootingDateKey(item) === shootingDateKey(dateValue),
+                )
+              ? "working"
+              : "rest",
+          operator: dailyPlanOperator.trim(),
+        }),
+      );
+      notify(
+        device
+          ? "每日设备使用决定已记录，并保留操作人与时间"
+          : "拍摄日状态已记录，并保留操作人与时间",
+      );
+      return true;
+    } catch (error) {
+      notify(readableOperationError(error), true);
+      return false;
+    }
   };
   const requestProjectDeletion = async (project: ProjectConfig) => {
     setProjectMenuId(null);
@@ -1699,13 +1753,10 @@ export function App() {
                               {p.destinationPaths?.length || 0} 个目的地
                             </span>
                             <span>
-                              {
-                                tasks.filter(
-                                  (t) =>
-                                    t.projectId === p.id &&
-                                    taskTrustState(t).contentVerified,
-                                ).length
-                              }{" "}
+                              {projectCoverage(
+                                p,
+                                tasks.filter((t) => t.projectId === p.id),
+                              ).verified}{" "}
                               卷内容校验通过
                             </span>
                           </div>
@@ -1713,13 +1764,10 @@ export function App() {
                             const related = tasks.filter(
                                 (task) => task.projectId === p.id,
                               ),
-                              { verified, compliant, attention } = projectCoverage(p, related),
-                              received = related.filter(
-                                (task) =>
-                                  (task.provenance || "kocpy-transfer") ===
-                                  "kocpy-transfer",
-                              ).length,
-                              imported = related.length - received;
+                              coverage = projectCoverage(p, related),
+                              { verified, compliant, attention, recorded } = coverage,
+                              received = coverage.byProvenance["kocpy-transfer"] || 0,
+                              imported = recorded - received;
                             return (
                               <div className="project-coverage">
                                 <div className="coverage-heading">
@@ -1729,7 +1777,7 @@ export function App() {
                                       {Math.min(
                                         100,
                                         Math.round(
-                                          (related.length / p.expectedVolumes) *
+                                          (recorded / p.expectedVolumes) *
                                             100,
                                         ),
                                       )}
@@ -1741,7 +1789,7 @@ export function App() {
                                 </div>
                                 <div className="coverage-metrics">
                                   <span>
-                                    <b>{related.length}</b>已记录
+                                    <b>{recorded}</b>已记录
                                   </span>
                                   <span>
                                     <b>{verified}</b>已验证
@@ -1905,27 +1953,25 @@ export function App() {
                       </div>
                       <div className="project-total-cards">
                         <div>
-                          <strong>{projectDetailTasks.length}</strong>
-                          <span>素材卷任务</span>
+                          <strong>{projectDetailLogicalVolumes.length}</strong>
+                          <span>逻辑素材卷</span>
                         </div>
                         <div>
                           <strong>
                             {
-                              projectDetailTasks.filter(
-                                (task) =>
-                                  taskMeetsCopyRequirement(
-                                    task, projectDetail.requiredCopies || 2,
-                                  ),
+                              projectDetailLogicalVolumes.filter(
+                                (item) => item.compliant,
                               ).length
                             }{" "}
-                            / {projectDetailTasks.length}
+                            / {projectDetailLogicalVolumes.length}
                           </strong>
                           <span>达到副本要求</span>
                         </div>
                         <div>
                           <strong>
-                            {projectDetailTasks.reduce(
-                              (sum, task) => sum + task.totalFiles,
+                            {projectDetailLogicalVolumes.reduce(
+                              (sum, item) =>
+                                sum + item.representative.totalFiles,
                               0,
                             )}
                           </strong>
@@ -1934,8 +1980,9 @@ export function App() {
                         <div>
                           <strong>
                             {bytes(
-                              projectDetailTasks.reduce(
-                                (sum, task) => sum + task.totalBytes,
+                              projectDetailLogicalVolumes.reduce(
+                                (sum, item) =>
+                                  sum + item.representative.totalBytes,
                                 0,
                               ),
                             )}
@@ -1955,6 +2002,101 @@ export function App() {
                           收工标准：每个使用中的设备至少有{" "}
                           {projectDetail.requiredCopies || 2}{" "}
                           份物理独立校验副本。没有文件夹不会自动等同于当天未使用。
+                        </span>
+                      </div>
+                      <div className="daily-plan-operator">
+                        <label>
+                          每日计划操作人
+                          <input
+                            value={dailyPlanOperator}
+                            onChange={(event) =>
+                              setDailyPlanOperator(event.target.value)
+                            }
+                            placeholder="填写实际确认人后再标记设备状态"
+                            aria-label="每日计划操作人"
+                          />
+                        </label>
+                        <label>
+                          临时设备所属拍摄日
+                          <input
+                            type="date"
+                            value={dailyPlanDate}
+                            min={projectDetailStart || undefined}
+                            max={projectDetailEnd || undefined}
+                            onChange={(event) => setDailyPlanDate(event.target.value)}
+                            aria-label="每日计划拍摄日期"
+                          />
+                        </label>
+                        <span>
+                          “应该有素材 / 当天未使用 / 休息日”都会追加操作人、时间和决定记录；不填写时保持未知。
+                        </span>
+                        <div className="daily-plan-temp">
+                          <input
+                            value={temporaryDailyDevice}
+                            onChange={(event) => setTemporaryDailyDevice(event.target.value)}
+                            placeholder="临时设备，例如 Drone"
+                            aria-label="临时设备"
+                          />
+                          <input
+                            value={temporaryDailyPosition}
+                            onChange={(event) => setTemporaryDailyPosition(event.target.value)}
+                            placeholder="机位（可选）"
+                            aria-label="临时设备机位"
+                          />
+                          <Button
+                            kind="subtle"
+                            disabled={!dailyPlanOperator.trim() || !temporaryDailyDevice.trim()}
+                            onClick={() =>
+                              void updateProjectSchedule(
+                                projectDetail,
+                                dailyPlanDate,
+                                temporaryDailyPosition.trim()
+                                  ? temporaryDailyDevice.trim() + "::" + temporaryDailyPosition.trim()
+                                  : temporaryDailyDevice.trim(),
+                                "expected",
+                              ).then((saved) => {
+                                if (saved) {
+                                  setTemporaryDailyDevice("");
+                                  setTemporaryDailyPosition("");
+                                }
+                              })
+                            }
+                          >
+                            <Plus size={13} />
+                            加入当日临时设备
+                          </Button>
+                        </div>
+                      </div>
+                      <div className="project-evidence-strip">
+                        <span>
+                          当前规则版本{" "}
+                          <b>
+                            v{projectDetail.ruleSnapshots?.find(
+                              (item) =>
+                                item.id === projectDetail.activeRuleSnapshotId,
+                            )?.revision || "旧项目未建立"}
+                          </b>
+                        </span>
+                        <span>
+                          每日决定 <b>{projectDetail.dailyPlanDecisions?.length || 0}</b> 条
+                        </span>
+                        <span>
+                          模板应用 <b>{projectDetail.templateApplications?.length || 0}</b> 次
+                        </span>
+                        <span>
+                          历史规则素材卷{" "}
+                          <b>
+                            {projectDetailLogicalVolumes.filter(
+                              (volume) =>
+                                volume.attempts.some(
+                                  (task) =>
+                                    task.projectRuleSnapshotId &&
+                                    task.projectRuleSnapshotId !==
+                                      projectDetail.activeRuleSnapshotId,
+                                ),
+                            ).length}
+                          </b>{" "}
+                          个
                         </span>
                       </div>
                       <div className="project-matrix">
@@ -2143,17 +2285,24 @@ export function App() {
                             <span>文件 · 素材量</span>
                             <span>接管可信状态</span>
                           </div>
-                          {[...projectDetailTasks]
+                          {groupLogicalVolumes(
+                            projectDetailTasks,
+                            projectDetail.requiredCopies || 2,
+                          )
                             .sort(
                               (a, b) =>
-                                (a.shootingDate || "").localeCompare(
-                                  b.shootingDate || "",
-                                ) || (a.startedAt || 0) - (b.startedAt || 0),
+                                (a.representative.shootingDate || "").localeCompare(
+                                  b.representative.shootingDate || "",
+                                ) ||
+                                (a.representative.startedAt || 0) -
+                                  (b.representative.startedAt || 0),
                             )
-                            .map((task) => (
+                            .map((logicalVolume) => {
+                              const task = logicalVolume.representative;
+                              return (
                               <div
                                 className="project-task-breakdown-row"
-                                key={task.id}
+                                key={logicalVolume.id}
                               >
                                 <span>
                                   {task.shootingDate?.replace(/-/g, "") ||
@@ -2169,6 +2318,11 @@ export function App() {
                                   title="查看实时传输详情"
                                 >
                                   {task.name}
+                                  {logicalVolume.attempts.length > 1 && (
+                                    <small className="project-roll-attempts">
+                                      {logicalVolume.attempts.length} 次尝试
+                                    </small>
+                                  )}
                                 </button>
                                 <small>
                                   {task.totalFiles} 个文件 ·{" "}
@@ -2233,7 +2387,8 @@ export function App() {
                                     )}
                                 </span>
                               </div>
-                            ))}
+                              );
+                            })}
                         </div>
                       )}
                     </section>
@@ -4695,7 +4850,10 @@ function HelpPage({
       steps: [
         "创建项目并设置拍摄周期、设备、机位和目的地。",
         "设置收工需要的独立副本数量。",
-        "每天查看日期 × 设备矩阵；只有确认当天没有拍摄时，才标记休息日或未使用设备。",
+        "每天填写实际操作人并查看日期 × 设备矩阵；确认应该有素材、当天未使用或整日休息。每次决定都会追加审计记录。",
+        "临时航拍、录音或外部设备可指定拍摄日和机位加入当日，不会自动扩展到整个项目。",
+        "修改项目名称／拍摄周期、设备、副本要求、目的地、命名或检查表时填写规则修改人；Kocpy 追加新规则版本，不改写旧素材卷和签署记录。",
+        "模板应用前核对逐项预览并填写应用人；交接时选择单日或全项目，填写交接人、说明和例外。",
         "项目结束后导出 PDF、JSON、CSV 或完整归档包。",
         "需要重新做一次全流程测试时，在进行中或已归档项目卡片右上角打开更多菜单，选择删除项目记录。",
         "核对关联记录数量、勾选风险确认并输入完整项目名称；未结束任务会阻止删除。",
@@ -4706,6 +4864,8 @@ function HelpPage({
         "旧任务显示独立性证据不足不等于文件损坏。连接原目标重新校验可更新关系，原哈希记录保留；存储拓扑不能证明机箱、供电或灾备独立。",
         "休息／未使用只解释空白单元，已有素材仍按校验、清单和副本要求检查。",
         "“当天未发现素材 · 待确认”不等于漏备份，也不等于当天未使用。",
+        "同一素材卷失败重试或恢复仍按一个逻辑素材卷统计；明细中的尝试次数不增加收工分母。",
+        "交接记录冻结当时规则版本和收工摘要；之后修改项目规则不会倒改历史交接。规则记录是本地审计证据，不是第三方数字签名。",
         "项目模板可自定义名称、说明、设备、机位、素材卷前缀、副本标准、命名规则、检查表、制作人员和完成动作；应用前可逐项预览并选择覆盖范围。",
         "进行中和已归档项目都能从卡片右上角菜单删除内部记录。删除前必须勾选风险确认并准确输入项目名称；活动备份或代理任务会阻止删除。",
         "删除项目只清理 Kocpy 内部的项目配置、任务索引、代理记录和归档维护历史；不会删除素材、备份目录、报告、MHL 或已导出的冷归档文件。",
@@ -4995,13 +5155,10 @@ function HelpPage({
       <section className="help-release-note">
         <RefreshCw size={20} />
         <div>
-          <strong>0.1.22：普通备份与实时阶段反馈</strong>
-          <p>普通备份无需创建项目，按次保存与保留源文件夹分开选择。高级选项默认折叠，独立回读校验不变；容量未知显示待预检。暂停后清空速度和预计时间，继续后重新采样，阶段进度不提前四舍五入到100%。</p>
-          <p>重新校验期间显示本次阶段，不混入上次已完成的性能总结。单任务PDF的目的地标题与表格一起分页；长文件表重复表头并保留全部明细，打印版采用平面分区。首次基线仍不等于证明接管前没有遗漏。</p>
-          <p>内容校验、首次基线与可计数副本分开说明。项目覆盖、收工检查、详情和报告共用判定；旧“允许额外文件”不豁免新的缺失、大小或哈希差异。旧记录的哈希事实保留，多目标缺少同次物理拓扑证据时不会自动视为独立副本，可重新校验在线目标更新证据。</p>
-          <p>
-            已声明使用的设备仍会检查现有素材；休息／未使用不能免除已记录素材的校验。不同卷 UUID 不再自动算成独立物理副本，旧记录保留原校验结果并提示独立性待复核。代理、交接与归档操作区统一间距，普通窗口限制过窄或过宽的比例；侧栏字号不缩小。内置媒体组件附完整源码与许可，帮助仍默认折叠。
-          </p>
+          <strong>0.1.23：项目日常操作与不可变证据</strong>
+          <p>每日设备计划必须记录操作人；“应该有素材”“当天未使用”“休息日”和恢复待确认都会追加日期、操作人、时间与规则版本，未确认状态继续保持未知。临时设备只加入所选拍摄日。</p>
+          <p>项目安全规则按版本追加。规则变化必须填写修改人；应用模板会保存模板版本、覆盖字段和真实前后值。历史素材卷、检查表签署与交接记录继续引用当时版本，不因之后修改规则而改写。</p>
+          <p>失败目标重试和恢复尝试共享逻辑素材卷身份，项目与收工统计不会把重试次数当成新增卡卷。单日或全项目交接会冻结当时的逻辑素材卷、达标、待处理和待确认摘要。</p>
         </div>
       </section>
       <SearchBox
@@ -5079,6 +5236,9 @@ function MaintenancePage({
     [busy, setBusy] = useState<string | null>(null),
     [handoff, setHandoff] = useState(""),
     [handoffOperator, setHandoffOperator] = useState(""),
+    [handoffExceptions, setHandoffExceptions] = useState(""),
+    [handoffScope, setHandoffScope] = useState<"day" | "project">("project"),
+    [handoffDate, setHandoffDate] = useState(today()),
     [handoffProject, setHandoffProject] = useState(
       projects.find((p) => p.id === initialProjectId)?.id ||
         projects[0]?.id ||
@@ -5432,7 +5592,7 @@ function MaintenancePage({
                       <span
                         className={`template-kind ${system ? "system" : "custom"}`}
                       >
-                        {system ? "系统模板" : "自定义"}
+                        {system ? "系统模板" : "自定义"} · v{template.revision || 1}
                       </span>
                     </div>
                     <p>{template.description || "未填写模板说明"}</p>
@@ -5601,6 +5761,38 @@ function MaintenancePage({
               placeholder="记录磁盘交接、异常说明或下一班注意事项"
             />
           </label>
+          <label>
+            交接范围
+            <select
+              aria-label="交接范围"
+              value={handoffScope}
+              onChange={(event) => setHandoffScope(event.target.value as "day" | "project")}
+            >
+              <option value="project">整个项目</option>
+              <option value="day">单个拍摄日</option>
+            </select>
+          </label>
+          {handoffScope === "day" && (
+            <label>
+              拍摄日期
+              <input
+                type="date"
+                aria-label="交接拍摄日期"
+                value={handoffDate}
+                onChange={(event) => setHandoffDate(event.target.value)}
+              />
+            </label>
+          )}
+          <label className="handoff-exceptions">
+            已知例外（可选，每行一项）
+            <textarea
+              aria-label="交接已知例外"
+              value={handoffExceptions}
+              onChange={(event) => setHandoffExceptions(event.target.value)}
+              placeholder="例如：B 机位第二副本离线，夜班重新连接后复校验"
+              rows={3}
+            />
+          </label>
           <Button
             kind="primary"
             disabled={
@@ -5620,10 +5812,18 @@ function MaintenancePage({
                     handoffProject,
                     handoffOperator.trim(),
                     handoff,
+                    {
+                      scope: handoffScope,
+                      shootingDate: handoffScope === "day" ? handoffDate : undefined,
+                      exceptions: handoffExceptions.split(/\r?\n/),
+                    },
                   ),
                 "交接记录已保存",
               ).then((ok) => {
-                if (ok) setHandoff("");
+                if (ok) {
+                  setHandoff("");
+                  setHandoffExceptions("");
+                }
               });
             }}
           >
@@ -5631,6 +5831,38 @@ function MaintenancePage({
             保存交接
           </Button>
         </div>
+        {(() => {
+          const project = projects.find((item) => item.id === handoffProject),
+            records = [...(project?.handoffNotes || [])].reverse().slice(0, 5);
+          return records.length ? (
+            <div className="handoff-evidence-list">
+              <strong>最近交接证据</strong>
+              {records.map((record) => (
+                <div key={record.id}>
+                  <span>
+                    {new Date(record.at).toLocaleString()} · {record.operator} ·
+                    {record.scope === "day" ? ` 拍摄日 ${record.shootingDate}` : " 整个项目"}
+                  </span>
+                  <p>{record.note}</p>
+                  {Boolean(record.exceptions?.length) && (
+                    <ul>
+                      {record.exceptions!.map((exception) => (
+                        <li key={exception}>{exception}</li>
+                      ))}
+                    </ul>
+                  )}
+                  {record.closeoutEvidence && (
+                    <small>
+                      规则 {record.ruleSnapshotId ? "已快照" : "旧记录未快照"} ·
+                      素材卷 {record.closeoutEvidence.compliantVolumes}/{record.closeoutEvidence.logicalVolumes} 达标 ·
+                      待处理 {record.closeoutEvidence.pendingCells} · 待确认 {record.closeoutEvidence.unconfirmedCells}
+                    </small>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : null;
+        })()}
       </section>
       <LifecycleControls
         initialProjectId={initialProjectId}

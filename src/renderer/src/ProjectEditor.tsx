@@ -43,7 +43,7 @@ export function ProjectEditor({
 }: {
   initial: Partial<ProjectConfig>;
   onClose: () => void;
-  onSave: (p: ProjectConfig, createMissing?: boolean) => Promise<void>;
+  onSave: (p: ProjectConfig, createMissing?: boolean, operator?: string) => Promise<void>;
 }) {
   const initialDevices = initial.devices?.length ? initial.devices : ["FX3"];
   const [name, setName] = useState(initial.name || ""),
@@ -98,6 +98,7 @@ export function ProjectEditor({
     [customDevice, setCustomDevice] = useState(""),
     [dests, setDests] = useState(initial.destinationPaths || []),
     [busy, setBusy] = useState(false),
+    [ruleOperator, setRuleOperator] = useState(""),
     [error, setError] = useState(""),
     [review, setReview] = useState<{
       project: ProjectConfig;
@@ -191,6 +192,15 @@ export function ProjectEditor({
         return [device, prefix.endsWith("_") ? prefix : `${prefix}_`];
       }),
     );
+    const existingCrew = new Map(
+        (initial.crew || []).map((item) => [`${item.role}:${item.name}`, item.id]),
+      ),
+      existingChecklists = new Map(
+        (initial.checklists || []).map((item) => [
+          `${item.phase}:${item.label}`,
+          item.id,
+        ]),
+      );
     return {
       ...initial,
       id: initial.id || crypto.randomUUID(),
@@ -217,9 +227,7 @@ export function ProjectEditor({
         .filter(Boolean)
         .map((line) => {
           const [role, ...name] = line.split(":");
-          return {
-            id: crypto.randomUUID(),
-            role: ([
+          const normalizedRole = ([
               "DIT",
               "cinematographer",
               "data-manager",
@@ -231,8 +239,14 @@ export function ProjectEditor({
               | "cinematographer"
               | "data-manager"
               | "assistant"
-              | "other",
-            name: (name.join(":") || role).trim(),
+              | "other";
+          const normalizedName = (name.join(":") || role).trim();
+          return {
+            id:
+              existingCrew.get(`${normalizedRole}:${normalizedName}`) ||
+              crypto.randomUUID(),
+            role: normalizedRole,
+            name: normalizedName,
           };
         }),
       namingRule,
@@ -241,13 +255,18 @@ export function ProjectEditor({
             .split(/\n/)
             .map((line) => line.trim())
             .filter(Boolean)
-            .map((line, index) => {
+            .map((line) => {
               const [phase, ...label] = line.split(":");
-              return {
-                id: `custom-${index}-${crypto.randomUUID()}`,
-                phase:
+              const normalizedPhase =
                   phase === "开工" ? ("start" as const) : ("close" as const),
-                label: (label.join(":") || phase).trim(),
+                normalizedLabel = (label.join(":") || phase).trim();
+              return {
+                id:
+                  existingChecklists.get(
+                    `${normalizedPhase}:${normalizedLabel}`,
+                  ) || crypto.randomUUID(),
+                phase: normalizedPhase,
+                label: normalizedLabel,
                 required: true,
               };
             })
@@ -292,7 +311,7 @@ export function ProjectEditor({
     setBusy(true);
     setError("");
     try {
-      await onSave(project, createMissing);
+      await onSave(project, createMissing, ruleOperator.trim() || undefined);
     } catch (e) {
       setError(String(e).replace(/^Error: /, ""));
     } finally {
@@ -313,7 +332,7 @@ export function ProjectEditor({
         report.conflictCount ||
         report.destinations.some((item) => item.error);
       if (needsReview) setReview({ project, report });
-      else await onSave(project, false);
+      else await onSave(project, false, ruleOperator.trim() || undefined);
     } catch (e) {
       setError(String(e).replace(/^Error: /, ""));
     } finally {
@@ -764,6 +783,25 @@ export function ProjectEditor({
                 </Button>
               </div>
             </div>
+          )}
+          {initial.id && (
+            <div className="project-rule-note">
+              <Info size={15} />
+              <span>
+                修改项目名称／拍摄周期（会改变项目目录或日程）、设备、目的地、副本要求、命名、完成动作或检查表时会追加规则版本，并要求填写修改人；仅修改制作类型、预计卷数、管理起始日或人员等说明信息不会制造新版本。既有素材卷目录、历史检查表签署和交接证据不会被改写。
+              </span>
+            </div>
+          )}
+          {initial.id && (
+            <label>
+              规则变更操作人（修改安全规则时必填）
+              <input
+                value={ruleOperator}
+                onChange={(event) => setRuleOperator(event.target.value)}
+                placeholder="用于追加不可变规则版本"
+                aria-label="项目规则修改人"
+              />
+            </label>
           )}
           {error && (
             <div role="alert" className="error-box">

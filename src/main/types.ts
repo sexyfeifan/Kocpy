@@ -165,6 +165,19 @@ export interface BackupTask {
   confidence?: "verified" | "baseline" | "unverified";
   externalManifest?: ExternalManifestComparison;
   projectId?: string;
+  /** Stable media-unit identity. Attempts and retries must not inflate card counts. */
+  logicalVolumeId?: string;
+  /** Identity of this concrete transfer/import attempt. */
+  operationAttemptId?: string;
+  operationAttempts?: Array<{
+    id: string;
+    startedAt: number;
+    reason: "initial" | "retry-failed" | "recovery";
+    status: TaskStatus;
+    completedAt?: number;
+  }>;
+  /** Immutable project rules that were active when this attempt was created. */
+  projectRuleSnapshotId?: string;
   projectFolderName?: string;
   projectNamingRule?: string;
   shootingDate?: string;
@@ -380,14 +393,38 @@ export interface ProjectConfig {
   restDays?: string[];
   unusedDevicesByDate?: Record<string, string[]>;
   expectedDevicesByDate?: Record<string, string[]>;
+  dailyPlanDecisions?: Array<{
+    id: string;
+    date: string;
+    scheduleKey?: string;
+    decision: "expected" | "unused" | "clear" | "rest" | "working";
+    operator: string;
+    note?: string;
+    ruleSnapshotId?: string;
+    at: number;
+  }>;
   requiredCopies?: number;
   namingRule?: string;
   completionActions?: Array<"report" | "delivery" | "proxy" | "eject">;
+  activeRuleSnapshotId?: string;
+  ruleSnapshots?: ProjectRuleSnapshot[];
+  templateApplications?: TemplateApplicationEvidence[];
   handoffNotes?: Array<{
     id: string;
     at: number;
     operator: string;
     note: string;
+    shootingDate?: string;
+    scope?: "day" | "project";
+    exceptions?: string[];
+    ruleSnapshotId?: string;
+    closeoutEvidence?: {
+      logicalVolumes: number;
+      compliantVolumes: number;
+      pendingCells: number;
+      unconfirmedCells: number;
+      requiredCopies: number;
+    };
   }>;
   managedSince?: string;
   expectedVolumes?: number;
@@ -417,6 +454,7 @@ export interface ProjectConfig {
     operator: string;
     signedAt?: number;
     signature?: string;
+    ruleSnapshotId?: string;
   }>;
   boundRoots?: Array<{
     id: string;
@@ -425,6 +463,43 @@ export interface ProjectConfig {
     provenance: "manifest-import" | "external-baseline" | "unverified-import";
   }>;
   nasPresetId?: string;
+}
+
+export interface ProjectRuleDefinition {
+  projectFolderName: string;
+  shootingDateStart: string;
+  shootingDateEnd: string;
+  devices: string[];
+  volumePrefix: string;
+  volumePrefixByDevice: Record<string, string>;
+  devicePositions: Record<string, string[]>;
+  destinationPaths: string[];
+  requiredCopies: number;
+  namingRule: string;
+  completionActions: Array<"report" | "delivery" | "proxy" | "eject">;
+  checklists: NonNullable<ProjectConfig["checklists"]>;
+}
+
+export interface ProjectRuleSnapshot {
+  id: string;
+  revision: number;
+  createdAt: number;
+  operator: string;
+  reason: "project-created" | "legacy-baseline" | "project-updated" | "template-applied";
+  sha256: string;
+  rules: ProjectRuleDefinition;
+}
+
+export interface TemplateApplicationEvidence {
+  id: string;
+  at: number;
+  operator: string;
+  templateId: string;
+  templateName: string;
+  templateRevision: number;
+  selectedFields: string[];
+  changes: Array<{ field: string; label: string; before: string; after: string }>;
+  resultingRuleSnapshotId: string;
 }
 
 export interface ArchiveHealthRecord {
@@ -462,6 +537,7 @@ export interface ProjectTemplate {
   crew?: ProjectConfig["crew"];
   createdAt: number;
   updatedAt: number;
+  revision?: number;
 }
 export interface ProjectDeletionPreview {
   projectId: string;

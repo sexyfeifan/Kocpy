@@ -261,6 +261,16 @@ describe("Real filesystem backup integrity", () => {
     expect(task.destinations.every((destination) => destination.verified)).toBe(true);
     expect(task.destinations[1].bytesWritten).toBe(successfulBytesWritten);
     expect(task.fileRecords.every((record) => record.destinations[1].verified)).toBe(true);
+    expect(task.operationAttempts).toHaveLength(2);
+    expect(task.operationAttempts?.map((item) => item.reason)).toEqual([
+      "initial",
+      "retry-failed",
+    ]);
+    expect(task.operationAttempts?.every((item) => item.completedAt)).toBe(true);
+    expect(task.operationAttempts?.at(-1)?.status).toBe("completed");
+    const completedAttempts = structuredClone(task.operationAttempts);
+    await engine.reverifyTask(task.id);
+    expect(task.operationAttempts).toEqual(completedAttempts);
   });
   it("creates a unique suffixed copy for a different existing file", async () => {
     await fs.mkdir(path.join(d1, "DCIM"));

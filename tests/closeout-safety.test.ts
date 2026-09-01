@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { BackupEngine } from "../src/main/backup/BackupEngine";
-import { projectCellStatus, projectCloseoutSummary } from "../src/main/project-closeout";
+import { projectCellStatus, projectCloseoutSummary, projectDeviceCells } from "../src/main/project-closeout";
 import type { ProjectConfig } from "../src/main/types";
 import { projectDates, updateSchedule } from "../src/common/shooting-dates";
 
@@ -61,5 +61,44 @@ describe("closeout cannot hide recorded unsafe material", () => {
     const cleared = updateSchedule(project, date, "FX3", "clear");
     expect(projectCellStatus(cleared, [], date, "FX3").exempt).toBe(false);
     expect(project.unusedDevicesByDate["20260825"]).toEqual(["FX3"]);
+  });
+  it("does not count two attempts for one logical media volume twice", () => {
+    const { project, task } = fixture();
+    const retry = structuredClone(task);
+    retry.id = "retry-attempt";
+    task.logicalVolumeId = "logical-a001";
+    retry.logicalVolumeId = "logical-a001";
+    task.status = "failed";
+    retry.status = "completed";
+    retry.destinations[0].verified = true;
+    const cell = projectCellStatus(project, [task, retry], date, "FX3");
+    expect(cell.rows).toHaveLength(1);
+    expect(cell.attempts).toHaveLength(2);
+    expect(cell.safe).toBe(1);
+    expect(cell.label).toBe("已满足收工要求");
+  });
+  it("shows an explicitly expected temporary device even before material arrives", () => {
+    const { project } = fixture();
+    project.expectedDevicesByDate = {
+      [date]: ["FX3", "Drone::Aerial"],
+    };
+    const cells = projectCloseoutSummary(project, [], [date]);
+    expect(cells.pending.map((item) => item.scheduleKey)).toContain("Drone::Aerial");
+    expect(cells.pending.find((item) => item.scheduleKey === "Drone::Aerial")).toMatchObject({
+      expected: true,
+      attention: true,
+    });
+  });
+  it("does not leak an observed temporary position into another shooting date", () => {
+    const { project, task } = fixture();
+    task.cameraPosition = "Aerial";
+    expect(projectDeviceCells(project, [task], date).map((cell) => cell.scheduleKey)).toContain(
+      "FX3::Aerial",
+    );
+    expect(
+      projectDeviceCells(project, [task], "2026-08-26").map(
+        (cell) => cell.scheduleKey,
+      ),
+    ).toEqual(["FX3"]);
   });
 });
