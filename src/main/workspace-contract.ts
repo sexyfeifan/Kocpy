@@ -1,7 +1,13 @@
 import { createHash } from "node:crypto";
-import type { BackupTask, ProjectConfig } from "./types";
+import { validateArchiveEvidence } from "./archive-evidence";
+import type {
+  ArchiveEvidenceState,
+  BackupTask,
+  ProjectConfig,
+} from "./types";
 
-export const WORKSPACE_SCHEMA = 1;
+export const WORKSPACE_SCHEMA = 2;
+export const LEGACY_WORKSPACE_SCHEMA = 1;
 
 export interface WorkspaceTombstone {
   id: string;
@@ -14,6 +20,7 @@ export interface WorkspaceMigration {
   migratedAt: number;
   taskSources: { json: number; catalog: number };
   projectSources: { json: number; catalog: number };
+  archiveSources?: { health: number; changes: number; reminders: number };
 }
 
 export interface WorkspaceState {
@@ -24,6 +31,7 @@ export interface WorkspaceState {
   projects: ProjectConfig[];
   taskTombstones: WorkspaceTombstone[];
   projectTombstones: WorkspaceTombstone[];
+  archiveEvidence?: ArchiveEvidenceState;
   migration?: WorkspaceMigration;
   digest: string;
 }
@@ -37,7 +45,9 @@ export interface SealedWorkspaceDocument {
 
 function assertWorkspaceBody(candidate: WorkspaceStateInput) {
   if (
-    candidate.schemaVersion !== WORKSPACE_SCHEMA ||
+    ![LEGACY_WORKSPACE_SCHEMA, WORKSPACE_SCHEMA].includes(
+      candidate.schemaVersion,
+    ) ||
     !Number.isSafeInteger(candidate.revision) ||
     candidate.revision < 1 ||
     !Number.isFinite(candidate.committedAt) ||
@@ -47,6 +57,13 @@ function assertWorkspaceBody(candidate: WorkspaceStateInput) {
     !Array.isArray(candidate.projectTombstones)
   )
     throw new Error("工作区状态结构或版本不受支持");
+  if (
+    candidate.schemaVersion === WORKSPACE_SCHEMA &&
+    !candidate.archiveEvidence
+  )
+    throw new Error("工作区状态缺少归档证据域");
+  if (candidate.archiveEvidence)
+    validateArchiveEvidence(candidate.archiveEvidence);
   if (
     candidate.tasks.some(
       (task) =>

@@ -3709,6 +3709,29 @@ small {
 .maintenance-project small {
   display: block;
 }
+.archive-operator-field {
+  display: grid;
+  gap: 5px;
+  min-width: min(260px, 100%);
+  color: var(--muted);
+  font-size: 12px;
+}
+.archive-operator-field input,
+.archive-reminder-days {
+  min-height: 38px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--panel2);
+  color: var(--text);
+  padding: 0 11px;
+}
+.archive-reminder-days {
+  width: 82px;
+}
+.maintenance-project > .row {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
 .maintenance-project small {
   margin-top: 4px;
   color: var(--muted);

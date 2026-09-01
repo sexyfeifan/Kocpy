@@ -559,6 +559,8 @@ export interface TemplateApplicationEvidence {
 export interface ArchiveHealthRecord {
   id: string;
   projectId: string;
+  runId?: string;
+  operator?: string;
   checkedAt: number;
   taskCount: number;
   healthyTasks: number;
@@ -570,6 +572,40 @@ export interface ArchiveHealthRecord {
   averageReadBps?: number;
   risk?: "healthy" | "attention" | "critical";
   scope?: "disk" | "project" | "day" | "card" | "file";
+  offlineCopies?: number;
+  identityUnknownCopies?: number;
+  evidenceDigest?: string;
+  notes: string[];
+}
+
+export interface ArchiveVerificationTaskResult {
+  taskId: string;
+  taskName: string;
+  baselineDigest: string;
+  status: "healthy" | "attention" | "offline" | "identity-unknown" | "failed";
+  checkedCopies: number;
+  verifiedCopies: number;
+  missingFiles: number;
+  damagedFiles: number;
+  offlineCopies: number;
+  identityUnknownCopies: number;
+  bytesVerified: number;
+  issues: string[];
+  evidenceDigest: string;
+}
+
+export interface ArchiveVerificationRun {
+  id: string;
+  projectId: string;
+  scope: "disk" | "project" | "day" | "card" | "file";
+  scopeLabel: string;
+  operator: string;
+  startedAt: number;
+  completedAt: number;
+  status: "completed" | "partial" | "failed";
+  taskResults: ArchiveVerificationTaskResult[];
+  baselineDigest: string;
+  resultDigest: string;
   notes: string[];
 }
 export interface ProjectTemplate {
@@ -602,6 +638,7 @@ export interface ProjectDeletionPreview {
   healthRecordCount: number;
   archiveChangeCount: number;
   reminderCount: number;
+  archiveRunCount: number;
   blockingTasks: number;
   blockingProxyJobs: number;
   canDelete: boolean;
@@ -619,6 +656,8 @@ export interface ArchiveChangeRecord {
   id: string;
   projectId: string;
   taskId?: string;
+  runId?: string;
+  operator?: string;
   at: number;
   kind:
     | "verified"
@@ -632,6 +671,26 @@ export interface ArchiveChangeRecord {
   path?: string;
   from?: string;
   to?: string;
+  relativePath?: string;
+  hashAlgorithm?: HashAlgorithm;
+  expectedChecksum?: string;
+  actualChecksum?: string;
+  sourcePath?: string;
+  preservedPath?: string;
+  sourceVolumeId?: string;
+  targetVolumeId?: string;
+  recoveryEvents?: Array<{
+    at: number;
+    relativePath?: string;
+    action: string;
+    path?: string;
+    checksum?: string;
+    error?: string;
+    repaired?: number;
+  }>;
+  outcome?: "completed" | "partial" | "failed" | "pending-verification";
+  previousDigest?: string;
+  digest?: string;
   note: string;
 }
 export interface ArchiveReminder {
@@ -641,6 +700,21 @@ export interface ArchiveReminder {
   nextAt: number;
   enabled: boolean;
   lastNotifiedAt?: number;
+  lastSuccessfulVerificationAt?: number;
+  lastRunId?: string;
+  lastRisk?: ArchiveHealthRecord["risk"];
+  lastTargetState?: "online" | "offline" | "identity-unknown" | "unknown";
+}
+
+export interface ArchiveEvidenceState {
+  schemaVersion: number;
+  revision: number;
+  committedAt: number;
+  healthRecords: ArchiveHealthRecord[];
+  changes: ArchiveChangeRecord[];
+  reminders: ArchiveReminder[];
+  runs: ArchiveVerificationRun[];
+  digest: string;
 }
 export interface NasPreset {
   id: string;

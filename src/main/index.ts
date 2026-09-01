@@ -26,7 +26,7 @@ import { createHash, randomUUID } from "node:crypto";
 import os from "node:os";
 import { gzip, gunzip } from "node:zlib";
 import { promisify } from "node:util";
-import { constants as fsConstants, promises as fs } from "node:fs";
+import { promises as fs } from "node:fs";
 import { BackupEngine, hashFile } from "./backup/BackupEngine";
 import {
   scan,
@@ -50,8 +50,11 @@ import {
 import { generateMhl, generateAscMhl } from "./backup/ManifestGenerator";
 import type {
   ArchiveChangeRecord,
+  ArchiveEvidenceState,
   ArchiveHealthRecord,
   ArchiveReminder,
+  ArchiveVerificationRun,
+  ArchiveVerificationTaskResult,
   BackupTask,
   ExistingAuditEvent,
   ExistingCandidateDecision,
@@ -63,6 +66,22 @@ import type {
   TaskConfig,
   ProxyJob,
 } from "./types";
+import {
+  archiveResultDigest,
+  archiveTaskBaselineDigest,
+  dueArchiveReminders,
+  migrateLegacyArchiveEvidence,
+  projectArchiveReport,
+  recordArchiveNotifications,
+  recordProjectArchiveRun,
+  replaceArchiveEvidence,
+  updateArchiveEvidence,
+} from "./archive-evidence";
+import {
+  taskArchiveBaseline,
+  verifyArchiveTask,
+} from "./archive-verification";
+import { repairArchiveFile } from "./archive-repair";
 import { compareVersions, selectMacAsset, type GitHubRelease } from "./update";
 import {
   claimTimestampedVolume,
@@ -418,6 +437,8 @@ let healthRecords: ArchiveHealthRecord[] = [],
   projectTemplates: ProjectTemplate[] = [],
   archiveChanges: ArchiveChangeRecord[] = [],
   archiveReminders: ArchiveReminder[] = [],
+  archiveRuns: ArchiveVerificationRun[] = [],
+  archiveEvidenceState: ArchiveEvidenceState | undefined,
   nasPresets: NasPreset[] = [],
   savedProxyPresets: SavedProxyPreset[] = [];
 const operations = new OperationRegistry((records) =>
@@ -535,6 +556,47 @@ const writeProjects = (projects: ProjectConfig[]) =>
       reportWorkspaceAuthorityFailure(error);
       throw error;
     });
+const applyArchiveEvidence = (evidence: ArchiveEvidenceState) => {
+  archiveEvidenceState = evidence;
+  healthRecords = evidence.healthRecords;
+  archiveChanges = evidence.changes;
+  archiveReminders = evidence.reminders;
+  archiveRuns = evidence.runs;
+};
+const currentArchiveEvidence = () => {
+  if (!archiveEvidenceState)
+    throw new Error("归档证据域尚未初始化，已停止维护操作");
+  return archiveEvidenceState;
+};
+const commitArchiveEvidence = async (
+  evidence: ArchiveEvidenceState,
+  tasks = engine.getAllTasks().slice().reverse(),
+  projects?: ProjectConfig[],
+) => {
+  try {
+    const result = projects
+        ? await workspace.commit({
+            archiveEvidence: evidence,
+            tasks,
+            projects,
+            syncCatalog: true,
+          })
+        : await workspace.commitArchiveEvidence(evidence, tasks, true),
+      committed = result.state.archiveEvidence;
+    if (!committed) throw new Error("权威工作区未返回归档证据状态");
+    applyArchiveEvidence(committed);
+    for (const task of result.state.tasks) {
+      const live = engine.getTask(task.id);
+      if (live) Object.assign(live, structuredClone(task));
+    }
+    lastWorkspaceAuthorityFailure = "";
+    reportWorkspaceAuxiliaryState(result, true);
+    return result;
+  } catch (error) {
+    reportWorkspaceAuthorityFailure(error);
+    throw error;
+  }
+};
 const sourceInventoryMatches = async (task: BackupTask) => {
   const identity = await volumeIdentity(task.sourcePath);
   if (task.sourceVolumeUuid && task.sourceVolumeUuid !== identity.uuid)
@@ -1091,21 +1153,83 @@ app.whenReady().then(async () => {
     "reliability-validations.json",
     [],
   );
-  healthRecords = await store.read<ArchiveHealthRecord[]>(
-    "archive-health.json",
-    [],
-  );
+  applyArchiveEvidence(workspace.getArchiveEvidence());
+  const interruptedRepair = await store.read<
+    | {
+        operationId: string;
+        taskId: string;
+        projectId?: string;
+        operator?: string;
+        target?: string;
+        status?: string;
+        events?: Array<Record<string, unknown>>;
+      }
+    | undefined
+  >("archive-repair-recovery.json", undefined);
+  if (
+    interruptedRepair?.operationId &&
+    !archiveChanges.some(
+      (item) => item.id === `repair-recovery:${interruptedRepair.operationId}`,
+    )
+  ) {
+    const recoveryEvents = (interruptedRepair.events || [])
+        .slice(-1_000)
+        .map((event) => ({
+          at:
+            typeof event.at === "number" && Number.isFinite(event.at)
+              ? event.at
+              : Date.now(),
+          relativePath:
+            typeof event.relativePath === "string"
+              ? event.relativePath
+              : undefined,
+          action:
+            typeof event.action === "string" && event.action
+              ? event.action
+              : "unknown-recovery-event",
+          path: typeof event.path === "string" ? event.path : undefined,
+          checksum:
+            typeof event.checksum === "string" ? event.checksum : undefined,
+          error: typeof event.error === "string" ? event.error : undefined,
+          repaired:
+            typeof event.repaired === "number" &&
+            Number.isFinite(event.repaired) &&
+            event.repaired >= 0
+              ? event.repaired
+              : undefined,
+        })),
+      preservedPath = [...recoveryEvents]
+        .reverse()
+        .find((event) => event.action === "preserved-damaged-original")?.path;
+    const recoveryEvidence = updateArchiveEvidence(currentArchiveEvidence(), {
+      changes: [
+        {
+          id: `repair-recovery:${interruptedRepair.operationId}`,
+          projectId: interruptedRepair.projectId || "",
+          taskId: interruptedRepair.taskId,
+          runId: interruptedRepair.operationId,
+          operator: interruptedRepair.operator || "上次运行未记录",
+          at: Date.now(),
+          kind: "repaired",
+          path: interruptedRepair.target,
+          preservedPath,
+          recoveryEvents,
+          outcome: "partial",
+          note: `检测到上次归档修复在权威结算前中断；已将 ${recoveryEvents.length} 条恢复事件写入追加式审计，必须重新核对目标后再继续。`,
+        },
+      ],
+    });
+    await commitArchiveEvidence(recoveryEvidence, workspace.getTasks());
+    await fs
+      .unlink(path.join(store.root, "archive-repair-recovery.json"))
+      .catch(() => undefined);
+    await fs
+      .unlink(path.join(store.root, "archive-repair-recovery.json.bak"))
+      .catch(() => undefined);
+  }
   projectTemplates = (
     await store.read<ProjectTemplate[]>("project-templates.json", [])
   ).map(normalizeProjectTemplate);
-  archiveChanges = await store.read<ArchiveChangeRecord[]>(
-    "archive-changes.json",
-    [],
-  );
-  archiveReminders = await store.read<ArchiveReminder[]>(
-    "archive-reminders.json",
-    [],
-  );
   nasPresets = await store.read<NasPreset[]>("nas-presets.json", []);
   savedProxyPresets = await store.read<SavedProxyPreset[]>(
     "proxy-presets.json",
@@ -1113,45 +1237,45 @@ app.whenReady().then(async () => {
   );
   void refreshNasHealth();
   setInterval(() => void refreshNasHealth(), 60_000);
-  for (const reminder of archiveReminders.filter(
-    (item) => item.enabled && item.nextAt <= Date.now(),
-  )) {
-    const project = (await readProjects()).find(
-      (item) => item.id === reminder.projectId,
+  const notifyDueArchiveReminders = async () => {
+    const now = Date.now(),
+      due = dueArchiveReminders(archiveReminders, now);
+    if (!due.length) return;
+    const projects = await readProjects(),
+      reminders = recordArchiveNotifications(
+        archiveReminders,
+        due.map((item) => item.id),
+        now,
+      );
+    for (const reminder of due) {
+      const project = projects.find(
+          (item) => item.id === reminder.projectId,
+        ),
+        state =
+          reminder.lastTargetState === "offline"
+            ? "上次目标离线"
+            : reminder.lastTargetState === "identity-unknown"
+              ? "上次身份未知"
+              : reminder.lastRisk === "critical"
+                ? "上次存在严重风险"
+                : reminder.lastRisk === "attention"
+                  ? "上次需要处理"
+                  : "等待用户复校验";
+      if (Notification.isSupported())
+        new Notification({
+          title: "归档复校验到期",
+          body: `${project?.name || "项目"} · ${state}。这只是提醒，不代表已经执行核验。`,
+          silent: !initialSettings.notificationSound,
+        }).show();
+    }
+    await commitArchiveEvidence(
+      updateArchiveEvidence(currentArchiveEvidence(), { reminders }),
+      workspace.getTasks(),
     );
-    if (Notification.isSupported())
-      new Notification({
-        title: "归档复校验到期",
-        body: `${project?.name || "项目"} 已到周期复校验时间`,
-        silent: !initialSettings.notificationSound,
-      }).show();
-    reminder.lastNotifiedAt = Date.now();
-    reminder.nextAt = Date.now() + reminder.intervalDays * 86_400_000;
-  }
-  await store.write("archive-reminders.json", archiveReminders);
+  };
+  await notifyDueArchiveReminders();
   setInterval(
-    () =>
-      void (async () => {
-        const due = archiveReminders.filter(
-          (item) => item.enabled && item.nextAt <= Date.now(),
-        );
-        if (!due.length) return;
-        const projects = await readProjects();
-        for (const reminder of due) {
-          const project = projects.find(
-            (item) => item.id === reminder.projectId,
-          );
-          if (Notification.isSupported())
-            new Notification({
-              title: "归档复校验到期",
-              body: `${project?.name || "项目"} 已到周期复校验时间`,
-              silent: !initialSettings.notificationSound,
-            }).show();
-          reminder.lastNotifiedAt = Date.now();
-          reminder.nextAt = Date.now() + reminder.intervalDays * 86_400_000;
-        }
-        await store.write("archive-reminders.json", archiveReminders);
-      })(),
+    () => void notifyDueArchiveReminders().catch(() => undefined),
     3_600_000,
   );
   for (const template of builtInProductionTemplates()) {
@@ -1783,10 +1907,17 @@ app.whenReady().then(async () => {
       ? archiveChanges.filter((item) => item.projectId === projectId)
       : archiveChanges,
   );
+  handle("archive:runs", (projectId?: string) =>
+    projectId
+      ? archiveRuns.filter((item) => item.projectId === projectId)
+      : archiveRuns,
+  );
   handle("archive:reminders", () => archiveReminders);
   handle("archive:delete-reminder", async (id: string) => {
-    archiveReminders = archiveReminders.filter((item) => item.id !== id);
-    await store.write("archive-reminders.json", archiveReminders);
+    const reminders = archiveReminders.filter((item) => item.id !== id);
+    await commitArchiveEvidence(
+      updateArchiveEvidence(currentArchiveEvidence(), { reminders }),
+    );
     return true;
   });
   handle("operations:list", () => operations.list());
@@ -1799,18 +1930,27 @@ app.whenReady().then(async () => {
         value.nextAt ||
         Date.now() + Math.max(1, value.intervalDays || 180) * 86_400_000,
     };
-    archiveReminders = [
+    const reminders = [
       ...archiveReminders.filter((item) => item.id !== reminder.id),
       reminder,
     ];
-    await store.write("archive-reminders.json", archiveReminders);
-    return archiveReminders;
+    await commitArchiveEvidence(
+      updateArchiveEvidence(currentArchiveEvidence(), { reminders }),
+    );
+    return reminders;
   });
-  handle("archive:verify-scope", async (input: ArchiveScope) => {
-    const scope = validateArchiveScope(input);
+  const verifyArchiveScopeOperation = async (
+    input: ArchiveScope,
+    operator: string,
+  ) => {
+    const scope = validateArchiveScope(input),
+      actualOperator = operator?.trim();
+    if (!actualOperator) throw new Error("请填写本次归档复校验操作人");
     if (engine.hasActive() || proxyBusy) throw new Error("请等待当前任务结束");
-    const started = Date.now();
-    let tasks = engine.getAllTasks();
+    const started = Date.now(),
+      runId = randomUUID(),
+      workspaceTasks = workspace.getTasks();
+    let tasks = workspaceTasks;
     if (scope.projectId)
       tasks = tasks.filter((task) => task.projectId === scope.projectId);
     if (scope.shootingDate)
@@ -1829,115 +1969,110 @@ app.whenReady().then(async () => {
         ),
       );
     if (!tasks.length) throw new Error("范围内没有素材记录");
-    const changes: ArchiveChangeRecord[] = [];
-    let bytesVerified = 0,
-      healthyTasks = 0,
-      missingCopies = 0;
-    for (const task of tasks) {
-      if (scope.relativePath || scope.volumePath) {
-        const records = scope.relativePath
-          ? task.fileRecords.filter(
-              (file) => file.relativePath === scope.relativePath,
-            )
-          : task.fileRecords;
-        if (!records.length)
-          throw new Error("所选文件不在该素材卷的记录中，请重新选择");
-        if (records.some((record) => !record.srcChecksum))
-          throw new Error("所选记录尚未建立基线，请先完成接管校验。");
-        let taskHealthy = true,
-          checkedCopies = 0;
-        for (const record of records)
-          for (const destination of record.destinations) {
-            if (scope.volumePath && !inside(destination.path, scope.volumePath))
-              continue;
-            checkedCopies++;
-            operations.progress({
-              message: `正在读取 ${record.relativePath}`,
-              totalBytes: undefined,
-              completedBytes: bytesVerified,
-            });
-            const exists = await fs.access(destination.path).then(
-                () => true,
-                () => false,
-              ),
-              actual = exists
-                ? await hashFile(destination.path, task.hashAlgorithm)
-                : "",
-              kind = !exists
-                ? "missing"
-                : actual !== record.srcChecksum
-                  ? "modified"
-                  : "verified";
-            destination.verified = kind === "verified";
-            if (kind === "verified") bytesVerified += record.size;
-            else {
-              missingCopies++;
-              taskHealthy = false;
-            }
-            if (kind !== "verified" || scope.relativePath)
-              changes.push({
-                id: randomUUID(),
-                projectId: task.projectId || "",
-                taskId: task.id,
-                at: Date.now(),
-                kind,
-                path: destination.path,
-                note: `${record.relativePath}：${kind}`,
-              });
-          }
-        if (!checkedCopies)
-          throw new Error("所选范围没有可校验的文件副本，未扩大校验范围。");
-        if (taskHealthy) healthyTasks++;
-        for (const top of task.destinations) {
-          const root = top.resolvedPath || top.path,
-            copies = task.fileRecords.flatMap((item) =>
-              item.destinations.filter((copy) => inside(copy.path, root)),
-            );
-          top.verified =
-            copies.length > 0 && copies.every((copy) => copy.verified);
-        }
-        changes.push({
-          id: randomUUID(),
-          projectId: task.projectId || "",
-          taskId: task.id,
-          at: Date.now(),
-          kind: taskHealthy ? "verified" : "damaged",
-          note: `${task.name} ${taskHealthy ? "复校验通过" : "复校验失败"}`,
-        });
-      } else {
-        await engine.reverifyTask(task.id);
-        if (task.status === "completed") healthyTasks++;
-        missingCopies += task.destinations.filter(
-          (item) => !item.verified,
-        ).length;
-        bytesVerified += task.fileRecords.reduce(
-          (sum, item) =>
-            sum +
-            item.size *
-              item.destinations.filter(
-                (copy) =>
-                  copy.verified &&
-                  (!scope.volumePath || inside(copy.path, scope.volumePath)),
-              ).length,
-          0,
+    const taskResults: ArchiveVerificationTaskResult[] = [],
+      changes: Array<Omit<ArchiveChangeRecord, "previousDigest" | "digest">> = [],
+      updatedTasks = new Map<string, BackupTask>();
+    for (const task of tasks)
+      try {
+        const result = await verifyArchiveTask(
+          task,
+          scope,
+          {
+            runId,
+            operator: actualOperator,
+            projectId: task.projectId || scope.projectId || "",
+          },
+          (progress) => operations.progress(progress),
         );
+        taskResults.push(result.result);
+        changes.push(...result.changes);
+        updatedTasks.set(task.id, result.task);
+      } catch (error) {
+        const note = error instanceof Error ? error.message : String(error),
+          body = {
+            taskId: task.id,
+            taskName: task.name,
+            baselineDigest: archiveTaskBaselineDigest(taskArchiveBaseline(task)),
+            status: "failed" as const,
+            checkedCopies: 0,
+            verifiedCopies: 0,
+            missingFiles: 0,
+            damagedFiles: 0,
+            offlineCopies: 0,
+            identityUnknownCopies: 0,
+            bytesVerified: 0,
+            issues: [note],
+          };
+        taskResults.push({ ...body, evidenceDigest: archiveResultDigest(body) });
         changes.push({
           id: randomUUID(),
-          projectId: task.projectId || "",
+          projectId: task.projectId || scope.projectId || "",
           taskId: task.id,
+          runId,
+          operator: actualOperator,
           at: Date.now(),
-          kind: task.status === "completed" ? "verified" : "damaged",
-          note: `${task.name} ${task.status === "completed" ? "复校验通过" : "复校验失败"}`,
+          kind: "damaged",
+          hashAlgorithm: task.hashAlgorithm,
+          outcome: "failed",
+          note,
         });
       }
-    }
-    const durationMs = Math.max(1, Date.now() - started),
-      failedTasks = tasks.length - healthyTasks,
+    const completedAt = Date.now(),
+      bytesVerified = taskResults.reduce(
+        (sum, item) => sum + item.bytesVerified,
+        0,
+      ),
+      healthyTasks = taskResults.filter((item) => item.status === "healthy").length,
+      failedTasks = taskResults.length - healthyTasks,
+      missingCopies = taskResults.reduce(
+        (sum, item) =>
+          sum + item.missingFiles + item.damagedFiles + item.offlineCopies + item.identityUnknownCopies,
+        0,
+      ),
+      offlineCopies = taskResults.reduce((sum, item) => sum + item.offlineCopies, 0),
+      identityUnknownCopies = taskResults.reduce(
+        (sum, item) => sum + item.identityUnknownCopies,
+        0,
+      ),
+      runProjectId = scope.projectId || `disk:${scope.volumePath || "all"}`,
+      run: ArchiveVerificationRun = {
+        id: runId,
+        projectId: runProjectId,
+        scope: scope.kind,
+        scopeLabel:
+          scope.kind === "disk"
+            ? scope.volumePath || "归档盘"
+            : scope.kind === "day"
+              ? scope.shootingDate || "拍摄日"
+              : scope.kind === "card"
+                ? tasks[0]?.name || "素材卷"
+                : scope.kind === "file"
+                  ? scope.relativePath || "单文件"
+                  : runProjectId,
+        operator: actualOperator,
+        startedAt: started,
+        completedAt,
+        status:
+          healthyTasks === taskResults.length
+            ? "completed"
+            : healthyTasks
+              ? "partial"
+              : "failed",
+        taskResults,
+        baselineDigest: archiveTaskBaselineDigest(
+          tasks.map((task) => taskArchiveBaseline(task)),
+        ),
+        resultDigest: archiveResultDigest(taskResults),
+        notes: taskResults.flatMap((item) => item.issues),
+      },
+      durationMs = Math.max(1, completedAt - started),
       record: ArchiveHealthRecord = {
         id: randomUUID(),
-        projectId: scope.projectId || `disk:${scope.volumePath || "all"}`,
-        checkedAt: Date.now(),
-        taskCount: tasks.length,
+        projectId: runProjectId,
+        runId,
+        operator: actualOperator,
+        checkedAt: completedAt,
+        taskCount: taskResults.length,
         healthyTasks,
         failedTasks,
         missingCopies,
@@ -1950,30 +2085,35 @@ app.whenReady().then(async () => {
               ? "critical"
               : "attention"
             : "healthy",
-        scope: scope.relativePath
-          ? "file"
-          : scope.taskId
-            ? "card"
-            : scope.shootingDate
-              ? "day"
-              : scope.volumePath
-                ? "disk"
-                : "project",
-        notes: changes
-          .filter((item) => item.kind !== "verified")
-          .map((item) => item.note),
+        scope: scope.kind,
+        offlineCopies,
+        identityUnknownCopies,
+        evidenceDigest: archiveResultDigest(run),
+        notes: run.notes,
       };
-    healthRecords = [...healthRecords.slice(-499), record];
-    archiveChanges = [...archiveChanges, ...changes].slice(-10000);
-    await Promise.all([
-      store.write("archive-health.json", healthRecords),
-      store.write("archive-changes.json", archiveChanges),
-      persist(true),
-    ]);
-    return { changes, record };
-  });
-  handle("archive:audit-untracked", async (projectId: string, root: string) => {
+    const reminders = recordProjectArchiveRun(
+        archiveReminders,
+        run,
+        record.risk,
+      ),
+      evidence = updateArchiveEvidence(currentArchiveEvidence(), {
+        healthRecords: [...healthRecords, record],
+        changes,
+        reminders,
+        runs: [...archiveRuns, run],
+      }),
+      committedTasks = workspaceTasks.map(
+        (task) => updatedTasks.get(task.id) || task,
+      );
+    await commitArchiveEvidence(evidence, committedTasks);
+    return { changes: evidence.changes.slice(-changes.length), record, run };
+  };
+  handle("archive:verify-scope", verifyArchiveScopeOperation);
+  handle(
+    "archive:audit-untracked",
+    async (projectId: string, root: string, operator: string) => {
     if (!path.isAbsolute(root)) throw new Error("请选择有效的归档根目录");
+    if (!operator?.trim()) throw new Error("请填写扫描操作人");
     const expected = new Set(
       engine
         .getAllTasks()
@@ -1984,7 +2124,9 @@ app.whenReady().then(async () => {
           ),
         ),
     );
-    const additions: ArchiveChangeRecord[] = [];
+    const additions: Array<
+      Omit<ArchiveChangeRecord, "previousDigest" | "digest">
+    > = [];
     const stack = [root];
     while (stack.length) {
       const dir = stack.pop()!;
@@ -2000,28 +2142,41 @@ app.whenReady().then(async () => {
           additions.push({
             id: randomUUID(),
             projectId,
+            operator: operator.trim(),
             at: Date.now(),
             kind: "added",
             path: file,
+            outcome: "pending-verification",
             note: `发现未记录文件：${path.relative(root, file)}`,
           });
         if (additions.length >= 10000) break;
       }
     }
-    archiveChanges = [...archiveChanges, ...additions].slice(-10000);
-    await store.write("archive-changes.json", archiveChanges);
-    return additions;
-  });
+    const evidence = updateArchiveEvidence(currentArchiveEvidence(), {
+      changes: additions,
+    });
+    await commitArchiveEvidence(evidence);
+    return evidence.changes.slice(-additions.length);
+  },
+  );
   handle(
     "archive:move-copy",
-    async (taskId: string, destinationId: string, newPath: string) => {
-      const task = engine.getTask(taskId),
+    async (
+      taskId: string,
+      destinationId: string,
+      newPath: string,
+      operator: string,
+    ) => {
+      if (!operator?.trim()) throw new Error("请填写位置更新操作人");
+      const tasks = workspace.getTasks(),
+        task = tasks.find((item) => item.id === taskId),
         destination = task?.destinations.find(
           (item) => item.id === destinationId,
         );
       if (!task || !destination) throw new Error("副本记录不存在");
       if (!path.isAbsolute(newPath)) throw new Error("请选择有效的新位置");
       const from = destination.resolvedPath || destination.path,
+        previousVolumeId = destination.volumeUuid || destination.volumeId,
         resolved = await canonical(newPath),
         identity = await volumeIdentity(resolved);
       for (const record of task.fileRecords) {
@@ -2040,110 +2195,72 @@ app.whenReady().then(async () => {
       destination.volumeUuid = identity.uuid;
       destination.volumeName = identity.name;
       destination.verified = false;
-      archiveChanges = [
-        ...archiveChanges,
-        {
+      const evidence = updateArchiveEvidence(currentArchiveEvidence(), {
+        changes: [{
           id: randomUUID(),
           projectId: task.projectId || "",
           taskId,
+          operator: operator.trim(),
           at: Date.now(),
           kind: "moved" as const,
           from,
           to: newPath,
+          sourceVolumeId: previousVolumeId,
+          targetVolumeId: identity.uuid || identity.id,
+          outcome: "pending-verification",
           note: `副本位置由 ${from} 更新为 ${newPath}，等待重新校验`,
-        },
-      ].slice(-10000);
-      await Promise.all([
-        store.write("archive-changes.json", archiveChanges),
-        persist(true),
-      ]);
+        }],
+      });
+      await commitArchiveEvidence(evidence, tasks);
       return task;
     },
   );
   handle("archive:export-changes", async (projectId: string) => {
+    const project = (await readProjects()).find((item) => item.id === projectId);
+    if (!project) throw new Error("项目不存在");
     const result = await dialog.showSaveDialog({
       defaultPath: `Kocpy_归档变化_${projectId}.json`,
       filters: [{ name: "JSON", extensions: ["json"] }],
     });
     if (!result.filePath) return null;
-    await fs.writeFile(
-      result.filePath,
-      JSON.stringify(
-        archiveChanges.filter((item) => item.projectId === projectId),
-        null,
-        2,
+    const report = projectArchiveReport(
+        { id: project.id, name: project.name },
+        currentArchiveEvidence(),
       ),
-    );
+      partial = `${result.filePath}.kocpy-${randomUUID()}.partial`;
+    try {
+      await fs.writeFile(partial, JSON.stringify(report, null, 2), "utf8");
+      await syncFileAndParent(partial);
+      await fs.rename(partial, result.filePath);
+      await syncFileAndParent(result.filePath);
+    } catch (error) {
+      await fs.unlink(partial).catch(() => undefined);
+      throw error;
+    }
     return result.filePath;
   });
-  handle("archive:verify-project", async (projectId: string) => {
-    if (engine.hasActive() || proxyBusy)
-      throw new Error("请等待当前备份或代理任务结束");
-    const started = Date.now(),
-      tasks = engine
-        .getAllTasks()
-        .filter(
-          (task) => task.projectId === projectId && task.fileRecords.length,
-        ),
-      notes: string[] = [];
-    if (!tasks.length) throw new Error("项目没有可复校验的素材记录");
-    let healthyTasks = 0,
-      missingCopies = 0;
-    for (const task of tasks) {
-      try {
-        await engine.reverifyTask(task.id);
-        if (task.status === "completed") healthyTasks++;
-        else notes.push(`${task.name} 未通过复校验`);
-      } catch (error: any) {
-        notes.push(`${task.name}：${error.message || String(error)}`);
-      }
-      missingCopies += task.destinations.filter(
-        (destination) => !destination.verified,
-      ).length;
-    }
-    const durationMs = Math.max(1, Date.now() - started),
-      bytesVerified = tasks.reduce(
-        (sum, task) =>
-          sum +
-          task.fileRecords.reduce(
-            (total, file) =>
-              total +
-              file.size *
-                file.destinations.filter((copy) => copy.verified).length,
-            0,
-          ),
-        0,
-      ),
-      record: ArchiveHealthRecord = {
-        id: randomUUID(),
-        projectId,
-        checkedAt: Date.now(),
-        taskCount: tasks.length,
-        healthyTasks,
-        failedTasks: tasks.length - healthyTasks,
-        missingCopies,
-        durationMs,
-        bytesVerified,
-        averageReadBps: Math.round(bytesVerified / (durationMs / 1000)),
-        risk:
-          missingCopies || healthyTasks < tasks.length
-            ? missingCopies > 1 || tasks.length - healthyTasks > 1
-              ? "critical"
-              : "attention"
-            : "healthy",
-        scope: "project",
-        notes,
-      };
-    healthRecords = [...healthRecords.slice(-199), record];
-    await store.write("archive-health.json", healthRecords);
-    await persist();
-    return record;
-  });
-  handle("archive:repair-copy", async (taskId: string, destinationId: string) =>
+  handle(
+    "archive:verify-project",
+    async (projectId: string, operator: string) =>
+      (
+        await verifyArchiveScopeOperation(
+          { kind: "project", projectId },
+          operator,
+        )
+      ).record,
+  );
+  handle("archive:repair-copy", async (
+    taskId: string,
+    destinationId: string,
+    operator: string,
+  ) =>
     withMaintenanceLock(`task:${taskId}`, async () => {
       if (engine.hasActive() || proxyBusy)
         throw new Error("请等待当前任务结束");
-      const task = engine.getTask(taskId);
+      const actualOperator = operator?.trim();
+      if (!actualOperator) throw new Error("请填写修复操作人");
+      const tasks = workspace.getTasks(),
+        task = tasks.find((item) => item.id === taskId);
       if (!task) throw new Error("任务不存在");
       const target = task.destinations.find(
         (destination) => destination.id === destinationId,
@@ -2189,8 +2306,36 @@ app.whenReady().then(async () => {
         targetIdentity,
         "修复目标 ",
       );
+      const operationId = randomUUID(),
+        recoveryFile = "archive-repair-recovery.json",
+        recovery = {
+          schemaVersion: 1,
+          operationId,
+          taskId,
+          projectId: task.projectId || "",
+          destinationId,
+          operator: actualOperator,
+          target: target.resolvedPath || target.path,
+          startedAt: Date.now(),
+          status: "running",
+          events: [] as NonNullable<ArchiveChangeRecord["recoveryEvents"]>,
+        },
+        repairChanges: Array<
+          Omit<ArchiveChangeRecord, "previousDigest" | "digest">
+        > = [];
+      await store.write(recoveryFile, recovery);
       let repaired = 0,
-        preservedDamagedOriginals = 0;
+        preservedDamagedOriginals = 0,
+        repairRecorded = false,
+        activeRepair:
+          | {
+              relativePath: string;
+              sourcePath: string;
+              targetPath: string;
+              expectedChecksum: string;
+              preservedPath?: string;
+            }
+          | undefined;
       try {
         for (const record of task.fileRecords) {
           operations.progress({
@@ -2206,70 +2351,154 @@ app.whenReady().then(async () => {
           );
           if (!healthy)
             throw new Error(`${record.relativePath} 没有可用于修复的健康副本`);
-          if (
-            (await hashFile(healthy.path, task.hashAlgorithm)) !==
-            record.srcChecksum
-          )
-            throw new Error(
-              `${record.relativePath} 的健康副本已发生变化，停止修复`,
-            );
-          const partial = `${targetRecord.path}.kocpy-repair-${randomUUID()}.partial`;
-          await fs.mkdir(path.dirname(targetRecord.path), { recursive: true });
-          await fs.copyFile(healthy.path, partial, fsConstants.COPYFILE_EXCL);
-          const metadata = await fs.stat(healthy.path);
-          await fs.chmod(partial, metadata.mode);
-          await fs.utimes(partial, metadata.atime, metadata.mtime);
-          await syncFileAndParent(partial);
-          if (
-            (await hashFile(partial, task.hashAlgorithm)) !== record.srcChecksum
-          ) {
-            await fs.unlink(partial).catch(() => {});
-            throw new Error(`${record.relativePath} 修复副本校验失败`);
-          }
-          const exists = await fs.access(targetRecord.path).then(
-            () => true,
-            () => false,
-          );
-          if (exists) {
-            await fs.rename(
-              targetRecord.path,
-              `${targetRecord.path}.kocpy-damaged-${Date.now()}`,
-            );
-            preservedDamagedOriginals++;
-          }
-          await fs.rename(partial, targetRecord.path);
-          await syncFileAndParent(targetRecord.path);
+          activeRepair = {
+            relativePath: record.relativePath,
+            sourcePath: healthy.path,
+            targetPath: targetRecord.path,
+            expectedChecksum: record.srcChecksum,
+          };
+          const { publishedChecksum, preservedPath } = await repairArchiveFile({
+            sourcePath: healthy.path,
+            targetPath: targetRecord.path,
+            expectedChecksum: record.srcChecksum,
+            hashAlgorithm: task.hashAlgorithm,
+            onPreserved: async (preserved) => {
+              if (activeRepair) activeRepair.preservedPath = preserved;
+              preservedDamagedOriginals++;
+              recovery.events.push({
+                at: Date.now(),
+                relativePath: record.relativePath,
+                action: "preserved-damaged-original",
+                path: preserved,
+              });
+              await store.write(recoveryFile, recovery);
+            },
+          }).catch((error) => {
+            const message = error instanceof Error ? error.message : String(error);
+            throw new Error(`${record.relativePath}：${message}`);
+          });
           targetRecord.verified = true;
-          targetRecord.checksum = record.srcChecksum;
+          targetRecord.checksum = publishedChecksum;
           repaired++;
+          repairChanges.push({
+            id: randomUUID(),
+            projectId: task.projectId || "",
+            taskId: task.id,
+            runId: operationId,
+            operator: actualOperator,
+            at: Date.now(),
+            kind: "repaired",
+            path: targetRecord.path,
+            relativePath: record.relativePath,
+            hashAlgorithm: task.hashAlgorithm,
+            expectedChecksum: record.srcChecksum,
+            actualChecksum: publishedChecksum,
+            sourcePath: healthy.path,
+            preservedPath,
+            sourceVolumeId: (() => {
+              const source = task.destinations.find((destination) =>
+                inside(
+                  healthy.path,
+                  destination.resolvedPath || destination.path,
+                ),
+              );
+              return source?.volumeUuid || source?.volumeId;
+            })(),
+            targetVolumeId: targetIdentity.uuid || targetIdentity.id,
+            outcome: "completed",
+            note: `${record.relativePath} 已从重新校验的健康副本修复并完成发布后回读`,
+          });
+          recovery.events.push({
+            at: Date.now(),
+            relativePath: record.relativePath,
+            action: "published-and-verified",
+            path: targetRecord.path,
+            checksum: publishedChecksum,
+          });
+          await store.write(recoveryFile, recovery);
+          activeRepair = undefined;
         }
-        target.verified = task.fileRecords.every((record) => {
-          const copies = record.destinations.filter((entry) =>
-            inside(entry.path, target.resolvedPath || target.path),
-          );
-          return copies.length > 0 && copies.every((entry) => entry.verified);
-        });
-        target.error = undefined;
-        if (repaired) await engine.reverifyTask(task.id);
-        await persist(true);
-        return { repaired, preservedDamagedOriginals };
+        target.verified = false;
+        target.error = "修复文件已回读通过，正在执行整卷复校验";
+        task.status = "failed";
+        task.errorMessage = "修复已发布，等待整卷复校验";
+        const repairEvidence = updateArchiveEvidence(
+          currentArchiveEvidence(),
+          { changes: repairChanges },
+        );
+        recovery.status = "repair-recorded";
+        await store.write(recoveryFile, recovery);
+        await commitArchiveEvidence(repairEvidence, tasks);
+        repairRecorded = true;
+        await fs.unlink(path.join(store.root, recoveryFile)).catch(() => undefined);
+        await fs
+          .unlink(path.join(store.root, `${recoveryFile}.bak`))
+          .catch(() => undefined);
+        const verification = await verifyArchiveScopeOperation(
+          {
+            kind: "card",
+            projectId: task.projectId || "",
+            taskId: task.id,
+          },
+          actualOperator,
+        );
+        return {
+          repaired,
+          preservedDamagedOriginals,
+          verificationRunId: verification.run.id,
+        };
       } catch (error) {
+        if (repairRecorded) throw error;
         target.verified = false;
         target.error =
           "修复未完成：" + repaired + " 个文件已修复；" + String(error);
-        archiveChanges.push({
+        task.status = "failed";
+        task.errorMessage = target.error;
+        recovery.status = "failed";
+        recovery.events.push({
+          at: Date.now(),
+          action: "failed",
+          repaired,
+          error: String(error),
+        });
+        await store.write(recoveryFile, recovery);
+        repairChanges.push({
           id: randomUUID(),
           projectId: task.projectId || "",
           taskId: task.id,
+          runId: operationId,
+          operator: actualOperator,
           at: Date.now(),
           kind: "repaired",
-          path: target.resolvedPath || target.path,
+          path: activeRepair?.targetPath || target.resolvedPath || target.path,
+          relativePath: activeRepair?.relativePath,
+          hashAlgorithm: task.hashAlgorithm,
+          expectedChecksum: activeRepair?.expectedChecksum,
+          sourcePath: activeRepair?.sourcePath,
+          preservedPath: activeRepair?.preservedPath,
+          targetVolumeId: targetIdentity.uuid || targetIdentity.id,
+          recoveryEvents: recovery.events.slice(-1_000),
+          outcome: repaired || activeRepair?.preservedPath ? "partial" : "failed",
           note: target.error,
         });
-        await Promise.all([
-          persist(true),
-          store.write("archive-changes.json", archiveChanges),
-        ]);
+        try {
+          await commitArchiveEvidence(
+            updateArchiveEvidence(currentArchiveEvidence(), {
+              changes: repairChanges,
+            }),
+            tasks,
+          );
+          await fs
+            .unlink(path.join(store.root, recoveryFile))
+            .catch(() => undefined);
+          await fs
+            .unlink(path.join(store.root, `${recoveryFile}.bak`))
+            .catch(() => undefined);
+        } catch (commitError) {
+          throw new Error(
+            `${target.error}；权威审计提交也失败，恢复记录已保留：${String(commitError)}`,
+          );
+        }
         throw new Error(target.error);
       }
     }),
@@ -4229,6 +4458,13 @@ app.whenReady().then(async () => {
       templates: projectTemplates,
       healthRecords,
       archiveChanges,
+      archiveReminders,
+      archiveRuns,
+      archiveEvidence: {
+        schemaVersion: currentArchiveEvidence().schemaVersion,
+        revision: currentArchiveEvidence().revision,
+        digest: currentArchiveEvidence().digest,
+      },
     };
     const payload = { ...base, integrity: workspaceIntegrity(base) };
     await fs.writeFile(
@@ -4297,39 +4533,49 @@ app.whenReady().then(async () => {
         .filter(
           (item, index, all) =>
             all.findIndex((other) => other.id === item.id) === index,
-        )
-        .slice(-500),
-      nextArchiveChanges = [
-        ...archiveChanges,
-        ...(incoming.archiveChanges || []),
-      ]
-        .filter(
-          (item, index, all) =>
-            all.findIndex((other) => other.id === item.id) === index,
-        )
-        .slice(-10000);
-    try {
-      await Promise.all([
-        store.write("project-templates.json", nextProjectTemplates),
-        store.write("archive-health.json", nextHealthRecords),
-        store.write("archive-changes.json", nextArchiveChanges),
-      ]);
-      await commitWorkspace({
-        tasks: merged.tasks,
-        projects: merged.projects,
-        syncCatalog: true,
+        ),
+      existingChangeIds = new Set(archiveChanges.map((item) => item.id)),
+      incomingChanges = (incoming.archiveChanges || [])
+        .filter((item) => !existingChangeIds.has(item.id))
+        .map(({ previousDigest: _previous, digest: _digest, ...item }) => ({
+          ...item,
+          operator: item.operator || "外部工作站未记录",
+          outcome: item.outcome || ("completed" as const),
+        })),
+      nextArchiveReminders = [
+        ...archiveReminders,
+        ...(incoming.archiveReminders || []),
+      ].filter(
+        (item, index, all) =>
+          all.findIndex((other) => other.id === item.id) === index,
+      ),
+      nextArchiveRuns = [
+        ...archiveRuns,
+        ...(incoming.archiveRuns || []),
+      ].filter(
+        (item, index, all) =>
+          all.findIndex((other) => other.id === item.id) === index,
+      ),
+      nextArchiveEvidence = updateArchiveEvidence(currentArchiveEvidence(), {
+        healthRecords: nextHealthRecords,
+        changes: incomingChanges,
+        reminders: nextArchiveReminders,
+        runs: nextArchiveRuns,
       });
+    try {
+      await store.write("project-templates.json", nextProjectTemplates);
+      await commitArchiveEvidence(
+        nextArchiveEvidence,
+        merged.tasks,
+        merged.projects,
+      );
     } catch (error) {
-      await Promise.all([
-        store.write("project-templates.json", projectTemplates),
-        store.write("archive-health.json", healthRecords),
-        store.write("archive-changes.json", archiveChanges),
-      ]).catch(() => undefined);
+      await store
+        .write("project-templates.json", projectTemplates)
+        .catch(() => undefined);
       throw error;
     }
     projectTemplates = nextProjectTemplates;
-    healthRecords = nextHealthRecords;
-    archiveChanges = nextArchiveChanges;
     for (const task of merged.tasks)
       if (!engine.getTask(task.id)) engine.loadTask(task);
     return merged.result;
@@ -4364,6 +4610,12 @@ app.whenReady().then(async () => {
           benchmarkHistory,
           archiveChanges,
           archiveReminders,
+          archiveRuns,
+          archiveEvidence: {
+            schemaVersion: currentArchiveEvidence().schemaVersion,
+            revision: currentArchiveEvidence().revision,
+            digest: currentArchiveEvidence().digest,
+          },
           nasPresets,
         },
         null,
@@ -4401,13 +4653,26 @@ app.whenReady().then(async () => {
       });
     if (!chosen.filePath) return null;
     const base = {
-        schema: 2,
+        schema: 3,
         application: "Kocpy",
         kind: "cold-archive",
         version: app.getVersion(),
         createdAt: Date.now(),
         project,
         tasks,
+        archiveEvidence: {
+          sourceDigest: currentArchiveEvidence().digest,
+          healthRecords: healthRecords.filter(
+            (item) => item.projectId === projectId,
+          ),
+          changes: archiveChanges.filter(
+            (item) => item.projectId === projectId,
+          ),
+          reminders: archiveReminders.filter(
+            (item) => item.projectId === projectId,
+          ),
+          runs: archiveRuns.filter((item) => item.projectId === projectId),
+        },
       },
       payload = { ...base, integrity: workspaceIntegrity(base) };
     const archiveBytes = await gzipAsync(Buffer.from(JSON.stringify(payload))),
@@ -4487,6 +4752,8 @@ app.whenReady().then(async () => {
       templates: [],
       healthRecords: [],
       archiveChanges: [],
+      archiveReminders: [],
+      archiveRuns: [],
     });
     const projects = (await readProjects()).map(normalizeProject),
       project = {
@@ -4498,23 +4765,74 @@ app.whenReady().then(async () => {
       index = projects.findIndex((item) => item.id === project.id);
     if (index < 0) projects.push(project);
     else projects[index] = project;
-    const addedTaskIds: string[] = [];
-    for (const task of parsed.tasks as BackupTask[]) {
-      if (!engine.getTask(task.id)) {
-        engine.loadTask(task);
-        addedTaskIds.push(task.id);
-      }
-    }
-    try {
-      await commitWorkspace({
-        tasks: engine.getAllTasks().slice().reverse(),
-        projects,
-        syncCatalog: true,
+    const existingTasks = workspace.getTasks(),
+      existingTaskIds = new Set(existingTasks.map((item) => item.id)),
+      restoredTasks = (parsed.tasks as BackupTask[]).filter(
+        (item) => !existingTaskIds.has(item.id),
+      ),
+      packageEvidence =
+        parsed.archiveEvidence && typeof parsed.archiveEvidence === "object"
+          ? parsed.archiveEvidence
+          : {},
+      validatedPackageEvidence = migrateLegacyArchiveEvidence(
+        {
+          healthRecords: Array.isArray(packageEvidence.healthRecords)
+            ? packageEvidence.healthRecords
+            : [],
+          changes: Array.isArray(packageEvidence.changes)
+            ? packageEvidence.changes
+            : [],
+          reminders: Array.isArray(packageEvidence.reminders)
+            ? packageEvidence.reminders
+            : [],
+          runs: Array.isArray(packageEvidence.runs)
+            ? packageEvidence.runs
+            : [],
+        },
+        Number.isFinite(parsed.createdAt) ? parsed.createdAt : Date.now(),
+      ),
+      existingChangeIds = new Set(archiveChanges.map((item) => item.id)),
+      restoredChanges = validatedPackageEvidence.changes
+        .filter(
+          (item: ArchiveChangeRecord) => !existingChangeIds.has(item.id),
+        )
+        .map((item: ArchiveChangeRecord) => {
+          const { previousDigest: _previous, digest: _digest, ...body } = item;
+          return body;
+        }),
+      restoredHealth = [
+        ...healthRecords,
+        ...validatedPackageEvidence.healthRecords,
+      ].filter(
+        (item, position, all) =>
+          all.findIndex((other) => other.id === item.id) === position,
+      ),
+      restoredReminders = [
+        ...archiveReminders,
+        ...validatedPackageEvidence.reminders,
+      ].filter(
+        (item, position, all) =>
+          all.findIndex((other) => other.id === item.id) === position,
+      ),
+      restoredRuns = [
+        ...archiveRuns,
+        ...validatedPackageEvidence.runs,
+      ].filter(
+        (item, position, all) =>
+          all.findIndex((other) => other.id === item.id) === position,
+      ),
+      restoredEvidence = updateArchiveEvidence(currentArchiveEvidence(), {
+        healthRecords: restoredHealth,
+        changes: restoredChanges,
+        reminders: restoredReminders,
+        runs: restoredRuns,
       });
-    } catch (error) {
-      for (const id of addedTaskIds) engine.deleteTask(id);
-      throw error;
-    }
+    await commitArchiveEvidence(
+      restoredEvidence,
+      [...existingTasks, ...restoredTasks],
+      projects,
+    );
+    for (const task of restoredTasks) engine.loadTask(task);
     return { project, tasks: parsed.tasks.length };
   });
   handle("lan:start", async () => {
@@ -4629,6 +4947,7 @@ app.whenReady().then(async () => {
       healthRecords,
       archiveChanges,
       archiveReminders,
+      archiveRuns,
     );
   });
   handle(
@@ -4649,6 +4968,7 @@ app.whenReady().then(async () => {
         healthRecords,
         archiveChanges,
         archiveReminders,
+        archiveRuns,
       );
       if (deletionPreview.blockingTasks)
         throw new Error("项目仍有未结束的任务，不能删除项目记录");
@@ -4671,35 +4991,34 @@ app.whenReady().then(async () => {
         ),
         nextArchiveReminders = archiveReminders.filter(
           (item) => item.projectId !== projectId,
+        ),
+        nextArchiveRuns = archiveRuns.filter(
+          (item) => item.projectId !== projectId,
+        ),
+        nextArchiveEvidence = replaceArchiveEvidence(
+          currentArchiveEvidence(),
+          {
+            healthRecords: nextHealthRecords,
+            changes: nextArchiveChanges,
+            reminders: nextArchiveReminders,
+            runs: nextArchiveRuns,
+          },
         );
       if (deletionPreview.blockingProxyJobs)
         throw new Error("项目仍有关联的代理任务未结束，不能删除项目记录");
       try {
-        await Promise.all([
-          store.write("proxy-jobs.json", nextProxyJobs),
-          store.write("archive-health.json", nextHealthRecords),
-          store.write("archive-changes.json", nextArchiveChanges),
-          store.write("archive-reminders.json", nextArchiveReminders),
-        ]);
-        await commitWorkspace({
-          tasks: nextTasks,
-          projects: nextProjects,
-          syncCatalog: true,
-        });
+        await store.write("proxy-jobs.json", nextProxyJobs);
+        await commitArchiveEvidence(
+          nextArchiveEvidence,
+          nextTasks,
+          nextProjects,
+        );
       } catch (error) {
-        await Promise.all([
-          store.write("proxy-jobs.json", proxyJobs),
-          store.write("archive-health.json", healthRecords),
-          store.write("archive-changes.json", archiveChanges),
-          store.write("archive-reminders.json", archiveReminders),
-        ]).catch(() => undefined);
+        await store.write("proxy-jobs.json", proxyJobs).catch(() => undefined);
         throw error;
       }
       for (const task of relatedTasks) engine.deleteTask(task.id);
       proxyJobs = nextProxyJobs;
-      healthRecords = nextHealthRecords;
-      archiveChanges = nextArchiveChanges;
-      archiveReminders = nextArchiveReminders;
       return {
         projects: nextProjects,
         deletedTasks: relatedTasks.length,

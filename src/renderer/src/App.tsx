@@ -73,6 +73,8 @@ import {
   ScanLine,
   Camera,
   AudioWaveform,
+  Bell,
+  FileDown,
 } from "lucide-react";
 import {
   api,
@@ -831,7 +833,7 @@ export function App() {
         return;
       }
       setConfirm({
-        text: `将永久删除「${project.name}」在 Kocpy 内的项目配置、${preview.taskCount} 个任务、${preview.proxyJobCount} 个代理记录、${preview.healthRecordCount} 条健康记录、${preview.archiveChangeCount} 条归档变化和 ${preview.reminderCount} 条提醒。不会删除素材文件、备份目录、报告、MHL 或已导出的归档包。`,
+        text: `将永久删除「${project.name}」在 Kocpy 内的项目配置、${preview.taskCount} 个任务、${preview.proxyJobCount} 个代理记录、${preview.healthRecordCount} 条健康记录、${preview.archiveRunCount} 次复校验运行、${preview.archiveChangeCount} 条归档变化和 ${preview.reminderCount} 条提醒。不会删除素材文件、备份目录、报告、MHL 或已导出的归档包。`,
         actionLabel: "删除项目记录",
         danger: true,
         requiredText: project.name,
@@ -5434,15 +5436,15 @@ function HelpPage({
       <section className="help-release-note">
         <RefreshCw size={20} />
         <div>
-          <strong>0.1.28：代理证据链与原子交付</strong>
+          <strong>0.1.29：长期归档证据与安全修复</strong>
           <p>
-            入队时冻结源哈希、媒体信息与转码参数；转码前完整重读已校验源，完成后记录输出 SHA-256、大小与媒体属性。
+            复校验记录操作人、范围、基线摘要、逐素材卷结论、离线／身份未知目标和真实读取量；任务状态与证据在同一权威工作区修订中提交。
           </p>
           <p>
-            正式交付会重新校验全部输出，阻止重名或被修改文件；媒体、三类清单和检查报告通过独占暂存与原子发布生成，不留下半成品正式目录。
+            周期提醒只负责通知，不会冒充已经读取磁盘或推进成功日期。变化记录形成摘要链，项目归档证据报告带可复算 SHA-256。
           </p>
           <p>
-            Resolve 固定 H.264／ProRes Proxy 样本已实际导入。Premiere 与 Final Cut 当前未安装，对应格式明确标注未实测；旧代理需重新生成输出证据后再正式交付。
+            修复会重新哈希健康来源、确认目标磁盘身份、保留损坏原件，并在原子发布后完整回读；任何中断都保留恢复事件，不会把部分完成显示成全部通过。
           </p>
         </div>
       </section>
@@ -5518,6 +5520,14 @@ function MaintenancePage({
       [],
     ),
     [templates, setTemplates] = useState<import("./api").ProjectTemplate[]>([]),
+    [archiveRuns, setArchiveRuns] = useState<
+      import("./api").ArchiveVerificationRun[]
+    >([]),
+    [archiveReminders, setArchiveReminders] = useState<
+      import("./api").ArchiveReminder[]
+    >([]),
+    [archiveOperator, setArchiveOperator] = useState(""),
+    [reminderDays, setReminderDays] = useState<Record<string, number>>({}),
     [busy, setBusy] = useState<string | null>(null),
     [handoff, setHandoff] = useState(""),
     [handoffOperator, setHandoffOperator] = useState(""),
@@ -5545,16 +5555,31 @@ function MaintenancePage({
       }>;
     } | null>(null);
   const reload = useCallback(async () => {
-    const [records, values] = await Promise.all([
+    const [records, values, runs, reminders] = await Promise.all([
       api.getArchiveHealth(),
       api.getProjectTemplates(),
+      api.getArchiveRuns(),
+      api.getArchiveReminders(),
     ]);
     setHealth(records);
     setTemplates(values);
+    setArchiveRuns(runs);
+    setArchiveReminders(reminders);
+    setReminderDays((current) => ({
+      ...Object.fromEntries(
+        reminders.map((item) => [item.projectId, item.intervalDays]),
+      ),
+      ...current,
+    }));
   }, []);
   useEffect(() => {
     void reload().catch((error) => notify(String(error), true));
   }, [reload, notify]);
+  useEffect(() => {
+    void api.getSettings().then((settings) => {
+      if (settings.operator) setArchiveOperator(settings.operator);
+    });
+  }, []);
   const run = async (
     key: string,
     action: () => Promise<unknown>,
@@ -5697,6 +5722,15 @@ function MaintenancePage({
               复校验会重新读取每个副本，不依赖历史完成状态
             </span>
           </div>
+          <label className="archive-operator-field">
+            <span>本次维护操作人</span>
+            <input
+              value={archiveOperator}
+              maxLength={120}
+              placeholder="填写实际操作人"
+              onChange={(event) => setArchiveOperator(event.target.value)}
+            />
+          </label>
         </div>
         <div className="maintenance-projects">
           {projects.map((project) => {
@@ -5704,6 +5738,12 @@ function MaintenancePage({
                 (task) => task.projectId === project.id,
               ),
               last = lastHealth(project.id),
+              lastRun = [...archiveRuns]
+                .reverse()
+                .find((item) => item.projectId === project.id),
+              reminder = archiveReminders.find(
+                (item) => item.projectId === project.id,
+              ),
               failed = related.flatMap((task) =>
                 task.destinations
                   .filter((destination) => !destination.verified)
@@ -5718,15 +5758,33 @@ function MaintenancePage({
                       ? `${new Date(last.checkedAt).toLocaleString("zh-CN")} · ${last.healthyTasks}/${last.taskCount} 个任务健康`
                       : "尚未执行长期复校验"}
                   </small>
+                  {lastRun && (
+                    <small>
+                      证据 {lastRun.resultDigest.slice(0, 12)}… · 操作人 {lastRun.operator} · {lastRun.status === "completed" ? "通过" : lastRun.status === "partial" ? "部分完成" : "未通过"}
+                    </small>
+                  )}
+                  <small>
+                    {reminder
+                      ? `${reminder.enabled ? "提醒已启用" : "提醒已暂停"} · ${new Date(reminder.nextAt).toLocaleDateString("zh-CN")} 待核验${reminder.lastTargetState === "offline" ? " · 上次目标离线" : reminder.lastTargetState === "identity-unknown" ? " · 上次身份未知" : ""}`
+                      : "尚未设置周期复校验提醒"}
+                  </small>
                 </div>
                 <div className="row">
                   <Button
                     kind="subtle"
-                    disabled={busy !== null || !related.length}
+                    disabled={
+                      busy !== null ||
+                      !related.length ||
+                      !archiveOperator.trim()
+                    }
                     onClick={() =>
                       void run(
                         `verify-${project.id}`,
-                        () => api.verifyProjectArchive(project.id),
+                        () =>
+                          api.verifyProjectArchive(
+                            project.id,
+                            archiveOperator,
+                          ),
                         `${project.name} 长期复校验完成`,
                       )
                     }
@@ -5770,11 +5828,16 @@ function MaintenancePage({
                     <Button
                       key={destination.id}
                       kind="danger"
-                      disabled={busy !== null}
+                      disabled={busy !== null || !archiveOperator.trim()}
                       onClick={() =>
                         void run(
                           `repair-${destination.id}`,
-                          () => api.repairArchiveCopy(task.id, destination.id),
+                          () =>
+                            api.repairArchiveCopy(
+                              task.id,
+                              destination.id,
+                              archiveOperator,
+                            ),
                           "副本已从健康来源修复；原损坏文件已保留",
                         )
                       }
@@ -5784,6 +5847,76 @@ function MaintenancePage({
                       {leaf(destination.resolvedPath || destination.path)}
                     </Button>
                   ))}
+                  <input
+                    className="archive-reminder-days"
+                    type="number"
+                    min={1}
+                    max={3650}
+                    aria-label={`${project.name} 复校验间隔天数`}
+                    value={reminderDays[project.id] || 180}
+                    onChange={(event) =>
+                      setReminderDays((current) => ({
+                        ...current,
+                        [project.id]: Math.max(
+                          1,
+                          Math.min(3650, Number(event.target.value) || 180),
+                        ),
+                      }))
+                    }
+                  />
+                  <Button
+                    kind="subtle"
+                    disabled={busy !== null}
+                    onClick={() =>
+                      void run(
+                        `reminder-${project.id}`,
+                        () =>
+                          api.saveArchiveReminder({
+                            id: reminder?.id || "",
+                            projectId: project.id,
+                            intervalDays: reminderDays[project.id] || 180,
+                            nextAt:
+                              reminder?.lastSuccessfulVerificationAt
+                                ? reminder.lastSuccessfulVerificationAt +
+                                  (reminderDays[project.id] || 180) *
+                                    86_400_000
+                                : reminder?.nextAt ||
+                                  Date.now() +
+                                    (reminderDays[project.id] || 180) *
+                                      86_400_000,
+                            enabled: reminder ? !reminder.enabled : true,
+                            lastNotifiedAt: reminder?.lastNotifiedAt,
+                            lastSuccessfulVerificationAt:
+                              reminder?.lastSuccessfulVerificationAt,
+                            lastRunId: reminder?.lastRunId,
+                            lastRisk: reminder?.lastRisk,
+                            lastTargetState: reminder?.lastTargetState,
+                          }),
+                        reminder?.enabled ? "归档提醒已暂停" : "归档提醒已启用",
+                      )
+                    }
+                  >
+                    <Bell size={14} />
+                    {reminder?.enabled ? "暂停提醒" : "启用提醒"}
+                  </Button>
+                  <Button
+                    kind="subtle"
+                    disabled={busy !== null || !lastRun}
+                    onClick={() =>
+                      void run(
+                        `archive-report-${project.id}`,
+                        async () => {
+                          const file = await api.exportArchiveChanges(project.id);
+                          if (file) await api.reveal(file);
+                          return file;
+                        },
+                        "归档变化报告已导出",
+                      )
+                    }
+                  >
+                    <FileDown size={14} />
+                    导出归档证据
+                  </Button>
                 </div>
               </div>
             );

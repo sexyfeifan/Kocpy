@@ -55,9 +55,11 @@ jobs:
           npx esbuild scripts/verify-transfer-runtime.ts --bundle --platform=node --format=cjs --outfile=work/verify-transfer-runtime.cjs
           npx esbuild scripts/verify-media-features.ts --bundle --platform=node --format=cjs --outfile=work/verify-media-features.cjs
           npx esbuild scripts/verify-proxy-delivery.ts --bundle --platform=node --format=cjs --outfile=work/verify-proxy-delivery.cjs
+          npx esbuild scripts/verify-archive-evidence.ts --bundle --platform=node --format=cjs --outfile=work/verify-archive-evidence.cjs
           "release/${{ matrix.appdir }}/Kocpy.app/Contents/MacOS/Kocpy" work/verify-transfer-runtime.cjs
           "release/${{ matrix.appdir }}/Kocpy.app/Contents/MacOS/Kocpy" work/verify-media-features.cjs
           "release/${{ matrix.appdir }}/Kocpy.app/Contents/MacOS/Kocpy" work/verify-proxy-delivery.cjs
+          "release/${{ matrix.appdir }}/Kocpy.app/Contents/MacOS/Kocpy" work/verify-archive-evidence.cjs
       - uses: actions/upload-artifact@v5
         with:
           name: Kocpy-${{ matrix.arch }}

@@ -43,6 +43,7 @@ contextBridge.exposeInMainWorld("api", {
   exportDiagnostics: call("diagnostics:export"),
   getArchiveHealth: call("archive:health-list"),
   getArchiveChanges: call("archive:changes"),
+  getArchiveRuns: call("archive:runs"),
   getArchiveReminders: call("archive:reminders"),
   saveArchiveReminder: call("archive:save-reminder"),
   verifyArchiveScope: call("archive:verify-scope"),

@@ -2,6 +2,7 @@ import type {
   ArchiveChangeRecord,
   ArchiveHealthRecord,
   ArchiveReminder,
+  ArchiveVerificationRun,
   BackupTask,
   ProjectConfig,
   ProjectDeletionPreview,
@@ -15,6 +16,7 @@ export function buildProjectDeletionPreview(
   healthRecords: ArchiveHealthRecord[],
   archiveChanges: ArchiveChangeRecord[],
   archiveReminders: ArchiveReminder[],
+  archiveRuns: ArchiveVerificationRun[] = [],
 ): ProjectDeletionPreview {
   const relatedTasks = tasks.filter((task) => task.projectId === project.id),
     taskIds = new Set(relatedTasks.map((task) => task.id)),
@@ -40,6 +42,9 @@ export function buildProjectDeletionPreview(
       (item) => item.projectId === project.id,
     ).length,
     reminderCount: archiveReminders.filter(
+      (item) => item.projectId === project.id,
+    ).length,
+    archiveRunCount: archiveRuns.filter(
       (item) => item.projectId === project.id,
     ).length,
     blockingTasks,

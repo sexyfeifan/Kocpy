@@ -1,9 +1,21 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import type { BackupTask, ProjectConfig } from "./types";
+import type {
+  ArchiveChangeRecord,
+  ArchiveEvidenceState,
+  ArchiveHealthRecord,
+  ArchiveReminder,
+  BackupTask,
+  ProjectConfig,
+} from "./types";
 import { Storage } from "./storage";
 import { CatalogDatabase } from "./catalog";
 import {
+  migrateLegacyArchiveEvidence,
+  validateArchiveEvidence,
+} from "./archive-evidence";
+import {
+  LEGACY_WORKSPACE_SCHEMA,
   WORKSPACE_SCHEMA,
   entityDigest,
   sealWorkspaceDocument,
@@ -21,6 +33,7 @@ interface CompatibilityMarker {
   revision: number;
   tasksDigest: string;
   projectsDigest: string;
+  archiveDigest?: string;
 }
 
 export interface WorkspaceLoadResult {
@@ -62,6 +75,7 @@ export class WorkspaceRepository {
   private indexDirty = false;
   private tasksDigest?: string;
   private projectsDigest?: string;
+  private archiveDigest?: string;
 
   constructor(
     private storage: Storage,
@@ -79,6 +93,12 @@ export class WorkspaceRepository {
 
   getProjects() {
     return structuredClone(this.snapshot.projects);
+  }
+
+  getArchiveEvidence() {
+    const evidence = this.snapshot.archiveEvidence;
+    if (!evidence) throw new Error("工作区尚未建立归档证据域");
+    return structuredClone(validateArchiveEvidence(evidence));
   }
 
   async initialize(): Promise<WorkspaceLoadResult> {
@@ -134,18 +154,25 @@ export class WorkspaceRepository {
     })[0];
 
     if (canonical) {
-      this.state = canonical.state;
-      this.rememberDomainDigests(canonical.state);
-      await this.repairCompatibilityMirrors(canonical.state);
+      const state =
+        canonical.state.schemaVersion === LEGACY_WORKSPACE_SCHEMA
+          ? await this.upgradeLegacyState(canonical.state)
+          : canonical.state;
+      this.state = state;
+      this.rememberDomainDigests(state);
+      await this.repairCompatibilityMirrors(state);
       const indexRebuilt =
         !catalogState ||
-        catalogState.revision !== canonical.state.revision ||
-        catalogState.digest !== canonical.state.digest;
-      await this.catalog.applyWorkspaceState(canonical.state);
+        catalogState.revision !== state.revision ||
+        catalogState.digest !== state.digest;
+      await this.catalog.applyWorkspaceState(state);
       this.indexDirty = false;
-      if (canonical.source !== "primary")
-        await this.publishCanonicalAndMirrors(canonical.state);
-      return { state: canonical.state, source: canonical.source, indexRebuilt };
+      if (
+        canonical.source !== "primary" ||
+        canonical.state.schemaVersion !== WORKSPACE_SCHEMA
+      )
+        await this.publishCanonicalAndMirrors(state);
+      return { state, source: canonical.source, indexRebuilt };
     }
 
     const compatibilityMarker = await this.readCompatibilityMarker();
@@ -166,7 +193,8 @@ export class WorkspaceRepository {
       indexedTasks = await this.catalog.loadTasks().catch(() => []);
       indexedProjects = await this.catalog.loadProjects().catch(() => []);
     }
-    const migratedAt = Date.now();
+    const migratedAt = Date.now(),
+      archiveEvidence = await this.readLegacyArchiveEvidence(migratedAt);
     const migration: WorkspaceMigration = {
       from: "legacy-json-and-catalog",
       migratedAt,
@@ -178,6 +206,11 @@ export class WorkspaceRepository {
         json: jsonProjects.value?.length || 0,
         catalog: indexedProjects.length,
       },
+      archiveSources: {
+        health: archiveEvidence.healthRecords.length,
+        changes: archiveEvidence.changes.length,
+        reminders: archiveEvidence.reminders.length,
+      },
     };
     const initial = sealWorkspaceState({
       schemaVersion: WORKSPACE_SCHEMA,
@@ -187,6 +220,7 @@ export class WorkspaceRepository {
       projects: jsonProjects.found ? jsonProjects.value! : indexedProjects,
       taskTombstones: [],
       projectTombstones: [],
+      archiveEvidence,
       migration,
     });
     this.state = initial;
@@ -203,9 +237,63 @@ export class WorkspaceRepository {
     return { state: initial, source: "legacy", indexRebuilt: true };
   }
 
+  private async readLegacyArchiveEvidence(at: number) {
+    const health = await this.readLegacyMirror<ArchiveHealthRecord[]>(
+        "archive-health.json",
+      ),
+      changes = await this.readLegacyMirror<ArchiveChangeRecord[]>(
+        "archive-changes.json",
+      ),
+      reminders = await this.readLegacyMirror<ArchiveReminder[]>(
+        "archive-reminders.json",
+      );
+    return migrateLegacyArchiveEvidence(
+      {
+        healthRecords: health.value,
+        changes: changes.value,
+        reminders: reminders.value,
+      },
+      at,
+    );
+  }
+
+  private async upgradeLegacyState(state: WorkspaceState) {
+    const committedAt = Date.now(),
+      archiveEvidence = await this.readLegacyArchiveEvidence(committedAt),
+      migration: WorkspaceMigration = {
+        from: state.migration?.from || "legacy-json-and-catalog",
+        migratedAt: state.migration?.migratedAt || committedAt,
+        taskSources: state.migration?.taskSources || {
+          json: state.tasks.length,
+          catalog: 0,
+        },
+        projectSources: state.migration?.projectSources || {
+          json: state.projects.length,
+          catalog: 0,
+        },
+        archiveSources: {
+          health: archiveEvidence.healthRecords.length,
+          changes: archiveEvidence.changes.length,
+          reminders: archiveEvidence.reminders.length,
+        },
+      };
+    return sealWorkspaceState({
+      schemaVersion: WORKSPACE_SCHEMA,
+      revision: state.revision + 1,
+      committedAt,
+      tasks: state.tasks,
+      projects: state.projects,
+      taskTombstones: state.taskTombstones,
+      projectTombstones: state.projectTombstones,
+      archiveEvidence,
+      migration,
+    });
+  }
+
   commit(options: {
     tasks?: BackupTask[];
     projects?: ProjectConfig[];
+    archiveEvidence?: ArchiveEvidenceState;
     syncCatalog?: boolean;
     syncCompatibility?: boolean;
   }): Promise<WorkspaceCommitResult> {
@@ -215,16 +303,25 @@ export class WorkspaceRepository {
         revision = previous.revision + 1,
         inputTasks = options.tasks || previous.tasks,
         inputProjects = options.projects || previous.projects,
+        inputArchive = options.archiveEvidence || previous.archiveEvidence,
         tasksDigest = options.tasks
           ? entityDigest(inputTasks)
           : this.tasksDigest || entityDigest(previous.tasks),
         projectsDigest = options.projects
           ? entityDigest(inputProjects)
-          : this.projectsDigest || entityDigest(previous.projects);
+          : this.projectsDigest || entityDigest(previous.projects),
+        archiveDigest = options.archiveEvidence
+          ? entityDigest(inputArchive)
+          : this.archiveDigest || entityDigest(previous.archiveEvidence);
+      if (!inputArchive)
+        throw new Error("工作区尚未建立归档证据域，已停止提交");
+      validateArchiveEvidence(inputArchive);
       if (
         tasksDigest === (this.tasksDigest || entityDigest(previous.tasks)) &&
         projectsDigest ===
-          (this.projectsDigest || entityDigest(previous.projects))
+          (this.projectsDigest || entityDigest(previous.projects)) &&
+        archiveDigest ===
+          (this.archiveDigest || entityDigest(previous.archiveEvidence))
       ) {
         let compatibilityError: string | undefined;
         if (this.compatibilityDirty && options.syncCompatibility !== false)
@@ -267,7 +364,10 @@ export class WorkspaceRepository {
           : previous.tasks,
         projects = options.projects
           ? structuredClone(inputProjects)
-          : previous.projects;
+          : previous.projects,
+        archiveEvidence = options.archiveEvidence
+          ? structuredClone(inputArchive)
+          : previous.archiveEvidence!;
       const document = sealWorkspaceDocument({
         schemaVersion: WORKSPACE_SCHEMA,
         revision,
@@ -288,6 +388,7 @@ export class WorkspaceRepository {
           revision,
           committedAt,
         ),
+        archiveEvidence,
         migration: previous.migration,
       });
       const next = document.state;
@@ -295,6 +396,7 @@ export class WorkspaceRepository {
       this.state = next;
       this.tasksDigest = tasksDigest;
       this.projectsDigest = projectsDigest;
+      this.archiveDigest = archiveDigest;
       this.indexDirty = true;
       let compatibilitySynchronized = !this.compatibilityDirty,
         compatibilityError: string | undefined;
@@ -358,6 +460,14 @@ export class WorkspaceRepository {
     return this.commit({ projects, syncCatalog });
   }
 
+  commitArchiveEvidence(
+    archiveEvidence: ArchiveEvidenceState,
+    tasks?: BackupTask[],
+    syncCatalog = true,
+  ) {
+    return this.commit({ archiveEvidence, tasks, syncCatalog });
+  }
+
   synchronizeIndex() {
     return this.catalog.applyWorkspaceState(this.snapshot).then((result) => {
       this.indexDirty = false;
@@ -378,7 +488,9 @@ export class WorkspaceRepository {
         raw &&
         typeof raw === "object" &&
         "schemaVersion" in raw &&
-        raw.schemaVersion !== WORKSPACE_SCHEMA
+        ![LEGACY_WORKSPACE_SCHEMA, WORKSPACE_SCHEMA].includes(
+          raw.schemaVersion,
+        )
       )
         throw new Error(
           `当前 Kocpy 不支持工作区格式版本 ${String(raw.schemaVersion)}，为避免破坏数据已停止启动。`,
@@ -441,6 +553,7 @@ export class WorkspaceRepository {
       revision: state.revision,
       tasksDigest: entityDigest(state.tasks),
       projectsDigest: entityDigest(state.projects),
+      archiveDigest: entityDigest(state.archiveEvidence),
     };
   }
 
@@ -455,11 +568,26 @@ export class WorkspaceRepository {
   private rememberDomainDigests(state: WorkspaceState) {
     this.tasksDigest = entityDigest(state.tasks);
     this.projectsDigest = entityDigest(state.projects);
+    this.archiveDigest = entityDigest(state.archiveEvidence);
   }
 
   private async writeCompatibilityMirrors(state: WorkspaceState) {
     await this.storage.write("tasks.json", state.tasks);
     await this.storage.write("projects.json", state.projects);
+    if (!state.archiveEvidence)
+      throw new Error("工作区归档证据域缺失，无法同步兼容镜像");
+    await this.storage.write(
+      "archive-health.json",
+      state.archiveEvidence.healthRecords,
+    );
+    await this.storage.write(
+      "archive-changes.json",
+      state.archiveEvidence.changes,
+    );
+    await this.storage.write(
+      "archive-reminders.json",
+      state.archiveEvidence.reminders,
+    );
     await this.storage.write(
       COMPATIBILITY_FILE,
       this.compatibilityMarker(state),
@@ -473,10 +601,30 @@ export class WorkspaceRepository {
     );
     const tasks = await this.storage.read<BackupTask[]>("tasks.json", []),
       projects = await this.storage.read<ProjectConfig[]>("projects.json", []),
+      healthRecords = await this.storage.read<ArchiveHealthRecord[]>(
+        "archive-health.json",
+        [],
+      ),
+      changes = await this.storage.read<ArchiveChangeRecord[]>(
+        "archive-changes.json",
+        [],
+      ),
+      reminders = await this.storage.read<ArchiveReminder[]>(
+        "archive-reminders.json",
+        [],
+      ),
       expected = this.compatibilityMarker(state),
       mirrorMatches =
         entityDigest(tasks) === expected.tasksDigest &&
-        entityDigest(projects) === expected.projectsDigest;
+        entityDigest(projects) === expected.projectsDigest &&
+        entityDigest(healthRecords) ===
+          entityDigest(state.archiveEvidence?.healthRecords || []) &&
+        entityDigest(changes) ===
+          entityDigest(state.archiveEvidence?.changes || []) &&
+        entityDigest(reminders) ===
+          entityDigest(state.archiveEvidence?.reminders || []) &&
+        (!expected.archiveDigest ||
+          expected.archiveDigest === entityDigest(state.archiveEvidence));
     if (mirrorMatches) return;
     if (marker && marker.revision >= state.revision)
       throw new Error(

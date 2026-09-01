@@ -462,6 +462,7 @@ export function LifecycleControls({
             <Button
               kind="primary"
               disabled={
+                !operator.trim() ||
                 (scope !== "disk" && !project) ||
                 (["card", "file"].includes(scope) && !taskId) ||
                 (scope === "file" && !relative.trim()) ||
@@ -479,6 +480,7 @@ export function LifecycleControls({
                         relativePath: relative,
                         volumePath: root,
                       }),
+                      operator.trim(),
                     ),
                   "复校验已执行",
                 )
@@ -488,10 +490,15 @@ export function LifecycleControls({
               确认范围并复校验
             </Button>
             <Button
-              disabled={!project || !root}
+              disabled={!project || !root || !operator.trim()}
               onClick={() =>
                 void run(
-                  () => api.auditUntrackedArchive(projectId, root),
+                  () =>
+                    api.auditUntrackedArchive(
+                      projectId,
+                      root,
+                      operator.trim(),
+                    ),
                   "未记录文件扫描已结束；见变化记录",
                 )
               }

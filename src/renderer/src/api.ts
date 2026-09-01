@@ -4,6 +4,7 @@ import type {
   ArchiveChangeRecord,
   ArchiveHealthRecord,
   ArchiveReminder,
+  ArchiveVerificationRun,
   BackupTask,
   ExistingCandidateDecision,
   ExistingImportPreview,
@@ -12,6 +13,7 @@ import type {
   NasPreset,
   ProjectConfig,
   ProjectCoverage,
+  ProjectDeletionPreview,
   ProjectStructureReport,
   ProjectTemplate,
   ProxyJob,
@@ -27,6 +29,7 @@ export type {
   ArchiveChangeRecord,
   ArchiveHealthRecord,
   ArchiveReminder,
+  ArchiveVerificationRun,
   BackupTask,
   ExistingCandidateDecision,
   ExistingImportPreview,
@@ -35,6 +38,7 @@ export type {
   NasPreset,
   ProjectConfig,
   ProjectCoverage,
+  ProjectDeletionPreview,
   ProjectStructureReport,
   ProjectTemplate,
   ProxyJob,
@@ -166,26 +170,38 @@ export interface API {
   exportDiagnostics(): Promise<string | null>;
   getArchiveHealth(): Promise<ArchiveHealthRecord[]>;
   getArchiveChanges(projectId?: string): Promise<ArchiveChangeRecord[]>;
+  getArchiveRuns(projectId?: string): Promise<ArchiveVerificationRun[]>;
   getArchiveReminders(): Promise<ArchiveReminder[]>;
   saveArchiveReminder(value: ArchiveReminder): Promise<ArchiveReminder[]>;
   verifyArchiveScope(
     scope: ArchiveScope,
+    operator: string,
   ): Promise<{ changes: ArchiveChangeRecord[]; record: ArchiveHealthRecord }>;
   auditUntrackedArchive(
     projectId: string,
     root: string,
+    operator: string,
   ): Promise<ArchiveChangeRecord[]>;
   moveArchiveCopy(
     taskId: string,
     destinationId: string,
     newPath: string,
+    operator: string,
   ): Promise<BackupTask>;
   exportArchiveChanges(projectId: string): Promise<string | null>;
-  verifyProjectArchive(projectId: string): Promise<ArchiveHealthRecord>;
+  verifyProjectArchive(
+    projectId: string,
+    operator: string,
+  ): Promise<ArchiveHealthRecord>;
   repairArchiveCopy(
     taskId: string,
     destinationId: string,
-  ): Promise<{ repaired: number; preservedDamagedOriginals: number }>;
+    operator: string,
+  ): Promise<{
+    repaired: number;
+    preservedDamagedOriginals: number;
+    verificationRunId: string;
+  }>;
   getProjectTemplates(): Promise<ProjectTemplate[]>;
   createTemplateFromProject(
     projectId: string,
@@ -346,19 +362,7 @@ export interface API {
   getSettings(): Promise<Settings>;
   saveSettings(settings: Settings): Promise<void>;
   getProjects(): Promise<ProjectConfig[]>;
-  previewProjectDeletion(id: string): Promise<{
-    projectId: string;
-    projectName: string;
-    status: "active" | "archived";
-    taskCount: number;
-    proxyJobCount: number;
-    healthRecordCount: number;
-    archiveChangeCount: number;
-    reminderCount: number;
-    blockingTasks: number;
-    blockingProxyJobs: number;
-    canDelete: boolean;
-  }>;
+  previewProjectDeletion(id: string): Promise<ProjectDeletionPreview>;
   deleteProject(
     id: string,
     confirmationName: string,

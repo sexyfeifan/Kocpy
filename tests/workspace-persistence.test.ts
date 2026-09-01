@@ -10,6 +10,7 @@ import {
   sealWorkspaceState,
   validateWorkspaceState,
 } from "../src/main/workspace-contract";
+import { updateArchiveEvidence } from "../src/main/archive-evidence";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -83,6 +84,72 @@ function project(id: string): ProjectConfig {
 }
 
 describe("workspace authority and reconciliation", () => {
+  it("upgrades schema 1 once and imports legacy archive evidence into the authority", async () => {
+    const { root, storage, catalog } = await fixture(),
+      legacy = sealWorkspaceState({
+        schemaVersion: 1,
+        revision: 7,
+        committedAt: 10,
+        tasks: [task("legacy-task")],
+        projects: [project("legacy-project")],
+        taskTombstones: [],
+        projectTombstones: [],
+      });
+    await fs.writeFile(
+      path.join(root, "workspace-state.json"),
+      JSON.stringify(legacy),
+    );
+    await storage.write("archive-health.json", [
+      {
+        id: "health-1",
+        projectId: "legacy-project",
+        checkedAt: 11,
+        taskCount: 1,
+        healthyTasks: 1,
+        failedTasks: 0,
+        missingCopies: 0,
+        notes: [],
+      },
+    ]);
+    await storage.write("archive-changes.json", [
+      {
+        id: "change-1",
+        projectId: "legacy-project",
+        at: 11,
+        kind: "verified",
+        note: "旧版记录",
+      },
+    ]);
+    await storage.write("archive-reminders.json", [
+      {
+        id: "reminder-1",
+        projectId: "legacy-project",
+        intervalDays: 180,
+        nextAt: 100,
+        enabled: true,
+      },
+    ]);
+
+    const upgraded = await new WorkspaceRepository(storage, catalog).initialize();
+    expect(upgraded.state.schemaVersion).toBe(2);
+    expect(upgraded.state.revision).toBe(8);
+    expect(upgraded.state.archiveEvidence?.healthRecords).toHaveLength(1);
+    expect(upgraded.state.archiveEvidence?.changes[0]).toMatchObject({
+      operator: "旧版本未记录",
+      outcome: "completed",
+    });
+    expect(upgraded.state.archiveEvidence?.reminders).toHaveLength(1);
+
+    const reopened = await new WorkspaceRepository(
+      new Storage(root),
+      new CatalogDatabase(root),
+    ).initialize();
+    expect(reopened.state.revision).toBe(8);
+    expect(reopened.state.archiveEvidence?.digest).toBe(
+      upgraded.state.archiveEvidence?.digest,
+    );
+  });
+
   it("migrates authoritative legacy JSON once without reviving extra catalog rows", async () => {
     const { root, storage, catalog } = await fixture();
     await storage.write("tasks.json", [task("json-new", 20)]);
@@ -302,6 +369,45 @@ describe("workspace authority and reconciliation", () => {
     expect(retried.state.revision).toBe(committed.state.revision);
     expect(retried.compatibilitySynchronized).toBe(true);
     expect(await storage.read<BackupTask[]>("tasks.json", [])).toHaveLength(1);
+  });
+
+  it("keeps an authoritative archive evidence commit when an archive mirror write fails", async () => {
+    const { root, storage, catalog } = await fixture(),
+      workspace = new WorkspaceRepository(storage, catalog);
+    await workspace.initialize();
+    const evidence = updateArchiveEvidence(workspace.getArchiveEvidence(), {
+        changes: [
+          {
+            id: "archive-authority-change",
+            projectId: "project-a",
+            operator: "DIT 测试员",
+            at: 20,
+            kind: "verified",
+            outcome: "completed",
+            note: "权威提交",
+          },
+        ],
+      }, 20),
+      original = storage.write.bind(storage);
+    let fail = true;
+    storage.write = ((name: string, value: unknown) => {
+      if (fail && name === "archive-changes.json") {
+        fail = false;
+        return Promise.reject(new Error("injected archive mirror interruption"));
+      }
+      return original(name, value);
+    }) as Storage["write"];
+    const committed = await workspace.commitArchiveEvidence(evidence);
+    expect(committed.compatibilitySynchronized).toBe(false);
+    expect(workspace.getArchiveEvidence().changes).toHaveLength(1);
+
+    const reopened = await new WorkspaceRepository(
+      new Storage(root),
+      new CatalogDatabase(root),
+    ).initialize();
+    expect(reopened.state.archiveEvidence?.changes[0].id).toBe(
+      "archive-authority-change",
+    );
   });
 
   it("can defer the legacy mirror while keeping each active checkpoint authoritative", async () => {

@@ -3,6 +3,9 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 import type {
   ArchiveChangeRecord,
+  ArchiveHealthRecord,
+  ArchiveReminder,
+  ArchiveVerificationRun,
   BackupTask,
   ProjectConfig,
   ProjectTemplate,
@@ -57,13 +60,17 @@ export function validateWorkspacePackage(value: unknown) {
     tasks = value.tasks ?? [],
     templates = value.templates ?? [],
     healthRecords = value.healthRecords ?? [],
-    archiveChanges = value.archiveChanges ?? [];
+    archiveChanges = value.archiveChanges ?? [],
+    archiveReminders = value.archiveReminders ?? [],
+    archiveRuns = value.archiveRuns ?? [];
   if (
     !Array.isArray(projects) ||
     !Array.isArray(tasks) ||
     !Array.isArray(templates) ||
     !Array.isArray(healthRecords) ||
-    !Array.isArray(archiveChanges)
+    !Array.isArray(archiveChanges) ||
+    !Array.isArray(archiveReminders) ||
+    !Array.isArray(archiveRuns)
   )
     throw new Error("工作站配置的数据列表无效");
   if (
@@ -71,7 +78,9 @@ export function validateWorkspacePackage(value: unknown) {
     tasks.length > 100_000 ||
     templates.length > 10_000 ||
     healthRecords.length > 10_000 ||
-    archiveChanges.length > 100_000
+    archiveChanges.length > 100_000 ||
+    archiveReminders.length > 10_000 ||
+    archiveRuns.length > 10_000
   )
     throw new Error("工作站配置包含过多记录");
   for (const item of projects) {
@@ -157,8 +166,10 @@ export function validateWorkspacePackage(value: unknown) {
     projects: ProjectConfig[];
     tasks: BackupTask[];
     templates?: ProjectTemplate[];
-    healthRecords?: unknown[];
+    healthRecords?: ArchiveHealthRecord[];
     archiveChanges?: ArchiveChangeRecord[];
+    archiveReminders?: ArchiveReminder[];
+    archiveRuns?: ArchiveVerificationRun[];
   };
 }
 
