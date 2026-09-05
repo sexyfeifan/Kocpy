@@ -8,9 +8,9 @@
 
 ![Kocpy 工作台](docs/screenshots/dashboard.png)
 
-当前代码版本：**0.1.31 候选** · [完整使用手册](docs/USER_GUIDE.md) · [0.1.31 更新说明](docs/RELEASE_NOTES_0.1.31.md) · [已公开发布版本](https://github.com/sexyfeifan/Kocpy/releases/latest)
+当前代码版本：**0.1.32 候选** · [完整使用手册](docs/USER_GUIDE.md) · [0.1.32 更新说明](docs/RELEASE_NOTES_0.1.32.md) · [已公开发布版本](https://github.com/sexyfeifan/Kocpy/releases/latest)
 
-0.1.31 将多工作站记录交换改为先只读预检、再逐项决定和可恢复提交：每台 Mac 有稳定随机身份，配置包带导出 ID、权威修订／摘要与删除墓碑；同 ID、同名、证据和删除冲突默认保留本机，不提供批量覆盖。合并前后均核对摘要，并保存操作人、全部决定和结果审计。工作站包只交换 Kocpy 元数据，不复制或删除素材。当前代码为候选；至少两台真实 Mac 完成双向交换前不会创建正式 `v0.1.31` Release，latest 仍是 0.1.30。验证边界及已知限制见 [验证记录](docs/VERIFICATION.md)。
+0.1.32 建立克制的界面动效基础：页面、弹窗、提示、按钮和真实进度使用统一时长与缓动，并完整尊重系统“减少动态效果”；不引入动画运行库，不平滑伪造进度，也不让动画决定备份状态。0.1.31 的多工作站交换仍保持候选门槛；至少两台真实 Mac 完成双向交换前，不会发布包含该功能的正式 Release，latest 仍是 0.1.30。验证边界及已知限制见 [验证记录](docs/VERIFICATION.md)。
 
 ## 中文
 
@@ -133,10 +133,10 @@ Kocpy 支持真实深色与浅色外观，任务、项目、偏好、缩略图�
 
 从 [GitHub Releases](https://github.com/sexyfeifan/Kocpy/releases) 下载对应架构：
 
-- `Kocpy-0.1.31-arm64.dmg`：Apple Silicon Mac（正式发布后）
-- `Kocpy-0.1.31-x64.dmg`：Intel Mac（正式发布后）
+- `Kocpy-0.1.32-arm64.dmg`：Apple Silicon Mac（正式发布后）
+- `Kocpy-0.1.32-x64.dmg`：Intel Mac（正式发布后）
 
-当前代码为 0.1.31 候选；在双 Mac 门槛关闭前，请从 latest 下载已经公开验收的 0.1.30。远端可下载版本以 Release 实际附件为准。
+当前代码为 0.1.32 候选；在 0.1.31 双 Mac 门槛关闭前，请从 latest 下载已经公开验收的 0.1.30。远端可下载版本以 Release 实际附件为准。
 
 打开 DMG，将 Kocpy 拖入“应用程序”。当前公开包尚未使用 Apple Developer ID 签名和公证。若 macOS 明确提示应用“已损坏”，请先确认文件来自本仓库官方 Release，再执行：
 

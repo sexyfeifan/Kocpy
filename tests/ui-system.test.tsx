@@ -17,6 +17,7 @@ const rendererSources = rendererFiles.map((name) => ({
   source: fs.readFileSync(path.join(rendererRoot, name), "utf8"),
 }));
 const css = fs.readFileSync(path.join(rendererRoot, "style.css"), "utf8");
+const packageJson = JSON.parse(fs.readFileSync(path.resolve("package.json"), "utf8"));
 
 describe("0.1.25 shared UI contract", () => {
   it("keeps reusable controls independent from the application root", () => {
@@ -88,6 +89,26 @@ describe("0.1.25 shared UI contract", () => {
     expect(css).toMatch(
       /@media \(max-width: 1200px\)[\s\S]*?\.detail-stats\s*\{[^}]*repeat\(2/s,
     );
+  });
+
+  it("keeps motion subtle, dependency-free and removable for reduced motion", () => {
+    for (const token of [
+      "--motion-fast: 120ms",
+      "--motion-standard: 180ms",
+      "--motion-slow: 260ms",
+      "--ease-emphasized: cubic-bezier(0.16, 1, 0.3, 1)",
+    ])
+      expect(css).toContain(token);
+    expect(css).toContain("@keyframes page-enter");
+    expect(css).toContain("@keyframes modal-enter");
+    expect(css).toContain("@keyframes toast-enter");
+    expect(css).toMatch(
+      /@media \(prefers-reduced-motion: reduce\)[\s\S]*?animation: none !important;[\s\S]*?transition: none !important;/,
+    );
+    expect(Object.keys(packageJson.dependencies || {})).not.toContain("gsap");
+    const appSource = rendererSources.find(({ name }) => name === "App.tsx")!
+      .source;
+    expect(appSource).toContain('<main key={page} className="page-content">');
   });
 
   it("keeps native form controls named by a label or accessibility attribute", () => {

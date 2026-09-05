@@ -23,6 +23,8 @@ describe("macOS candidate packaging safety", () => {
     expect(candidateBuilder).toContain("mkdtempSync(path.join(tmpdir(), 'kocpy-macos-candidate-'))");
     expect(candidateBuilder).toContain("-c.directories.output=${temporaryOutput}");
     expect(candidateBuilder).toContain("verbatimSymlinks: true");
+    expect(candidateBuilder).toContain("'candidate-builds', packageVersion");
+    expect(candidateBuilder).toContain("symlinkSync(localDestination, destination, 'dir')");
   });
 
   it("keeps Electron hardened-runtime entitlements explicit", () => {

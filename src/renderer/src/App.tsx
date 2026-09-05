@@ -1015,7 +1015,7 @@ export function App() {
             )}
           </div>
         </header>
-        <main className="page-content">
+        <main key={page} className="page-content">
           <OperationCenter />
           {notices.length > 0 && (
             <details className="notification-history">
@@ -5603,6 +5603,13 @@ function HelpPage({
       <section className="help-release-note">
         <RefreshCw size={20} />
         <div>
+          <strong>0.1.32：克制、可访问的界面动效</strong>
+          <p>
+            页面、弹窗、提示、按钮、主题、开关与真实进度采用统一的短时动效；动画不会控制任务状态、文件写入、确认或审计。
+          </p>
+          <p>
+            不增加动画运行库，不推算或伪造进度。系统开启“减少动态效果”时，所有动画与过渡完整关闭。
+          </p>
           <strong>0.1.31：稳定工作站身份与可审计合并</strong>
           <p>
             每台 Mac 使用跨重启稳定的随机身份。工作站包记录唯一导出

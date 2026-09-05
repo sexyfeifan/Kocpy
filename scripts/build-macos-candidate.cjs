@@ -1,5 +1,5 @@
-const { cpSync, existsSync, mkdtempSync, mkdirSync, readdirSync, rmSync } = require('node:fs');
-const { tmpdir } = require('node:os');
+const { cpSync, existsSync, mkdtempSync, mkdirSync, readdirSync, rmSync, symlinkSync } = require('node:fs');
+const { homedir, tmpdir } = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
@@ -7,6 +7,8 @@ if (process.platform !== 'darwin') throw new Error('macOS candidate packages mus
 
 const projectDir = path.resolve(__dirname, '..');
 const finalOutput = path.join(projectDir, 'release');
+const packageVersion = require(path.join(projectDir, 'package.json')).version;
+const localAppOutput = path.join(homedir(), 'Library', 'Caches', 'Kocpy', 'candidate-builds', packageVersion);
 const temporaryOutput = mkdtempSync(path.join(tmpdir(), 'kocpy-macos-candidate-'));
 const builder = path.join(projectDir, 'node_modules', 'electron-builder', 'out', 'cli', 'cli.js');
 const builderArgs = [
@@ -32,14 +34,23 @@ if (result.status !== 0) {
 }
 
 mkdirSync(finalOutput, { recursive: true });
+mkdirSync(localAppOutput, { recursive: true });
 const copiedAppBundles = [];
 for (const entry of readdirSync(temporaryOutput, { withFileTypes: true })) {
   const source = path.join(temporaryOutput, entry.name);
   const destination = path.join(finalOutput, entry.name);
+  const sourceApp = path.join(source, 'Kocpy.app');
+  if (entry.isDirectory() && existsSync(sourceApp)) {
+    const localDestination = path.join(localAppOutput, entry.name);
+    if (existsSync(localDestination)) rmSync(localDestination, { recursive: true, force: true });
+    cpSync(source, localDestination, { recursive: true, force: true, verbatimSymlinks: true });
+    if (existsSync(destination)) rmSync(destination, { recursive: true, force: true });
+    symlinkSync(localDestination, destination, 'dir');
+    copiedAppBundles.push(path.join(localDestination, 'Kocpy.app'));
+    continue;
+  }
   if (existsSync(destination)) rmSync(destination, { recursive: true, force: true });
   cpSync(source, destination, { recursive: true, force: true, verbatimSymlinks: true });
-  const copiedApp = path.join(destination, 'Kocpy.app');
-  if (entry.isDirectory() && existsSync(copiedApp)) copiedAppBundles.push(copiedApp);
 }
 
 for (const app of copiedAppBundles) {

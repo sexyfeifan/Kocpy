@@ -1,4 +1,8 @@
-# Kocpy 0.1.31 architecture
+# Kocpy 0.1.32 architecture
+
+## Motion and state boundary
+
+Renderer motion is implemented with CSS tokens and transform/opacity transitions only. Page, dialog, toast and button motion never owns task state, IPC completion, confirmation, progress calculation or persistence. Progress widths use engine-reported values with a short linear transition; no client-side interpolation predicts bytes. The global `prefers-reduced-motion` rule disables all animation and transition behavior without changing layout or reachability. No animation runtime dependency is shipped.
 
 ## Recoverable workstation exchange
 
