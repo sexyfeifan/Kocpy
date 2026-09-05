@@ -415,7 +415,9 @@ Kocpy 不要求账号，不默认上传素材。应用数据保存在：
 ~/Library/Application Support/Kocpy/
 ```
 
-当前公开 DMG 尚未使用 Apple Developer ID 签名和公证。请只从 [Kocpy GitHub Releases](https://github.com/sexyfeifan/Kocpy/releases) 下载。如果 macOS 明确提示应用“已损坏”，确认来源后可执行：
+当前公开 DMG 尚未使用 Apple Developer ID 签名和公证。0.1.31 起候选构建会对完整应用执行 ad-hoc 签名并在 CI 中严格核对包结构，但这不等于 Apple 开发者身份或公证。请只从 [Kocpy GitHub Releases](https://github.com/sexyfeifan/Kocpy/releases) 下载，并先核对 Release 提供的 SHA-256。
+
+第一次打开时，优先在 Finder 中按住 Control 点按 Kocpy，选择“打开”；若系统仍阻止，可到“系统设置 → 隐私与安全性”确认打开该应用。如果 macOS 明确提示应用“已损坏”，且 SHA-256 已与官方 Release 一致，可只对已安装的 Kocpy 清除下载隔离属性：
 
 ```bash
 xattr -dr com.apple.quarantine "/Applications/Kocpy.app"
