@@ -130,7 +130,10 @@ describe("workspace authority and reconciliation", () => {
       },
     ]);
 
-    const upgraded = await new WorkspaceRepository(storage, catalog).initialize();
+    const upgraded = await new WorkspaceRepository(
+      storage,
+      catalog,
+    ).initialize();
     expect(upgraded.state.schemaVersion).toBe(2);
     expect(upgraded.state.revision).toBe(8);
     expect(upgraded.state.archiveEvidence?.healthRecords).toHaveLength(1);
@@ -241,6 +244,72 @@ describe("workspace authority and reconciliation", () => {
     expect(
       (await new CatalogDatabase(root).loadTasks()).map((item) => item.id),
     ).toEqual(["keep"]);
+  });
+
+  it("atomically applies explicitly confirmed workstation tombstones", async () => {
+    const { root, storage, catalog } = await fixture(),
+      workspace = new WorkspaceRepository(storage, catalog);
+    await workspace.initialize();
+    await workspace.commit({
+      tasks: [task("keep")],
+      projects: [project("keep-project")],
+      syncCatalog: true,
+    });
+    const committed = await workspace.commit({
+      tasks: [task("keep")],
+      projects: [project("keep-project")],
+      taskTombstones: [
+        { id: "remote-deleted-task", deletedAt: 20, revision: 99 },
+      ],
+      projectTombstones: [
+        { id: "remote-deleted-project", deletedAt: 21, revision: 88 },
+      ],
+      syncCatalog: true,
+    });
+    expect(committed.state.taskTombstones).toEqual([
+      {
+        id: "remote-deleted-task",
+        deletedAt: 20,
+        revision: committed.state.revision,
+      },
+    ]);
+    expect(committed.state.projectTombstones[0]).toMatchObject({
+      id: "remote-deleted-project",
+      revision: committed.state.revision,
+    });
+    const reopened = await new WorkspaceRepository(
+      new Storage(root),
+      new CatalogDatabase(root),
+    ).initialize();
+    expect(reopened.state.taskTombstones.map((item) => item.id)).toEqual([
+      "remote-deleted-task",
+    ]);
+    expect(reopened.state.projectTombstones.map((item) => item.id)).toEqual([
+      "remote-deleted-project",
+    ]);
+    const unchangedRevision = reopened.state.taskTombstones[0].revision,
+      withAnotherDeletion = new WorkspaceRepository(
+        new Storage(root),
+        new CatalogDatabase(root),
+      );
+    await withAnotherDeletion.initialize();
+    const next = await withAnotherDeletion.commit({
+      taskTombstones: [
+        reopened.state.taskTombstones[0],
+        { id: "another-remote-task", deletedAt: 22, revision: 100 },
+      ],
+      projectTombstones: reopened.state.projectTombstones,
+    });
+    expect(
+      next.state.taskTombstones.find(
+        (item) => item.id === "remote-deleted-task",
+      )?.revision,
+    ).toBe(unchangedRevision);
+    expect(
+      next.state.taskTombstones.find(
+        (item) => item.id === "another-remote-task",
+      )?.revision,
+    ).toBe(next.state.revision);
   });
 
   it("recovers the newest complete catalog snapshot when the primary state is corrupt", async () => {
@@ -375,25 +444,31 @@ describe("workspace authority and reconciliation", () => {
     const { root, storage, catalog } = await fixture(),
       workspace = new WorkspaceRepository(storage, catalog);
     await workspace.initialize();
-    const evidence = updateArchiveEvidence(workspace.getArchiveEvidence(), {
-        changes: [
-          {
-            id: "archive-authority-change",
-            projectId: "project-a",
-            operator: "DIT 测试员",
-            at: 20,
-            kind: "verified",
-            outcome: "completed",
-            note: "权威提交",
-          },
-        ],
-      }, 20),
+    const evidence = updateArchiveEvidence(
+        workspace.getArchiveEvidence(),
+        {
+          changes: [
+            {
+              id: "archive-authority-change",
+              projectId: "project-a",
+              operator: "DIT 测试员",
+              at: 20,
+              kind: "verified",
+              outcome: "completed",
+              note: "权威提交",
+            },
+          ],
+        },
+        20,
+      ),
       original = storage.write.bind(storage);
     let fail = true;
     storage.write = ((name: string, value: unknown) => {
       if (fail && name === "archive-changes.json") {
         fail = false;
-        return Promise.reject(new Error("injected archive mirror interruption"));
+        return Promise.reject(
+          new Error("injected archive mirror interruption"),
+        );
       }
       return original(name, value);
     }) as Storage["write"];

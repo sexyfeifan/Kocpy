@@ -285,6 +285,36 @@ export class BackupEngine extends EventEmitter {
   hasActive() {
     return this.active.size > 0;
   }
+  /**
+   * Team metadata exchange must not replace the in-memory task set while any
+   * task can still write files or is waiting to run. Checking persisted status
+   * also covers records recovered after an interrupted app session.
+   */
+  hasUnsettledTasks() {
+    return (
+      this.active.size > 0 ||
+      this.queue.length > 0 ||
+      [...this.tasks.values()].some((task) =>
+        ["pending", "running", "paused", "verifying"].includes(task.status),
+      )
+    );
+  }
+  /** Replace only settled metadata after the authority commit has succeeded. */
+  replaceSettledTasks(tasks: BackupTask[]) {
+    if (this.hasUnsettledTasks())
+      throw new Error("仍有未结束的备份任务，不能替换工作站任务记录");
+    this.tasks.clear();
+    this.queue = [];
+    this.active.clear();
+    this.paused.clear();
+    this.pausedPhase.clear();
+    this.telemetryResets.clear();
+    this.retryTargets.clear();
+    this.pauseWaiters.clear();
+    this.lastProgressEmit.clear();
+    this.lastProgressStatus.clear();
+    for (const task of tasks) this.loadTask(structuredClone(task));
+  }
   createTask(config: TaskConfig): BackupTask {
     if (
       config.mirrorLayout &&
@@ -1111,7 +1141,13 @@ export class BackupEngine extends EventEmitter {
       );
     let displayedEta = 0;
     this.telemetryResets.set(id, () => {
-      for (const value of [meter, sourceHashMeter, sourceCopyMeter, ...destinationMeters.values()]) value.reset();
+      for (const value of [
+        meter,
+        sourceHashMeter,
+        sourceCopyMeter,
+        ...destinationMeters.values(),
+      ])
+        value.reset();
       displayedEta = 0;
       task.eta = 0;
     });

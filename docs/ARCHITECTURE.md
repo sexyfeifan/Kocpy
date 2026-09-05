@@ -1,4 +1,14 @@
-# Kocpy 0.1.30 architecture
+# Kocpy 0.1.31 architecture
+
+## Recoverable workstation exchange
+
+Every installation owns a random UUID stored under the application data directory. Hostname changes update only the display label. Identity corruption fails closed rather than silently creating a new workstation. Schema-3 exchange packages bind the source identity, a unique export ID, export time, application version, workspace revision and digest, exchange-scope digest, and task/project tombstones under a complete SHA-256 integrity digest.
+
+Import is split into a read-only preview and an explicit commit. Preview compares projects field by field, append-only evidence by stable ID, tasks by ID and recorded-content fingerprint, templates and archive evidence by stable ID, and live records against local or remote tombstones. Every conflict defaults to the local value. There is deliberately no bulk “use incoming” action; an operator must choose each external value, enter their name, acknowledge the scope, and pass a native confirmation.
+
+Before commit, Kocpy rereads the package and rechecks its byte digest, workspace revision/digest, and the wider exchange digest that also covers separately stored templates. Templates from the package are structurally validated and normalized before persistence. A local pre-import snapshot is written, then a recovery journal brackets template staging, authority publication and append-only audit publication. Failure before authority rolls templates back; failure after authority leaves enough evidence for startup to finalize exactly one audit without replaying the merge. Unrelated or corrupt recovery state blocks further team imports.
+
+The audit stores source workstation/export IDs, package SHA-256, operator, preview basis, every conflict decision, decision digest, imported authority/exchange digests and result counts. A repeated package-plus-decision returns the existing audit. Imported tasks remain historical metadata only: exchange never copies, moves, deletes or revalidates original media. The LAN project index remains token-gated and read-only, with no raw paths, private handoff fields, media upload or write endpoint.
 
 ## Safe completion automation
 

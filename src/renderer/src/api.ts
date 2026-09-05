@@ -25,6 +25,10 @@ import type {
   CompletionActionKind,
   CompletionActionRecord,
   WorkspaceMergeResult,
+  WorkspaceImportDecision,
+  WorkspaceImportPreview,
+  WorkstationIdentity,
+  WorkstationImportAuditRecord,
 } from "../../main/types";
 export { statusText } from "../../common/status";
 export type {
@@ -52,6 +56,10 @@ export type {
   CompletionActionKind,
   CompletionActionRecord,
   WorkspaceMergeResult,
+  WorkspaceImportDecision,
+  WorkspaceImportPreview,
+  WorkstationIdentity,
+  WorkstationImportAuditRecord,
 };
 export interface Volume {
   name: string;
@@ -346,7 +354,14 @@ export interface API {
     },
   ): Promise<ProjectConfig[]>;
   exportWorkspace(): Promise<string | null>;
-  importWorkspace(): Promise<WorkspaceMergeResult | null>;
+  getWorkstationIdentity(): Promise<WorkstationIdentity>;
+  getWorkstationImportAudits(): Promise<WorkstationImportAuditRecord[]>;
+  importWorkspace(): Promise<WorkspaceImportPreview | null>;
+  applyWorkspaceImport(
+    previewId: string,
+    decisions: WorkspaceImportDecision[],
+    operator: string,
+  ): Promise<WorkspaceMergeResult | null>;
   backupWorkspaceData(): Promise<string | null>;
   coldArchiveProject(projectId: string): Promise<string | null>;
   restoreColdArchive(): Promise<{

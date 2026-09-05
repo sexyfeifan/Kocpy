@@ -137,6 +137,15 @@ export interface CompletionActionRecord {
   attempts: CompletionActionAttempt[];
 }
 
+export interface WorkstationSourceEvidence {
+  id: string;
+  workstationId?: string;
+  displayName: string;
+  exportId?: string;
+  packageSha256: string;
+  importedAt: number;
+}
+
 export interface Destination {
   id: string;
   path: string;
@@ -236,6 +245,8 @@ export interface BackupTask {
     | "unverified-import";
   importedAt?: number;
   confidence?: "verified" | "baseline" | "unverified";
+  /** Append-only origin of metadata received from another Kocpy workstation. */
+  workstationSources?: WorkstationSourceEvidence[];
   externalManifest?: ExternalManifestComparison;
   projectId?: string;
   /** Stable media-unit identity. Attempts and retries must not inflate card counts. */
@@ -450,6 +461,8 @@ export interface ReliabilityValidationRecord {
 
 export interface ProjectConfig {
   id: string;
+  /** Append-only origin of project metadata received from another workstation. */
+  workstationSources?: WorkstationSourceEvidence[];
   name: string;
   devices: string[];
   volumePrefix: string;
@@ -679,6 +692,111 @@ export interface WorkspaceMergeResult {
   duplicates: number;
   conflicts: string[];
   importedAt: number;
+  sourceWorkstationId?: string;
+  sourceWorkstationName?: string;
+  exportId?: string;
+  packageSha256?: string;
+  decisionsSha256?: string;
+  unresolvedConflicts?: number;
+  importedRevision?: number;
+  repeated?: boolean;
+}
+
+export interface WorkstationIdentity {
+  schema: 1;
+  id: string;
+  displayName: string;
+  createdAt: number;
+}
+
+export type WorkspaceConflictDecision = "local" | "incoming";
+
+export interface WorkspaceMergeConflict {
+  id: string;
+  kind:
+    | "project-field"
+    | "project-evidence"
+    | "project-local-deletion"
+    | "project-remote-deletion"
+    | "task-id"
+    | "task-content-duplicate"
+    | "task-name-collision"
+    | "task-local-deletion"
+    | "task-remote-deletion"
+    | "template-id"
+    | "archive-health-id"
+    | "archive-change-id"
+    | "archive-reminder-id"
+    | "archive-run-id";
+  entityType:
+    | "project"
+    | "project-evidence"
+    | "task"
+    | "template"
+    | "archive-health"
+    | "archive-change"
+    | "archive-reminder"
+    | "archive-run";
+  entityId: string;
+  label: string;
+  field?: string;
+  localSummary: string;
+  incomingSummary: string;
+  defaultDecision: "local";
+  consequence: string;
+}
+
+export interface WorkspaceImportPreview {
+  previewId: string;
+  fileName: string;
+  packageSha256: string;
+  source: {
+    workstationId?: string;
+    displayName: string;
+    exportId?: string;
+    exportedAt?: number;
+    legacy: boolean;
+  };
+  localRevision: number;
+  localDigest: string;
+  localExchangeDigest: string;
+  alreadyImported: boolean;
+  summary: {
+    projectsAdded: number;
+    tasksAdded: number;
+    templatesAdded: number;
+    archiveRecordsAdded: number;
+    exactDuplicates: number;
+    conflicts: number;
+    remoteTaskTombstones: number;
+    remoteProjectTombstones: number;
+  };
+  conflicts: WorkspaceMergeConflict[];
+  warnings: string[];
+}
+
+export interface WorkspaceImportDecision {
+  conflictId: string;
+  decision: WorkspaceConflictDecision;
+}
+
+export interface WorkstationImportAuditRecord {
+  id: string;
+  sourceWorkstationId?: string;
+  sourceWorkstationName: string;
+  exportId?: string;
+  packageSha256: string;
+  decisionsSha256: string;
+  decisions: WorkspaceImportDecision[];
+  operator: string;
+  previewedRevision: number;
+  previewedDigest: string;
+  previewedExchangeDigest: string;
+  importedRevision: number;
+  importedDigest: string;
+  importedExchangeDigest: string;
+  importedAt: number;
+  result: WorkspaceMergeResult;
 }
 
 export interface ArchiveChangeRecord {

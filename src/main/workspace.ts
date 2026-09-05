@@ -294,6 +294,9 @@ export class WorkspaceRepository {
     tasks?: BackupTask[];
     projects?: ProjectConfig[];
     archiveEvidence?: ArchiveEvidenceState;
+    /** Full desired tombstone sets used by an explicitly confirmed workstation merge. */
+    taskTombstones?: WorkspaceTombstone[];
+    projectTombstones?: WorkspaceTombstone[];
     syncCatalog?: boolean;
     syncCompatibility?: boolean;
   }): Promise<WorkspaceCommitResult> {
@@ -312,7 +315,19 @@ export class WorkspaceRepository {
           : this.projectsDigest || entityDigest(previous.projects),
         archiveDigest = options.archiveEvidence
           ? entityDigest(inputArchive)
-          : this.archiveDigest || entityDigest(previous.archiveEvidence);
+          : this.archiveDigest || entityDigest(previous.archiveEvidence),
+        tombstoneBody = (items: WorkspaceTombstone[]) =>
+          items
+            .map((item) => ({ id: item.id, deletedAt: item.deletedAt }))
+            .sort((left, right) => left.id.localeCompare(right.id)),
+        taskTombstonesChanged = options.taskTombstones
+          ? entityDigest(tombstoneBody(options.taskTombstones)) !==
+            entityDigest(tombstoneBody(previous.taskTombstones))
+          : false,
+        projectTombstonesChanged = options.projectTombstones
+          ? entityDigest(tombstoneBody(options.projectTombstones)) !==
+            entityDigest(tombstoneBody(previous.projectTombstones))
+          : false;
       if (!inputArchive)
         throw new Error("工作区尚未建立归档证据域，已停止提交");
       validateArchiveEvidence(inputArchive);
@@ -321,7 +336,9 @@ export class WorkspaceRepository {
         projectsDigest ===
           (this.projectsDigest || entityDigest(previous.projects)) &&
         archiveDigest ===
-          (this.archiveDigest || entityDigest(previous.archiveEvidence))
+          (this.archiveDigest || entityDigest(previous.archiveEvidence)) &&
+        !taskTombstonesChanged &&
+        !projectTombstonesChanged
       ) {
         let compatibilityError: string | undefined;
         if (this.compatibilityDirty && options.syncCompatibility !== false)
@@ -367,27 +384,51 @@ export class WorkspaceRepository {
           : previous.projects,
         archiveEvidence = options.archiveEvidence
           ? structuredClone(inputArchive)
-          : previous.archiveEvidence!;
+          : previous.archiveEvidence!,
+        normalizeImportedTombstones = (
+          items: WorkspaceTombstone[],
+          previousItems: WorkspaceTombstone[],
+        ) =>
+          structuredClone(items)
+            .map((item) => {
+              const existing = previousItems.find(
+                (candidate) =>
+                  candidate.id === item.id &&
+                  candidate.deletedAt === item.deletedAt,
+              );
+              return { ...item, revision: existing?.revision || revision };
+            })
+            .sort((left, right) => left.id.localeCompare(right.id));
       const document = sealWorkspaceDocument({
         schemaVersion: WORKSPACE_SCHEMA,
         revision,
         committedAt,
         tasks,
         projects,
-        taskTombstones: updateTombstones(
-          previous.tasks,
-          tasks,
-          previous.taskTombstones,
-          revision,
-          committedAt,
-        ),
-        projectTombstones: updateTombstones(
-          previous.projects,
-          projects,
-          previous.projectTombstones,
-          revision,
-          committedAt,
-        ),
+        taskTombstones: options.taskTombstones
+          ? normalizeImportedTombstones(
+              options.taskTombstones,
+              previous.taskTombstones,
+            )
+          : updateTombstones(
+              previous.tasks,
+              tasks,
+              previous.taskTombstones,
+              revision,
+              committedAt,
+            ),
+        projectTombstones: options.projectTombstones
+          ? normalizeImportedTombstones(
+              options.projectTombstones,
+              previous.projectTombstones,
+            )
+          : updateTombstones(
+              previous.projects,
+              projects,
+              previous.projectTombstones,
+              revision,
+              committedAt,
+            ),
         archiveEvidence,
         migration: previous.migration,
       });
@@ -488,9 +529,7 @@ export class WorkspaceRepository {
         raw &&
         typeof raw === "object" &&
         "schemaVersion" in raw &&
-        ![LEGACY_WORKSPACE_SCHEMA, WORKSPACE_SCHEMA].includes(
-          raw.schemaVersion,
-        )
+        ![LEGACY_WORKSPACE_SCHEMA, WORKSPACE_SCHEMA].includes(raw.schemaVersion)
       )
         throw new Error(
           `当前 Kocpy 不支持工作区格式版本 ${String(raw.schemaVersion)}，为避免破坏数据已停止启动。`,

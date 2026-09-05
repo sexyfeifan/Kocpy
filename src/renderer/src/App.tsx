@@ -97,9 +97,11 @@ import {
   type ExistingCandidateDecision,
   type ExistingImportProgress,
   type CompletionActionKind,
+  type WorkspaceImportPreview,
 } from "./api";
 import { Composer } from "./Composer";
 import { ProjectEditor } from "./ProjectEditor";
+import { WorkstationImportDialog } from "./WorkstationImportDialog";
 import {
   TemplateApplyDialog,
   TemplateEditor,
@@ -3030,12 +3032,16 @@ export function App() {
               )}
               {selected.status === "completed" &&
                 !!selected.completionActionRecords?.length && (
-                  <section className="completion-actions" aria-label="完成动作建议">
+                  <section
+                    className="completion-actions"
+                    aria-label="完成动作建议"
+                  >
                     <div className="completion-actions-heading">
                       <div>
                         <strong>完成动作建议</strong>
                         <p>
-                          仅在你确认后执行；失败或重复触发不会改变备份与校验结论，也不会修改 MHL。
+                          仅在你确认后执行；失败或重复触发不会改变备份与校验结论，也不会修改
+                          MHL。
                         </p>
                       </div>
                       <label>
@@ -3057,7 +3063,9 @@ export function App() {
                           key={record.key}
                         >
                           <div>
-                            <strong>{completionActionLabels[record.action]}</strong>
+                            <strong>
+                              {completionActionLabels[record.action]}
+                            </strong>
                             <span>{completionActionStatus[record.status]}</span>
                             <small>
                               规则依据：
@@ -3071,7 +3079,8 @@ export function App() {
                             {record.result && <p>{record.result}</p>}
                             {record.error && (
                               <p className="red-text">
-                                {record.error}。请先核对现有产物或设备状态，再显式重试。
+                                {record.error}
+                                。请先核对现有产物或设备状态，再显式重试。
                               </p>
                             )}
                           </div>
@@ -3081,12 +3090,16 @@ export function App() {
                                 kind="icon"
                                 title="在 Finder 中显示产物"
                                 key={output}
-                                onClick={() => void act(() => api.reveal(output))}
+                                onClick={() =>
+                                  void act(() => api.reveal(output))
+                                }
                               >
                                 <FolderOpen size={15} />
                               </Button>
                             ))}
-                            {!['completed', 'skipped'].includes(record.status) && (
+                            {!["completed", "skipped"].includes(
+                              record.status,
+                            ) && (
                               <>
                                 <Button
                                   kind="subtle"
@@ -3117,7 +3130,9 @@ export function App() {
                                   ) : (
                                     <Play size={14} />
                                   )}
-                                  {record.status === "failed" ? "重新执行" : "确认执行"}
+                                  {record.status === "failed"
+                                    ? "重新执行"
+                                    : "确认执行"}
                                 </Button>
                                 <Button
                                   kind="subtle"
@@ -5526,12 +5541,17 @@ function HelpPage({
       title: "多工作站与局域网索引",
       purpose: "交换配置包、合并记录，或临时共享只读项目索引。",
       steps: [
-        "导出工作站包并传到另一台 Mac。",
-        "合并前 Kocpy 自动创建本地快照并校验包结构。",
-        "检查重复素材、卷号冲突和合并结果。",
+        "导出工作站包并通过可信方式传到另一台 Mac；包只包含 Kocpy 元数据。",
+        "在另一台 Mac 先只读预检来源、包摘要、新增、重复、字段、证据与删除冲突。",
+        "所有冲突默认保留本机；逐项选择需要采用的外部值，填写操作人并确认后提交。",
+        "双方反向导出、导入并重启核对；合并审计默认折叠，可按需展开检查。",
         "仅在受信任局域网启用带随机令牌的只读索引。",
       ],
-      tips: ["不会默认同步原始素材。", "局域网令牌应通过可信渠道传递。"],
+      tips: [
+        "配置包不会复制、移动、删除或重新校验原始素材。",
+        "工作站合并审计不等于另一台 Mac 的素材副本当前健康。",
+        "局域网索引只读；令牌应通过可信渠道传递。",
+      ],
       page: "maintenance",
     },
     {
@@ -5583,15 +5603,17 @@ function HelpPage({
       <section className="help-release-note">
         <RefreshCw size={20} />
         <div>
-          <strong>0.1.30：可解释建议与安全完成动作</strong>
+          <strong>0.1.31：稳定工作站身份与可审计合并</strong>
           <p>
-            历史素材卡建议会显示卷身份或目录结构依据；相同路径与字节数只标为疑似重复，不冒充已重新读取内容哈希。应用建议只填写草稿，不会开始写入。
+            每台 Mac 使用跨重启稳定的随机身份。工作站包记录唯一导出
+            ID、权威工作区依据、交换摘要和删除墓碑；身份或恢复记录损坏时停止合并，不猜测重建。
           </p>
           <p>
-            项目完成动作只建立待确认建议。填写操作人并逐项确认后才生成报告、交付、代理或推出源盘；每项保存规则快照、稳定幂等键、尝试、结果与错误。
+            导入先显示只读预检；同
+            ID、内容、项目字段、追加证据和删除冲突默认保留本机。只有逐项选择外部值、填写操作人并确认后才提交，没有批量覆盖。
           </p>
           <p>
-            产物不覆盖已有文件，代理不重复入队，推出失败不静默成功。完成动作不会修订 MHL、接受清单差异、删除素材或改变备份校验结论。
+            提交前再次核对包、本机记录和模板摘要，中断后可按审计恢复且不重复合并。配置包只交换元数据，不复制、删除、移动或重新校验素材。
           </p>
         </div>
       </section>
@@ -5673,6 +5695,12 @@ function MaintenancePage({
     [archiveReminders, setArchiveReminders] = useState<
       import("./api").ArchiveReminder[]
     >([]),
+    [workstationIdentity, setWorkstationIdentity] = useState<
+      import("./api").WorkstationIdentity | null
+    >(null),
+    [workstationAudits, setWorkstationAudits] = useState<
+      import("./api").WorkstationImportAuditRecord[]
+    >([]),
     [archiveOperator, setArchiveOperator] = useState(""),
     [reminderDays, setReminderDays] = useState<Record<string, number>>({}),
     [busy, setBusy] = useState<string | null>(null),
@@ -5687,6 +5715,8 @@ function MaintenancePage({
         "",
     ),
     [outcome, setOutcome] = useState(""),
+    [workspaceImport, setWorkspaceImport] =
+      useState<WorkspaceImportPreview | null>(null),
     [templateEditor, setTemplateEditor] = useState<Partial<
       import("./api").ProjectTemplate
     > | null>(null),
@@ -5702,16 +5732,21 @@ function MaintenancePage({
       }>;
     } | null>(null);
   const reload = useCallback(async () => {
-    const [records, values, runs, reminders] = await Promise.all([
-      api.getArchiveHealth(),
-      api.getProjectTemplates(),
-      api.getArchiveRuns(),
-      api.getArchiveReminders(),
-    ]);
+    const [records, values, runs, reminders, identity, audits] =
+      await Promise.all([
+        api.getArchiveHealth(),
+        api.getProjectTemplates(),
+        api.getArchiveRuns(),
+        api.getArchiveReminders(),
+        api.getWorkstationIdentity(),
+        api.getWorkstationImportAudits(),
+      ]);
     setHealth(records);
     setTemplates(values);
     setArchiveRuns(runs);
     setArchiveReminders(reminders);
+    setWorkstationIdentity(identity);
+    setWorkstationAudits(audits);
     setReminderDays((current) => ({
       ...Object.fromEntries(
         reminders.map((item) => [item.projectId, item.intervalDays]),
@@ -5769,6 +5804,23 @@ function MaintenancePage({
     );
   return (
     <div className="maintenance-center">
+      {workspaceImport && (
+        <WorkstationImportDialog
+          preview={workspaceImport}
+          defaultOperator={archiveOperator}
+          onClose={() => setWorkspaceImport(null)}
+          onApplied={(result) => {
+            const message = result.repeated
+              ? `该配置包与决定已处理，返回既有审计：修订 ${result.importedRevision}`
+              : `合并完成：新增 ${result.tasksAdded} 个任务、${result.projectsAdded} 个项目；保留 ${result.unresolvedConflicts || 0} 项本机冲突`;
+            setWorkspaceImport(null);
+            setOutcome(message);
+            notify(message);
+            void reload();
+            void refreshProjects();
+          }}
+        />
+      )}
       {outcome && (
         <p className="notice" role="status">
           {outcome}
@@ -5783,6 +5835,13 @@ function MaintenancePage({
           <p>
             复校验项目副本、保存健康变化、复用项目模板，并在不同工作站之间合并任务记录。
           </p>
+          {workstationIdentity && (
+            <div className="workstation-local-identity">
+              <strong>{workstationIdentity.displayName}</strong>
+              <span className="mono">{workstationIdentity.id}</span>
+              <small>本机稳定工作站 ID；主机改名不会改变此身份</small>
+            </div>
+          )}
         </div>
         <div className="row">
           <Button
@@ -5838,26 +5897,71 @@ function MaintenancePage({
           </Button>
           <Button
             kind="primary"
-            onClick={() =>
-              void run(
-                "import",
-                async () => {
-                  const result = await api.importWorkspace();
-                  if (result)
-                    notify(
-                      `合并完成：新增 ${result.tasksAdded} 个任务，跳过 ${result.duplicates} 个重复项${result.conflicts.length ? `，冲突：${result.conflicts.join("；")}` : ""}`,
-                    );
-                  return result;
-                },
-                "",
-              )
-            }
+            disabled={busy === "import"}
+            onClick={() => {
+              setBusy("import");
+              void api
+                .importWorkspace()
+                .then((preview) => {
+                  if (preview) setWorkspaceImport(preview);
+                  else setOutcome("已取消");
+                })
+                .catch((error) => {
+                  const message = readableOperationError(error);
+                  setOutcome(message);
+                  notify(message, true);
+                })
+                .finally(() => setBusy(null));
+            }}
           >
             <Download size={14} />
-            合并工作站包
+            预检工作站包
           </Button>
         </div>
       </section>
+      {workstationAudits.length > 0 && (
+        <details className="panel workstation-audit-panel">
+          <summary>
+            <span>
+              <ShieldCheck size={17} /> 工作站合并审计
+            </span>
+            <small>{workstationAudits.length} 条记录 · 点击展开</small>
+          </summary>
+          <div className="workstation-audit-list">
+            {workstationAudits.slice(0, 20).map((audit) => (
+              <article key={audit.id}>
+                <div>
+                  <strong>{audit.sourceWorkstationName}</strong>
+                  <span>
+                    {new Date(audit.importedAt).toLocaleString()} · 操作人{" "}
+                    {audit.operator}
+                  </span>
+                </div>
+                <div>
+                  <span>
+                    新增 {audit.result.projectsAdded} 个项目 /{" "}
+                    {audit.result.tasksAdded} 个任务
+                  </span>
+                  <span>
+                    保留本机冲突 {audit.result.unresolvedConflicts || 0} 项 ·
+                    修订 {audit.importedRevision}
+                  </span>
+                  <span>
+                    采用外部{" "}
+                    {
+                      audit.decisions.filter(
+                        (item) => item.decision === "incoming",
+                      ).length
+                    }{" "}
+                    项
+                  </span>
+                </div>
+                <small className="mono">包 SHA-256 {audit.packageSha256}</small>
+              </article>
+            ))}
+          </div>
+        </details>
+      )}
       <section className="panel">
         <div className="section-title">
           <div>
@@ -5907,7 +6011,13 @@ function MaintenancePage({
                   </small>
                   {lastRun && (
                     <small>
-                      证据 {lastRun.resultDigest.slice(0, 12)}… · 操作人 {lastRun.operator} · {lastRun.status === "completed" ? "通过" : lastRun.status === "partial" ? "部分完成" : "未通过"}
+                      证据 {lastRun.resultDigest.slice(0, 12)}… · 操作人{" "}
+                      {lastRun.operator} ·{" "}
+                      {lastRun.status === "completed"
+                        ? "通过"
+                        : lastRun.status === "partial"
+                          ? "部分完成"
+                          : "未通过"}
                     </small>
                   )}
                   <small>
@@ -5928,10 +6038,7 @@ function MaintenancePage({
                       void run(
                         `verify-${project.id}`,
                         () =>
-                          api.verifyProjectArchive(
-                            project.id,
-                            archiveOperator,
-                          ),
+                          api.verifyProjectArchive(project.id, archiveOperator),
                         `${project.name} 长期复校验完成`,
                       )
                     }
@@ -6022,15 +6129,13 @@ function MaintenancePage({
                             id: reminder?.id || "",
                             projectId: project.id,
                             intervalDays: reminderDays[project.id] || 180,
-                            nextAt:
-                              reminder?.lastSuccessfulVerificationAt
-                                ? reminder.lastSuccessfulVerificationAt +
+                            nextAt: reminder?.lastSuccessfulVerificationAt
+                              ? reminder.lastSuccessfulVerificationAt +
+                                (reminderDays[project.id] || 180) * 86_400_000
+                              : reminder?.nextAt ||
+                                Date.now() +
                                   (reminderDays[project.id] || 180) *
-                                    86_400_000
-                                : reminder?.nextAt ||
-                                  Date.now() +
-                                    (reminderDays[project.id] || 180) *
-                                      86_400_000,
+                                    86_400_000,
                             enabled: reminder ? !reminder.enabled : true,
                             lastNotifiedAt: reminder?.lastNotifiedAt,
                             lastSuccessfulVerificationAt:
@@ -6053,7 +6158,9 @@ function MaintenancePage({
                       void run(
                         `archive-report-${project.id}`,
                         async () => {
-                          const file = await api.exportArchiveChanges(project.id);
+                          const file = await api.exportArchiveChanges(
+                            project.id,
+                          );
                           if (file) await api.reveal(file);
                           return file;
                         },
@@ -7410,7 +7517,9 @@ function ProxyDialog({
     const value = savedPresets.find((item) => item.id === id);
     if (!value) return;
     setPresetName(value.name);
-    setPreset(value.purpose || (value.format === "prores" ? "editorial" : "review"));
+    setPreset(
+      value.purpose || (value.format === "prores" ? "editorial" : "review"),
+    );
     setFormat(value.format);
     setRes(value.resolution);
     setBitrate(value.bitrateMbps || 0);
@@ -7586,9 +7695,7 @@ function ProxyDialog({
                 }
                 onChange={(e) =>
                   setRes(
-                    e.target.value === "custom"
-                      ? "1920x1080"
-                      : e.target.value,
+                    e.target.value === "custom" ? "1920x1080" : e.target.value,
                   )
                 }
                 disabled={busy}
