@@ -22,6 +22,7 @@ import {
 } from "../src/main/workstation-exchange";
 import { validateWorkspacePackage } from "../src/main/lifecycle";
 import { WorkspaceRepository } from "../src/main/workspace";
+import { normalizeProject } from "../src/main/project-normalization";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -115,6 +116,7 @@ async function importPackage(input: {
   repository: WorkspaceRepository;
   identity: WorkstationIdentity;
   package: { value: ValidatedWorkspacePackage; sha256: string };
+  normalizeProjects?: boolean;
   decide?: (
     preview: ReturnType<typeof buildWorkspaceImportPreview>,
   ) => WorkspaceImportDecision[];
@@ -141,15 +143,18 @@ async function importPackage(input: {
       packageSha256: input.package.sha256,
       importedAt: source.exportedAt + 1,
     });
+  const projects = input.normalizeProjects
+    ? merged.state.projects.map(normalizeProject)
+    : merged.state.projects;
   await input.repository.commit({
     tasks: merged.state.tasks,
-    projects: merged.state.projects,
+    projects,
     archiveEvidence: input.repository.getArchiveEvidence(),
     taskTombstones: merged.state.taskTombstones,
     projectTombstones: merged.state.projectTombstones,
     syncCatalog: true,
   });
-  return { preview, merged };
+  return { preview, merged: { ...merged, state: { ...merged.state, projects } } };
 }
 
 async function reopen(root: string) {
@@ -162,6 +167,41 @@ async function reopen(root: string) {
 }
 
 describe("0.1.31 isolated two-workspace exchange", () => {
+  it("canonicalizes an imported legacy-shaped project before commit so restart is stable", async () => {
+    const a = await station("DIT-A"),
+      b = await station("DIT-B");
+    await a.repository.commit({
+      projects: [project("legacy-shape", "Legacy Shape")],
+      syncCatalog: true,
+    });
+
+    await importPackage({
+      repository: b.repository,
+      identity: b.identity,
+      package: exported(a.repository, a.identity),
+      normalizeProjects: true,
+    });
+    const revision = b.repository.snapshot.revision,
+      digest = b.repository.snapshot.digest,
+      canonical = b.repository.getProjects()[0];
+    expect(canonical).toMatchObject({
+      shootingDateStart: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
+      shootingDateEnd: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
+      projectFolderName: expect.any(String),
+      volumePrefixByDevice: { A: "A_" },
+      devicePositions: {},
+      restDays: [],
+      unusedDevicesByDate: {},
+      expectedDevicesByDate: {},
+      dailyPlanDecisions: [],
+    });
+
+    const reopened = await reopen(b.root);
+    expect(reopened.snapshot.revision).toBe(revision);
+    expect(reopened.snapshot.digest).toBe(digest);
+    expect(reopened.getProjects()).toEqual(b.repository.getProjects());
+  });
+
   it("keeps A→B→A and B→A→B deterministic across conflict, repeat, tombstone and restart", async () => {
     const a = await station("DIT-A"),
       b = await station("DIT-B");

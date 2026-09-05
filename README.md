@@ -8,9 +8,9 @@
 
 ![Kocpy 工作台](docs/screenshots/dashboard.png)
 
-当前代码版本：**0.1.32 候选** · [完整使用手册](docs/USER_GUIDE.md) · [0.1.32 更新说明](docs/RELEASE_NOTES_0.1.32.md) · [已公开发布版本](https://github.com/sexyfeifan/Kocpy/releases/latest)
+当前代码版本：**0.1.33 候选** · [完整使用手册](docs/USER_GUIDE.md) · [0.1.33 更新说明](docs/RELEASE_NOTES_0.1.33.md) · [已公开发布版本](https://github.com/sexyfeifan/Kocpy/releases/latest)
 
-0.1.32 建立克制的界面动效基础：页面、弹窗、提示、按钮和真实进度使用统一时长与缓动，并完整尊重系统“减少动态效果”；不引入动画运行库，不平滑伪造进度，也不让动画决定备份状态。0.1.31 的多工作站交换仍保持候选门槛；至少两台真实 Mac 完成双向交换前，不会发布包含该功能的正式 Release，latest 仍是 0.1.30。验证边界及已知限制见 [验证记录](docs/VERIFICATION.md)。
+0.1.33 修正真实双 Mac 验收发现的重启一致性问题：外来项目在导入事务提交前完成规范化，重启不会仅因补齐默认字段而增加修订号或改变摘要。同时每个 macOS 安装包只携带与目标 CPU 一致的 FFmpeg，避免 Apple Silicon 包因未使用的 x64 组件触发 Intel 兼容性提醒。0.1.31–0.1.32 的能力仍须完成修复后的双机往返复验才会公开发布；latest 暂时保持 0.1.30。验证边界见 [验证记录](docs/VERIFICATION.md)。
 
 ## 中文
 
@@ -133,10 +133,10 @@ Kocpy 支持真实深色与浅色外观，任务、项目、偏好、缩略图�
 
 从 [GitHub Releases](https://github.com/sexyfeifan/Kocpy/releases) 下载对应架构：
 
-- `Kocpy-0.1.32-arm64.dmg`：Apple Silicon Mac（正式发布后）
-- `Kocpy-0.1.32-x64.dmg`：Intel Mac（正式发布后）
+- `Kocpy-0.1.33-arm64.dmg`：Apple Silicon Mac（正式发布后）
+- `Kocpy-0.1.33-x64.dmg`：Intel Mac（正式发布后）
 
-当前代码为 0.1.32 候选；在 0.1.31 双 Mac 门槛关闭前，请从 latest 下载已经公开验收的 0.1.30。远端可下载版本以 Release 实际附件为准。
+当前代码为 0.1.33 候选；在修复后的双 Mac 门槛关闭前，请从 latest 下载已经公开验收的 0.1.30。远端可下载版本以 Release 实际附件为准。
 
 打开 DMG，将 Kocpy 拖入“应用程序”。当前公开包尚未使用 Apple Developer ID 签名和公证。若 macOS 明确提示应用“已损坏”，请先确认文件来自本仓库官方 Release，再执行：
 

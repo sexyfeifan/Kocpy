@@ -37,4 +37,11 @@ describe("macOS candidate packaging safety", () => {
   it("removes only generated bundle metadata before signing", () => {
     expect(afterPack).toContain("execFileSync('/usr/bin/xattr', ['-cr', app])");
   });
+
+  it("ships only the media runtime matching the package architecture", () => {
+    expect(afterPack).toContain("context.arch === Arch.arm64");
+    expect(afterPack).toContain("context.arch === Arch.x64");
+    expect(afterPack).toContain("ffmpeg-darwin-${unusedArch}");
+    expect(afterPack).toContain("packagedRuntimes.length !== 1");
+  });
 });

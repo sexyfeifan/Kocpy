@@ -5603,6 +5603,13 @@ function HelpPage({
       <section className="help-release-note">
         <RefreshCw size={20} />
         <div>
+          <strong>0.1.33：双机重启一致性与原生架构包</strong>
+          <p>
+            工作站包中的项目字段会在导入提交前一次性规范化；成功导入后若没有用户操作，重启不会仅因补齐默认值而增加工作区修订或改变摘要。
+          </p>
+          <p>
+            Apple Silicon 与 Intel 安装包分别只携带匹配架构的 FFmpeg，代理能力不变，并在签名前重新核对运行时架构、来源、摘要和许可。
+          </p>
           <strong>0.1.32：克制、可访问的界面动效</strong>
           <p>
             页面、弹窗、提示、按钮、主题、开关与真实进度采用统一的短时动效；动画不会控制任务状态、文件写入、确认或审计。

@@ -1,4 +1,12 @@
-# Kocpy 0.1.32 architecture
+# Kocpy 0.1.33 architecture
+
+## Canonical workstation import boundary
+
+Project defaults are normalized before a workstation merge publishes its authoritative workspace commit. The canonical projects participate in the expected exchange digest and recovery journal, so a successful import and the following restart expose exactly the same revision, digest and entity bytes. Startup normalization remains a legacy migration path, not a second phase of a current package import.
+
+## Architecture-specific media runtime
+
+The source tree retains both reproducibly built FFmpeg architectures, but the packaging hook removes the unused executable and matching build metadata before signing. It then reruns provenance, architecture, checksum, linkage and license checks against the remaining runtime. An arm64 package therefore contains no x64 FFmpeg payload, and an x64 package contains no arm64 payload; runtime selection remains based on `process.arch`.
 
 ## Motion and state boundary
 
