@@ -1,12 +1,18 @@
 # Mounted-volume verification
 
-Kocpy includes an opt-in destructive-to-test-folder stress suite for mounted exFAT/APFS volumes and SMB/NFS shares. It creates a 256 MiB camera-like file plus 1,500 small files, copies them through the production engine, and requires every destination to pass an independent SHA-256 readback.
+Kocpy includes an opt-in generated-data suite for disposable mounted exFAT/APFS/HFS+ volumes and SMB/NFS shares. It creates a 256 MiB camera-like file plus 1,500 small files, copies them through the production engine, and requires every destination to pass an independent SHA-256 readback. Never select a production media card or the only copy of any material.
 
 ```bash
-KOCPY_HARDWARE_DESTINATIONS='["/Volumes/EXFAT_TEST/Kocpy","/Volumes/NAS/Kocpy"]' npm run test:hardware
+npm run test:hardware -- \
+  --destination /Volumes/DISPOSABLE_APFS \
+  --destination /Volumes/DISPOSABLE_EXFAT \
+  --result /tmp/kocpy-hardware-result.json \
+  --plan
 ```
 
-Use empty test folders only. Disconnect, space-exhaustion and mount-identity scenarios are handled by the same engine paths but should be exercised on non-production media: cancel or detach during the large file, remount, and rerun; Kocpy must validate the partial prefix and continue. A different volume UUID at the same mount path must be refused.
+The plan is read-only. Each target needs at least 600 MiB free because atomic publication reserves space for both the final data and its temporary form. After confirming every target is an empty or disposable mounted-volume root, replace `--plan` with `--confirm-write-test`. The integration check then rejects internal or read-only volumes, nested directories, duplicate mounted filesystems, multiple local destinations on the same whole disk, result files inside a tested volume, and existing result files. It removes only the uniquely named directories it created and writes a structured result containing volume identity, filesystem, task evidence, physical-independence classification and cleanup status. Disk images are reported as virtual volumes and never counted as physical disks.
+
+Disconnect, space-exhaustion and mount-identity scenarios are handled by the same engine paths but remain separate manual exercises on non-production media: cancel or detach during the large file, remount, and rerun using a new result path. Kocpy must validate the partial prefix and continue. A different volume UUID at the same mount path must be refused. Network shares can prove a distinct mount and successful readback, but a client cannot prove the provider's physical fault domains.
 
 ## 0.1.4 mounted-volume results
 

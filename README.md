@@ -8,9 +8,9 @@
 
 ![Kocpy 工作台](docs/screenshots/dashboard.png)
 
-当前代码版本：**0.1.34 候选** · [完整使用手册](docs/USER_GUIDE.md) · [0.1.34 更新说明](docs/RELEASE_NOTES_0.1.34.md) · [已公开发布版本](https://github.com/sexyfeifan/Kocpy/releases/latest)
+当前代码版本：**0.1.35 候选** · [完整使用手册](docs/USER_GUIDE.md) · [0.1.35 更新说明](docs/RELEASE_NOTES_0.1.35.md) · [已公开发布版本](https://github.com/sexyfeifan/Kocpy/releases/latest)
 
-0.1.34 修正真实双 Mac 返回闭环发现的重复导入问题：旧包中的内置模板会在预检前统一补齐稳定默认值，时间值 `0` 不再被改写，缺少的空机位结构也不会在首次提交后才出现，因此相同导出包不会产生五项虚假模板冲突；相同包与相同决定返回原审计，不增加修订。界面也明确区分“核对既有审计”与“使用新决定再次提交”。0.1.31–0.1.33 的能力仍须完成修复后的双机往返复验才会公开发布；latest 暂时保持 0.1.30。验证边界见 [验证记录](docs/VERIFICATION.md)。
+0.1.35 为发布链与现场验收加固候选版：测试和打包会阻断同步冲突副本等源码杂质，GitHub Actions 固定到已核对的官方提交；可选真实介质测试增加写入前计划、显式确认、挂载根目录与重复物理盘保护，以及不覆盖既有结果的结构化 JSON 证据。它不改变素材复制和校验算法。当前 latest 为已经完成双 Mac 闭环的 0.1.34；0.1.35 在用户验收前不创建正式标签或 Release。验证边界见 [验证记录](docs/VERIFICATION.md)。
 
 ## 中文
 
@@ -133,10 +133,10 @@ Kocpy 支持真实深色与浅色外观，任务、项目、偏好、缩略图�
 
 从 [GitHub Releases](https://github.com/sexyfeifan/Kocpy/releases) 下载对应架构：
 
-- `Kocpy-0.1.34-arm64.dmg`：Apple Silicon Mac（正式发布后）
-- `Kocpy-0.1.34-x64.dmg`：Intel Mac（正式发布后）
+- `Kocpy-0.1.34-arm64.dmg`：Apple Silicon Mac（当前已公开版本）
+- `Kocpy-0.1.34-x64.dmg`：Intel Mac（当前已公开版本）
 
-当前代码为 0.1.34 候选；在修复后的双 Mac 门槛关闭前，请从 latest 下载已经公开验收的 0.1.30。远端可下载版本以 Release 实际附件为准。
+当前代码为 0.1.35 候选；请从 latest 下载已经公开验收的 0.1.34。远端可下载版本以 Release 实际附件为准。
 
 打开 DMG，将 Kocpy 拖入“应用程序”。当前公开包尚未使用 Apple Developer ID 签名和公证。若 macOS 明确提示应用“已损坏”，请先确认文件来自本仓库官方 Release，再执行：
 

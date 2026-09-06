@@ -25,14 +25,14 @@ jobs:
             runner: macos-15-intel
             appdir: mac
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
           cache: npm
       - run: npm ci
       - name: Verify source provenance, type safety and regressions
-        run: npm run verify:media && npm run typecheck && npm test
+        run: npm run verify:release && npm run typecheck && npm test
       - name: Build ad-hoc signed candidate DMG
         if: env.HAS_APPLE_SIGNING != 'true'
         env:
@@ -69,7 +69,7 @@ jobs:
           "release/${{ matrix.appdir }}/Kocpy.app/Contents/MacOS/Kocpy" work/verify-archive-evidence.cjs
           "release/${{ matrix.appdir }}/Kocpy.app/Contents/MacOS/Kocpy" work/verify-completion-automation.cjs
           "release/${{ matrix.appdir }}/Kocpy.app/Contents/MacOS/Kocpy" work/verify-workstation-exchange.cjs
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: Kocpy-${{ matrix.arch }}
           path: release/Kocpy-*.dmg
@@ -81,13 +81,13 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: Kocpy-*
           path: release

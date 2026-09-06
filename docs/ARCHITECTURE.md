@@ -1,4 +1,10 @@
-# Kocpy 0.1.34 architecture
+# Kocpy 0.1.35 architecture
+
+## Release source and field-test boundary
+
+The release gate walks only repository source, documentation, workflow, resource, script and test roots. It rejects common synchronization conflict names, AppleDouble metadata, Finder metadata and incomplete cloud placeholders before tests or packaging. The gate is diagnostic only: it reports exact relative paths and never deletes or rewrites a file. Release workflow actions are pinned to reviewed full commit hashes rather than floating major tags.
+
+Mounted-volume acceptance is an explicit maintenance command, not an application background action. The wrapper accepts exact roots below `/Volumes`, emits a read-only plan, requires a separate confirmation flag, refuses reused result paths, and keeps evidence outside tested targets. The integration layer independently rechecks mount roots, writability, internal-disk status and device identities before creating random test directories. Duplicate filesystems and local partitions sharing one whole disk fail before fixture creation. A result distinguishes verified external whole disks, virtual volumes, a single destination, and network storage whose underlying physical fault domains cannot be proven from the client.
 
 ## Stable template and repeat-import boundary
 

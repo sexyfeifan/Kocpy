@@ -38,6 +38,18 @@ describe("macOS candidate packaging safety", () => {
     expect(afterPack).toContain("execFileSync('/usr/bin/xattr', ['-cr', app])");
   });
 
+  it("blocks source conflict artifacts and pins release actions to reviewed commits", () => {
+    expect(packageJson.scripts["verify:release"]).toContain("verify:source");
+    expect(packageJson.scripts.prepack).toBe("npm run verify:release");
+    expect(workflow).toContain("npm run verify:release");
+    for (const reference of [
+      "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1",
+      "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0",
+      "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1",
+      "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1",
+    ]) expect(workflow).toContain(reference);
+  });
+
   it("ships only the media runtime matching the package architecture", () => {
     expect(afterPack).toContain("context.arch === Arch.arm64");
     expect(afterPack).toContain("context.arch === Arch.x64");
