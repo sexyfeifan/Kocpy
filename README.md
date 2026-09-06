@@ -8,9 +8,9 @@
 
 ![Kocpy 工作台](docs/screenshots/dashboard.png)
 
-当前仓库代码：**0.1.35 候选** · 当前正式安装包：**0.1.34** · [完整使用手册](docs/USER_GUIDE.md) · [0.1.35 更新说明](docs/RELEASE_NOTES_0.1.35.md) · [已公开发布版本](https://github.com/sexyfeifan/Kocpy/releases/latest)
+当前仓库代码与正式安装包：**0.1.35** · [完整使用手册](docs/USER_GUIDE.md) · [0.1.35 更新说明](docs/RELEASE_NOTES_0.1.35.md) · [下载最新版本](https://github.com/sexyfeifan/Kocpy/releases/latest)
 
-0.1.35 为发布链与现场验收加固候选版：测试和打包会阻断同步冲突副本等源码杂质，GitHub Actions 固定到已核对的官方提交；可选真实介质测试增加写入前计划、显式确认、挂载根目录与重复物理盘保护，以及不覆盖既有结果的结构化 JSON 证据。它不改变素材复制和校验算法。当前 latest 为已经完成双 Mac 闭环的 0.1.34；0.1.35 在用户验收前不创建正式标签或 Release。验证边界见 [验证记录](docs/VERIFICATION.md)。
+0.1.35 加固发布链与现场验收：测试和打包会阻断同步冲突副本等源码杂质，GitHub Actions 固定到已核对的官方提交；可选真实介质测试增加写入前计划、显式确认、挂载根目录与重复物理盘保护，以及不覆盖既有结果的结构化 JSON 证据。它不改变素材复制和校验算法。真实 NAS、断连、睡眠、空间耗尽与长期压力项目仍按实际执行情况标记，未验证项目不会冒充通过；边界见 [验证记录](docs/VERIFICATION.md)。
 
 ## 中文
 
@@ -133,10 +133,10 @@ Kocpy 支持真实深色与浅色外观，任务、项目、偏好、缩略图�
 
 从 [GitHub Releases](https://github.com/sexyfeifan/Kocpy/releases) 下载对应架构：
 
-- `Kocpy-0.1.34-arm64.dmg`：Apple Silicon Mac（当前已公开版本）
-- `Kocpy-0.1.34-x64.dmg`：Intel Mac（当前已公开版本）
+- `Kocpy-0.1.35-arm64.dmg`：Apple Silicon Mac
+- `Kocpy-0.1.35-x64.dmg`：Intel Mac
 
-当前代码为 0.1.35 候选；请从 latest 下载已经公开验收的 0.1.34。远端可下载版本以 Release 实际附件为准。
+0.1.35 已完成候选验收与双架构正式构建。远端可下载版本以 latest Release 的实际附件与 `SHA256SUMS.txt` 为准。
 
 打开 DMG，将 Kocpy 拖入“应用程序”。当前公开包尚未使用 Apple Developer ID 签名和公证。若 macOS 明确提示应用“已损坏”，请先确认文件来自本仓库官方 Release，再执行：
 
