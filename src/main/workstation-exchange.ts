@@ -19,7 +19,11 @@ import type {
 } from "./types";
 import type { Storage } from "./storage";
 import type { WorkspaceState, WorkspaceTombstone } from "./workspace-contract";
-import { taskFingerprint, validateWorkspacePackage } from "./lifecycle";
+import {
+  normalizeProjectTemplate,
+  taskFingerprint,
+  validateWorkspacePackage,
+} from "./lifecycle";
 
 const IDENTITY_FILE = "workstation-identity.json";
 export const WORKSTATION_AUDIT_FILE = "workstation-import-audit.json";
@@ -366,7 +370,10 @@ function packageState(
   return {
     projects: value.projects || [],
     tasks: value.tasks || [],
-    templates: value.templates || [],
+    // Packages from older Kocpy versions may omit optional template defaults.
+    // Canonicalize before preview and merge so the first persisted result is
+    // byte-stable when the exact package is previewed again.
+    templates: (value.templates || []).map(normalizeProjectTemplate),
     healthRecords: value.healthRecords || [],
     archiveChanges: value.archiveChanges || [],
     archiveReminders: value.archiveReminders || [],
@@ -743,7 +750,9 @@ export function buildWorkspaceImportPreview(input: {
           ]
         : []),
       ...(alreadyImported
-        ? ["这个导出包已经完成过导入；再次确认只会返回原审计结果。"]
+        ? [
+            "这个导出包曾完成过导入；若本次冲突决定与既有审计一致，将直接返回原审计。更改决定会生成新的修订与审计。",
+          ]
         : []),
       ...(source.workstationId === input.localWorkstationId
         ? ["这个配置包来自当前工作站；通常只会产生重复项，请核对是否选错文件。"]

@@ -7,7 +7,11 @@ import {
   templateFromProject,
   validateWorkspacePackage,
 } from "../src/main/lifecycle";
-import type { BackupTask, ProjectConfig } from "../src/main/types";
+import type {
+  BackupTask,
+  ProjectConfig,
+  ProjectTemplate,
+} from "../src/main/types";
 import { projectCoverage } from "../src/common/task-trust";
 
 const task = (id: string, checksum = "abc"): BackupTask => ({
@@ -166,6 +170,36 @@ describe("archive lifecycle and workstation merge", () => {
     expect(normalized.productionType).toBe("custom");
     expect(normalized.volumePrefixByDevice).toEqual({ A: "A_" });
     expect(normalized.revision).toBe(1);
+  });
+  it("preserves zero timestamps used by stable built-in templates", () => {
+    const normalized = normalizeProjectTemplate({
+      id: "builtin-documentary",
+      name: "纪录片",
+      devices: ["A"],
+      volumePrefix: "A_",
+      requiredCopies: 2,
+      namingRule: "{card}",
+      completionActions: ["report"],
+      createdAt: 0,
+      updatedAt: 0,
+      revision: 1,
+    });
+    expect(normalized.kind).toBe("builtin");
+    expect(normalized.createdAt).toBe(0);
+    expect(normalized.updatedAt).toBe(0);
+    expect(
+      normalizeProjectTemplate(
+        {
+          id: "legacy",
+          name: "旧模板",
+          devices: ["A"],
+          volumePrefix: "A_",
+          requiredCopies: 2,
+          namingRule: "{card}",
+          completionActions: ["report"],
+        } as ProjectTemplate,
+      ),
+    ).toMatchObject({ createdAt: 0, updatedAt: 0 });
   });
   it("reports logical media volumes instead of inflating repeated attempts", () => {
     const first = task("attempt-a");

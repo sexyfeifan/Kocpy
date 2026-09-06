@@ -236,7 +236,11 @@ export function WorkstationImportDialog({
             ) : (
               <Check size={16} />
             )}
-            {preview.alreadyImported ? "核对审计并幂等提交" : "按上述决定合并"}
+            {preview.alreadyImported
+              ? preview.conflicts.length
+                ? "按当前决定提交"
+                : "核对既有审计"
+              : "按上述决定合并"}
           </Button>
         </div>
       </section>

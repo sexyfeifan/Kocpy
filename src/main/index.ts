@@ -1599,7 +1599,8 @@ app.whenReady().then(async () => {
     () => void notifyDueArchiveReminders().catch(() => undefined),
     3_600_000,
   );
-  for (const template of builtInProductionTemplates()) {
+  for (const rawTemplate of builtInProductionTemplates()) {
+    const template = normalizeProjectTemplate(rawTemplate);
     const index = projectTemplates.findIndex((item) => item.id === template.id);
     if (index < 0) projectTemplates.push(template);
     else

@@ -703,6 +703,10 @@ export function templateFromProject(
 export function normalizeProjectTemplate(
   template: ProjectTemplate,
 ): ProjectTemplate {
+  const normalizedTimestamp = (value: unknown) =>
+    typeof value === "number" && Number.isFinite(value) && value >= 0
+      ? value
+      : 0;
   const devices = [
     ...new Set(
       (template.devices || [])
@@ -740,8 +744,10 @@ export function normalizeProjectTemplate(
     completionActions: [...(template.completionActions || ["report"])],
     checklists: template.checklists?.map((item) => ({ ...item })),
     crew: template.crew?.map((item) => ({ ...item })),
-    createdAt: template.createdAt || Date.now(),
-    updatedAt: template.updatedAt || Date.now(),
+    // Built-in and legacy templates use zero as a deterministic fallback.
+    // Truthiness or Date.now() would change exchange bytes across imports.
+    createdAt: normalizedTimestamp(template.createdAt),
+    updatedAt: normalizedTimestamp(template.updatedAt),
     revision: Math.max(1, Math.floor(template.revision || 1)),
   };
 }

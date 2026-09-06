@@ -82,4 +82,30 @@ describe("0.1.31 workstation import UI", () => {
     expect(source).toContain("工作站合并审计");
     expect(source).not.toContain("一键全部采用外部");
   });
+
+  it("distinguishes an exact repeat from reapplying a package with conflicts", async () => {
+    vi.stubGlobal("window", { api: {} });
+    const { WorkstationImportDialog } =
+      await import("../src/renderer/src/WorkstationImportDialog");
+    const exactRepeat = renderToStaticMarkup(
+      <WorkstationImportDialog
+        preview={{ ...preview, alreadyImported: true, conflicts: [] }}
+        defaultOperator="Operator"
+        onClose={() => undefined}
+        onApplied={() => undefined}
+      />,
+    );
+    expect(exactRepeat).toContain("核对既有审计");
+    expect(exactRepeat).not.toContain("幂等提交");
+
+    const changedDecision = renderToStaticMarkup(
+      <WorkstationImportDialog
+        preview={{ ...preview, alreadyImported: true }}
+        defaultOperator="Operator"
+        onClose={() => undefined}
+        onApplied={() => undefined}
+      />,
+    );
+    expect(changedDecision).toContain("按当前决定提交");
+  });
 });

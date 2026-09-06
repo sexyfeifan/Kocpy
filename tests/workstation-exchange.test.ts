@@ -5,7 +5,10 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { emptyArchiveEvidence } from "../src/main/archive-evidence";
 import { BackupEngine } from "../src/main/backup/BackupEngine";
-import { validateWorkspacePackage } from "../src/main/lifecycle";
+import {
+  normalizeProjectTemplate,
+  validateWorkspacePackage,
+} from "../src/main/lifecycle";
 import { Storage } from "../src/main/storage";
 import type {
   BackupTask,
@@ -87,10 +90,10 @@ const workspace = (projects = [project()], tasks = [task()]) =>
     projectTombstones: [],
     archiveEvidence: emptyArchiveEvidence(4),
   });
-const state = (value = workspace()) => ({
+const state = (value = workspace(), templates: ProjectTemplate[] = []) => ({
   projects: value.projects,
   tasks: value.tasks,
-  templates: [],
+  templates,
   healthRecords: value.archiveEvidence!.healthRecords,
   archiveChanges: value.archiveEvidence!.changes,
   archiveReminders: value.archiveEvidence!.reminders,
@@ -176,6 +179,73 @@ describe("0.1.31 workstation exchange", () => {
     expect(() =>
       validateWorkspacePackage({ ...value, version: "modified" }),
     ).toThrow(/完整性校验失败/);
+  });
+
+  it("does not create repeat-import conflicts for stable built-in templates", () => {
+    const builtin = {
+        ...template(),
+        id: "builtin-documentary",
+        kind: "builtin" as const,
+        devicePositions: undefined,
+        createdAt: 0,
+        updatedAt: 0,
+      },
+      packageSha256 = "e".repeat(64),
+      value = validateWorkspacePackage(
+        createWorkspacePackage({
+          version: "0.1.33",
+          identity,
+          workspace: workspace([], []),
+          templates: [builtin],
+        }),
+      ),
+      first = applyWorkspaceMerge({
+        current: state(workspace([], [])),
+        value,
+        decisions: [],
+      }),
+      canonicalBuiltin = normalizeProjectTemplate(builtin),
+      persistedTemplates = first.state.templates.map(normalizeProjectTemplate),
+      repeated = buildWorkspaceImportPreview({
+        fileName: "station.json",
+        packageSha256,
+        value,
+        current: state(workspace([], []), persistedTemplates),
+        localRevision: 5,
+        localDigest: "d".repeat(64),
+        audits: [
+          {
+            id: workstationAuditId(packageSha256, decisionsSha256([])),
+            sourceWorkstationId: identity.id,
+            sourceWorkstationName: identity.displayName,
+            exportId: value.source!.exportId,
+            packageSha256,
+            decisionsSha256: decisionsSha256([]),
+            decisions: [],
+            operator: "Operator",
+            previewedRevision: 4,
+            previewedDigest: "c".repeat(64),
+            previewedExchangeDigest: "b".repeat(64),
+            importedRevision: 5,
+            importedDigest: "d".repeat(64),
+            importedExchangeDigest: "a".repeat(64),
+            importedAt: 10,
+            result: {
+              projectsAdded: 0,
+              projectsUpdated: 0,
+              tasksAdded: 0,
+              duplicates: 0,
+              conflicts: [],
+              importedAt: 10,
+            },
+          },
+        ],
+      });
+    expect(persistedTemplates).toEqual([canonicalBuiltin]);
+    expect(persistedTemplates[0].devicePositions).toEqual({});
+    expect(repeated.alreadyImported).toBe(true);
+    expect(repeated.conflicts).toHaveLength(0);
+    expect(repeated.warnings.join(" ")).toContain("冲突决定与既有审计一致");
   });
 
   it("rejects malformed imported templates before merge or persistence", () => {

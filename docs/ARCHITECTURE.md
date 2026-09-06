@@ -1,4 +1,10 @@
-# Kocpy 0.1.33 architecture
+# Kocpy 0.1.34 architecture
+
+## Stable template and repeat-import boundary
+
+Built-in templates deliberately use zero timestamps as canonical values. Template normalization preserves every finite, non-negative timestamp, including zero; missing or invalid legacy values receive the deterministic zero fallback. Incoming templates are normalized before both preview and merge, and locally generated built-ins enter the exchange state through the same canonicalizer. Optional empty structures therefore cannot appear only after the first commit and create false repeat conflicts.
+
+Import idempotency remains keyed by the complete package digest plus the canonical digest of explicit conflict decisions. An exact package-and-decision repeat returns its existing audit without a workspace commit. Reusing a package with different explicit decisions is a deliberate new merge and therefore receives a new revision and audit; package identity alone is never used to suppress that authorized change.
 
 ## Canonical workstation import boundary
 
