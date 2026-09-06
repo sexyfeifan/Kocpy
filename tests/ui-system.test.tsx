@@ -111,6 +111,17 @@ describe("0.1.25 shared UI contract", () => {
     expect(appSource).toContain('<main key={page} className="page-content">');
   });
 
+  it("keeps the in-app guide title independent from the release number", () => {
+    const appSource = rendererSources.find(({ name }) => name === "App.tsx")!
+      .source;
+    expect(appSource).toContain("KOCPY · QUICK START");
+    expect(appSource).toContain("<h2>软件使用说明</h2>");
+    expect(appSource).toContain(
+      "<strong>当前更新：发布链与真实介质验收保护</strong>",
+    );
+    expect(appSource).not.toContain("KOCPY {APP_VERSION} · QUICK START");
+  });
+
   it("keeps native form controls named by a label or accessibility attribute", () => {
     const failures: string[] = [];
     for (const { name, source } of rendererSources) {

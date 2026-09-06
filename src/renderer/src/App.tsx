@@ -5578,7 +5578,7 @@ function HelpPage({
       <section className="panel help-start">
         <div>
           <span className="mini-label">
-            <BookOpen size={13} /> KOCPY {APP_VERSION} · QUICK START
+            <BookOpen size={13} /> KOCPY · QUICK START
           </span>
           <h2>软件使用说明</h2>
           <p>
@@ -5603,7 +5603,7 @@ function HelpPage({
       <section className="help-release-note">
         <RefreshCw size={20} />
         <div>
-          <strong>0.1.35：发布链与真实介质验收保护</strong>
+          <strong>当前更新：发布链与真实介质验收保护</strong>
           <p>
             测试与打包会在源码树出现同步冲突副本等杂质时停止并列出路径，不自动删除文件；发布流水线的官方 Action 固定到已核对提交。
           </p>
