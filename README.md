@@ -136,7 +136,7 @@ Kocpy 支持真实深色与浅色外观，任务、项目、偏好、缩略图�
 - `Kocpy-0.1.36-arm64.dmg`：Apple Silicon Mac
 - `Kocpy-0.1.36-x64.dmg`：Intel Mac
 
-0.1.36 已完成本地候选回归与隔离界面验收。远端可下载版本以 latest Release 的实际附件与 `SHA256SUMS.txt` 为准。
+0.1.36 已完成双架构正式构建与隔离界面验收。远端可下载版本以 latest Release 的实际附件与 `SHA256SUMS.txt` 为准。
 
 打开 DMG，将 Kocpy 拖入“应用程序”。当前公开包尚未使用 Apple Developer ID 签名和公证。若 macOS 明确提示应用“已损坏”，请先确认文件来自本仓库官方 Release，再执行：
 
