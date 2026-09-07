@@ -189,6 +189,27 @@ export async function createProjectStructure(
   return paths;
 }
 
+/** Preflight every saved destination before creating any missing directory. */
+export async function repairProjectStructure(
+  project: ProjectConfig,
+): Promise<ProjectStructureReport> {
+  const before = await inspectProjectStructure(project),
+    unavailable = before.destinations.filter((item) => item.error);
+  if (before.conflictCount)
+    throw new Error(
+      `已保存项目目录存在 ${before.conflictCount} 项路径冲突，Kocpy 未创建任何目录`,
+    );
+  if (unavailable.length)
+    throw new Error(
+      `有 ${unavailable.length} 个已保存目的地无法访问，Kocpy 未创建任何目录`,
+    );
+  if (before.missingCount) await createProjectStructure(project);
+  const after = await inspectProjectStructure(project);
+  if (after.missingCount || after.conflictCount)
+    throw new Error("补齐后重新检查仍不完整，请检查磁盘权限和目录状态");
+  return after;
+}
+
 export function formatVolumeTimestamp(value = new Date()): string {
   const part = (number: number) => String(number).padStart(2, "0");
   return `${value.getFullYear()}${part(value.getMonth() + 1)}${part(value.getDate())}${part(value.getHours())}${part(value.getMinutes())}`;

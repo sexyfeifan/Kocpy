@@ -11,6 +11,7 @@ import {
   expectedProjectPaths,
   formatVolumeTimestamp,
   inspectProjectStructure,
+  repairProjectStructure,
   makeProjectDatePath,
   makeProjectDayPath,
   makeProjectFolderName,
@@ -205,6 +206,57 @@ describe("project backup workflow", () => {
       const damaged = await inspectProjectStructure(project);
       expect(damaged.missingCount).toBe(1);
       expect(damaged.destinations[0].missing[0]).toContain("20260828/FX3/B");
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("repairs only missing saved-rule directories after a complete preflight", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "kocpy-project-repair-"));
+    const destination = path.join(root, "MASTER");
+    await fs.mkdir(destination);
+    const project = {
+      id: "repair",
+      name: "Repair",
+      devices: ["FX3"],
+      volumePrefix: "FX3_",
+      shootingDateStart: "2026-08-27",
+      shootingDateEnd: "2026-08-28",
+      projectFolderName: "20260827_Repair",
+      destinationPaths: [destination],
+    };
+    try {
+      const repaired = await repairProjectStructure(project);
+      expect(repaired.missingCount).toBe(0);
+      expect(repaired.conflictCount).toBe(0);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not partially repair another destination when preflight finds a conflict", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "kocpy-project-conflict-"));
+    const first = path.join(root, "FIRST"),
+      second = path.join(root, "SECOND");
+    await Promise.all([fs.mkdir(first), fs.mkdir(second)]);
+    const project = {
+      id: "conflict",
+      name: "Conflict",
+      devices: ["FX3"],
+      volumePrefix: "FX3_",
+      shootingDateStart: "2026-08-27",
+      shootingDateEnd: "2026-08-27",
+      projectFolderName: "20260827_Conflict",
+      destinationPaths: [first, second],
+    };
+    const [relative] = expectedProjectPaths(project),
+      conflict = path.join(first, relative),
+      untouched = path.join(second, relative);
+    try {
+      await fs.mkdir(path.dirname(conflict), { recursive: true });
+      await fs.writeFile(conflict, "not a directory");
+      await expect(repairProjectStructure(project)).rejects.toThrow("路径冲突");
+      await expect(fs.stat(untouched)).rejects.toMatchObject({ code: "ENOENT" });
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }

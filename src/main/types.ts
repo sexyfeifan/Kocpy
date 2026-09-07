@@ -980,3 +980,16 @@ export interface ProjectStructureReport {
   conflictCount: number;
   destinations: ProjectStructureDestination[];
 }
+
+export interface ProjectRuleChange {
+  field: keyof ProjectRuleDefinition;
+  label: string;
+  before: string;
+  after: string;
+}
+
+export interface ProjectSaveInspection {
+  ruleChanges: ProjectRuleChange[];
+  candidateStructure: ProjectStructureReport;
+  savedStructure?: ProjectStructureReport;
+}

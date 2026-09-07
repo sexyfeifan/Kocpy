@@ -14,6 +14,7 @@ import type {
   ProjectConfig,
   ProjectCoverage,
   ProjectDeletionPreview,
+  ProjectSaveInspection,
   ProjectStructureReport,
   ProjectTemplate,
   ProxyJob,
@@ -45,6 +46,7 @@ export type {
   ProjectConfig,
   ProjectCoverage,
   ProjectDeletionPreview,
+  ProjectSaveInspection,
   ProjectStructureReport,
   ProjectTemplate,
   ProxyJob,
@@ -411,6 +413,8 @@ export interface API {
   inspectProjectStructure(
     project: ProjectConfig,
   ): Promise<ProjectStructureReport>;
+  inspectProjectSave(project: ProjectConfig): Promise<ProjectSaveInspection>;
+  repairSavedProjectStructure(id: string): Promise<ProjectStructureReport>;
   saveProject(
     project: ProjectConfig,
     createMissing?: boolean,

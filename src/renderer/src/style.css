@@ -3196,6 +3196,52 @@ small {
   flex-wrap: wrap;
   margin-top: 12px;
 }
+.rule-change-review {
+  margin-top: 14px;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--purple) 48%, var(--line));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--purple) 7%, var(--panel));
+}
+.rule-change-review .structure-review-title > svg {
+  color: var(--purple);
+}
+.rule-change-list {
+  overflow: hidden;
+  margin: 10px 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+}
+.rule-change-row {
+  display: grid;
+  grid-template-columns: minmax(100px, 0.32fr) minmax(0, 1fr);
+  gap: 12px;
+  padding: 10px 12px;
+}
+.rule-change-row + .rule-change-row {
+  border-top: 1px solid var(--line);
+}
+.rule-change-row > strong {
+  font-size: 11px;
+}
+.rule-change-row span {
+  display: block;
+  overflow-wrap: anywhere;
+  font-size: 10px;
+  line-height: 1.5;
+}
+.rule-change-row .rule-before {
+  color: var(--muted);
+}
+.rule-change-row .rule-after {
+  margin-top: 3px;
+  color: var(--text);
+}
+.save-review-actions {
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
 .project-rule-note {
   display: flex;
   gap: 9px;

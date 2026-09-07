@@ -1,4 +1,12 @@
-# Kocpy 0.1.35 architecture
+# Kocpy 0.1.36 architecture
+
+## Project-rule preview and directory-repair boundary
+
+The main process compares the canonical persisted project rules with the canonical incoming form before saving. The same exact delta drives both the user-facing old/new preview and the operator safety gate, so renderer wording cannot silently bypass the authoritative check. Repairing the persisted project structure is a separate IPC operation: it reloads saved rules, preflights every destination for availability and path conflicts, creates only missing directories, then reinspects the result. It does not save pending form edits or append a rule snapshot.
+
+## PDF report loading boundary
+
+All PDF producers use one HTML-to-PDF path. Report HTML, including embedded thumbnails, is written with owner-only permissions to a unique temporary directory and loaded as a local file instead of a length-limited `data:` URL. The exact temporary directory is removed after loading on success and on handled failure, before printing begins. Error text is bounded so a failed report cannot inject the encoded document into the application error surface. Report generation remains independent from backup completion and checksum evidence.
 
 ## Release source and field-test boundary
 

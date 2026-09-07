@@ -33,6 +33,8 @@ jobs:
       - run: npm ci
       - name: Verify source provenance, type safety and regressions
         run: npm run verify:release && npm run typecheck && npm test
+      - name: Verify large PDF rendering without data URLs
+        run: npm run test:report-pdf
       - name: Build ad-hoc signed candidate DMG
         if: env.HAS_APPLE_SIGNING != 'true'
         env:

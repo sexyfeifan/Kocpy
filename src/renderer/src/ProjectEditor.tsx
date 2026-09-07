@@ -16,7 +16,7 @@ import {
   previewVolumeTimestamp,
   today,
   type ProjectConfig,
-  type ProjectStructureReport,
+  type ProjectSaveInspection,
 } from "./api";
 import { Button } from "./Ui";
 
@@ -101,9 +101,10 @@ export function ProjectEditor({
     [busy, setBusy] = useState(false),
     [ruleOperator, setRuleOperator] = useState(""),
     [error, setError] = useState(""),
+    [repairMessage, setRepairMessage] = useState(""),
     [review, setReview] = useState<{
       project: ProjectConfig;
-      report: ProjectStructureReport;
+      inspection: ProjectSaveInspection;
     } | null>(null);
   const folderName = useMemo(
     () => projectFolder(start, name || "项目名"),
@@ -271,7 +272,9 @@ export function ProjectEditor({
                 required: true,
               };
             })
-        : [
+        : initial.id
+          ? initial.checklists || []
+          : [
             {
               id: "start-media",
               phase: "start",
@@ -309,6 +312,10 @@ export function ProjectEditor({
     };
   }
   async function commit(project: ProjectConfig, createMissing: boolean) {
+    if (review?.inspection.ruleChanges.length && !ruleOperator.trim()) {
+      setError("请先核对安全规则变更，并填写实际修改人");
+      return;
+    }
     setBusy(true);
     setError("");
     try {
@@ -321,18 +328,21 @@ export function ProjectEditor({
   }
   async function save() {
     setError("");
+    setRepairMessage("");
     setReview(null);
     const project = buildProject();
     if (!project) return;
     if (!initial.id) return commit(project, true);
     setBusy(true);
     try {
-      const report = await api.inspectProjectStructure(project);
+      const inspection = await api.inspectProjectSave(project),
+        report = inspection.candidateStructure;
       const needsReview =
         report.missingCount ||
         report.conflictCount ||
-        report.destinations.some((item) => item.error);
-      if (needsReview) setReview({ project, report });
+        report.destinations.some((item) => item.error) ||
+        inspection.ruleChanges.length;
+      if (needsReview) setReview({ project, inspection });
       else await onSave(project, false, ruleOperator.trim() || undefined);
     } catch (e) {
       setError(String(e).replace(/^Error: /, ""));
@@ -340,6 +350,41 @@ export function ProjectEditor({
       setBusy(false);
     }
   }
+  async function repairSavedStructure() {
+    if (!initial.id) return;
+    setBusy(true);
+    setError("");
+    setRepairMessage("");
+    try {
+      await api.repairSavedProjectStructure(initial.id);
+      if (review) {
+        const inspection = await api.inspectProjectSave(review.project);
+        setReview({ ...review, inspection });
+      }
+      setRepairMessage(
+        "已按当前已保存规则补齐原项目目录；本表单中的规则修改尚未保存。",
+      );
+    } catch (e) {
+      setError(String(e).replace(/^Error: /, ""));
+    } finally {
+      setBusy(false);
+    }
+  }
+  const candidateStructure = review?.inspection.candidateStructure,
+    hasCandidateStructureIssue = Boolean(
+      candidateStructure &&
+        (candidateStructure.missingCount ||
+          candidateStructure.conflictCount ||
+          candidateStructure.destinations.some((item) => item.error)),
+    ),
+    hasRuleChanges = Boolean(review?.inspection.ruleChanges.length),
+    savedStructure = review?.inspection.savedStructure,
+    canRepairSavedStructure = Boolean(
+      hasRuleChanges &&
+        savedStructure?.missingCount &&
+        !savedStructure.conflictCount &&
+        !savedStructure.destinations.some((item) => item.error),
+    );
   return (
     <div className="modal-backdrop top-layer">
       <section
@@ -735,19 +780,19 @@ export function ProjectEditor({
               </span>
             </span>
           </div>
-          {review && (
+          {review && hasCandidateStructureIssue && candidateStructure && (
             <div className="structure-review">
               <div className="structure-review-title">
                 <Info size={17} />
                 <div>
                   <strong>检测到项目目录需要处理</strong>
                   <span>
-                    缺少 {review.report.missingCount} 个目录 · 冲突{" "}
-                    {review.report.conflictCount} 项
+                    缺少 {candidateStructure.missingCount} 个目录 · 冲突{" "}
+                    {candidateStructure.conflictCount} 项
                   </span>
                 </div>
               </div>
-              {review.report.destinations.map((item) => (
+              {candidateStructure.destinations.map((item) => (
                 <div className="structure-review-row" key={item.destination}>
                   <strong>{item.destination}</strong>
                   <span>
@@ -758,38 +803,95 @@ export function ProjectEditor({
                 </div>
               ))}
               <p>补齐操作只创建缺失文件夹，不移动、覆盖或删除已有素材。</p>
-              <div className="row">
-                <Button
-                  kind="primary"
-                  disabled={
-                    busy ||
-                    review.report.conflictCount > 0 ||
-                    review.report.destinations.some((item) =>
-                      Boolean(item.error),
-                    )
-                  }
-                  onClick={() => void commit(review.project, true)}
-                >
-                  <FolderOpen size={15} />
-                  创建缺失目录并保存
-                </Button>
-                <Button
-                  kind="subtle"
-                  disabled={busy}
-                  onClick={() => void commit(review.project, false)}
-                >
-                  仅保存设置
-                </Button>
-                <Button
-                  kind="subtle"
-                  disabled={busy}
-                  onClick={() => setReview(null)}
-                >
-                  返回检查
-                </Button>
-              </div>
             </div>
           )}
+          {review && hasRuleChanges && (
+            <div className="rule-change-review">
+              <div className="structure-review-title">
+                <ShieldCheck size={17} />
+                <div>
+                  <strong>将追加新的项目安全规则版本</strong>
+                  <span>请确认以下内容确实是本次希望保存的修改。</span>
+                </div>
+              </div>
+              <div className="rule-change-list">
+                {review.inspection.ruleChanges.map((change) => (
+                  <div className="rule-change-row" key={change.field}>
+                    <strong>{change.label}</strong>
+                    <div>
+                      <span className="rule-before">原：{change.before}</span>
+                      <span className="rule-after">新：{change.after}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <label>
+                实际修改人（必填）
+                <input
+                  value={ruleOperator}
+                  onChange={(event) => setRuleOperator(event.target.value)}
+                  placeholder="用于追加不可变规则版本"
+                  aria-label="项目规则修改人"
+                />
+              </label>
+            </div>
+          )}
+          {review && (
+            <div className="save-review-actions row">
+              <Button
+                kind="primary"
+                disabled={
+                  busy ||
+                  (hasRuleChanges && !ruleOperator.trim()) ||
+                  Boolean(candidateStructure?.conflictCount) ||
+                  Boolean(
+                    candidateStructure?.destinations.some((item) => item.error),
+                  )
+                }
+                onClick={() =>
+                  void commit(review.project, hasCandidateStructureIssue)
+                }
+              >
+                {hasCandidateStructureIssue ? (
+                  <FolderOpen size={15} />
+                ) : (
+                  <ShieldCheck size={15} />
+                )}
+                {hasRuleChanges
+                  ? hasCandidateStructureIssue
+                    ? "保存新规则并创建缺失目录"
+                    : "确认规则变更并保存"
+                  : "创建缺失目录并保存"}
+              </Button>
+              {hasCandidateStructureIssue && (
+                <Button
+                  kind="subtle"
+                  disabled={busy || (hasRuleChanges && !ruleOperator.trim())}
+                  onClick={() => void commit(review.project, false)}
+                >
+                  {hasRuleChanges ? "仅保存新规则" : "仅保存设置"}
+                </Button>
+              )}
+              {canRepairSavedStructure && (
+                <Button
+                  kind="subtle"
+                  disabled={busy}
+                  onClick={() => void repairSavedStructure()}
+                >
+                  <FolderOpen size={15} />
+                  只补齐原项目目录
+                </Button>
+              )}
+              <Button
+                kind="subtle"
+                disabled={busy}
+                onClick={() => setReview(null)}
+              >
+                返回检查
+              </Button>
+            </div>
+          )}
+          {repairMessage && <div className="success-box">{repairMessage}</div>}
           {initial.id && (
             <div className="project-rule-note">
               <Info size={15} />
@@ -797,17 +899,6 @@ export function ProjectEditor({
                 修改项目名称／拍摄周期（会改变项目目录或日程）、设备、目的地、副本要求、命名、完成动作或检查表时会追加规则版本，并要求填写修改人；仅修改制作类型、预计卷数、管理起始日或人员等说明信息不会制造新版本。既有素材卷目录、历史检查表签署和交接证据不会被改写。
               </span>
             </div>
-          )}
-          {initial.id && (
-            <label>
-              规则变更操作人（修改安全规则时必填）
-              <input
-                value={ruleOperator}
-                onChange={(event) => setRuleOperator(event.target.value)}
-                placeholder="用于追加不可变规则版本"
-                aria-label="项目规则修改人"
-              />
-            </label>
           )}
           {error && (
             <div role="alert" className="error-box">

@@ -41,6 +41,7 @@ import { listVolumes, driveInfo, ejectVolume, volumeIdentity } from "./system";
 import { makeProxy } from "./proxy";
 import { mainWindowLayout } from "./window-layout";
 import { installMainWindowConstraints } from "./window-constraints";
+import { withTemporaryReportHtml } from "./report-html";
 import { inspectMedia, isThumbnailMedia, pruneMediaCache } from "./media";
 import {
   generateReport,
@@ -101,6 +102,7 @@ import {
   formatVolumeTimestamp,
   inspectProjectStructure,
   makeProjectFolderName,
+  repairProjectStructure,
 } from "./project-path";
 import {
   manifestRequirementMet,
@@ -182,6 +184,7 @@ import {
   appendProjectHandoffEvidence,
   appendTemplateApplicationEvidence,
   attachTaskEvidence,
+  projectRuleChanges,
   recordDailyPlanDecision,
 } from "./project-evidence";
 import { normalizeProject } from "./project-normalization";
@@ -865,7 +868,10 @@ async function writeProjectJsonStream(
     await handle.close();
   }
 }
-async function htmlToPdf(html: Buffer | string) {
+async function htmlToPdf(
+  html: Buffer | string,
+  margins = { top: 0.35, bottom: 0.35, left: 0.3, right: 0.3 },
+) {
   const report = new BrowserWindow({
     show: false,
     webPreferences: {
@@ -875,14 +881,17 @@ async function htmlToPdf(html: Buffer | string) {
     },
   });
   try {
-    await report.loadURL(
-      "data:text/html;charset=utf-8," + encodeURIComponent(html.toString()),
-    );
+    await withTemporaryReportHtml(html, (file) => report.loadFile(file));
     return await report.webContents.printToPDF({
       printBackground: true,
       pageSize: "A4",
-      margins: { top: 0.35, bottom: 0.35, left: 0.3, right: 0.3 },
+      margins,
     });
+  } catch (cause) {
+    const detail = cause instanceof Error ? cause.message : String(cause);
+    throw new Error(
+      `PDF 报告生成失败：${detail.length > 240 ? `${detail.slice(0, 240)}…` : detail}`,
+    );
   } finally {
     report.destroy();
   }
@@ -5440,6 +5449,28 @@ app.whenReady().then(async () => {
   handle("projects:inspect-structure", async (project: ProjectConfig) =>
     inspectProjectStructure(prepareProject(project)),
   );
+  handle("projects:inspect-save", async (value: ProjectConfig) => {
+    const project = prepareProject(value),
+      previous = (await readProjects())
+        .map(normalizeProject)
+        .find((item) => item.id === project.id);
+    const [candidateStructure, savedStructure] = await Promise.all([
+      inspectProjectStructure(project),
+      previous ? inspectProjectStructure(previous) : Promise.resolve(undefined),
+    ]);
+    return {
+      ruleChanges: previous ? projectRuleChanges(previous, project) : [],
+      candidateStructure,
+      savedStructure,
+    };
+  });
+  handle("projects:repair-saved-structure", async (projectId: string) => {
+    const project = (await readProjects())
+      .map(normalizeProject)
+      .find((item) => item.id === projectId);
+    if (!project) throw new Error("项目不存在或已经删除");
+    return repairProjectStructure(project);
+  });
   handle(
     "projects:save",
     async (value: ProjectConfig, createMissing = true, operator?: string) => {
@@ -5453,16 +5484,12 @@ app.whenReady().then(async () => {
       const all = (await readProjects()).map(normalizeProject),
         idx = all.findIndex((p) => p.id === project.id);
       const previous = idx < 0 ? undefined : all[idx],
-        previousRevisions = previous?.ruleSnapshots?.length || 0;
+        changes = previous ? projectRuleChanges(previous, project) : [];
+      if (changes.length && !operator?.trim())
+        throw new Error(
+          `项目安全规则发生变化（${changes.map((item) => item.label).join("、")}），请核对变更并填写实际修改人`,
+        );
       project = appendProjectRuleSnapshot(previous, project, { operator });
-      const addedRevisions =
-        (project.ruleSnapshots?.length || 0) - previousRevisions;
-      if (
-        previous &&
-        addedRevisions > (previous.activeRuleSnapshotId ? 0 : 1) &&
-        !operator?.trim()
-      )
-        throw new Error("项目规则发生变化，请填写实际修改人后再保存");
       if (createMissing) await createProjectStructure(project);
       if (idx < 0) all.push(project);
       else all[idx] = project;
@@ -5610,32 +5637,12 @@ app.whenReady().then(async () => {
       filters: [{ name: "PDF", extensions: ["pdf"] }],
     });
     if (!r.filePath) return null;
-    const report = new BrowserWindow({
-      show: false,
-      webPreferences: {
-        sandbox: true,
-        contextIsolation: true,
-        nodeIntegration: false,
-      },
-    });
-    try {
-      await report.loadURL(
-        "data:text/html;charset=utf-8," +
-          encodeURIComponent(
-            (
-              await generateDailyReport(tasks, shootingDate, project?.name)
-            ).toString(),
-          ),
-      );
-      const pdf = await report.webContents.printToPDF({
-        printBackground: true,
-        pageSize: "A4",
-        margins: { top: 0.35, bottom: 0.35, left: 0.3, right: 0.3 },
-      });
-      await fs.writeFile(r.filePath, pdf);
-    } finally {
-      report.destroy();
-    }
+    await fs.writeFile(
+      r.filePath,
+      await htmlToPdf(
+        await generateDailyReport(tasks, shootingDate, project?.name),
+      ),
+    );
     await syncReport(r.filePath);
     return r.filePath;
   });
@@ -5883,32 +5890,13 @@ app.whenReady().then(async () => {
           );
         }
         await persist();
-        const report = new BrowserWindow({
-          show: false,
-          webPreferences: {
-            sandbox: true,
-            contextIsolation: true,
-            nodeIntegration: false,
-          },
-        });
-        try {
-          await report.loadURL(
-            "data:text/html;charset=utf-8," +
-              encodeURIComponent(
-                (
-                  await generateReport(task, { includeThumbnails: true })
-                ).toString(),
-              ),
-          );
-          const pdf = await report.webContents.printToPDF({
-            printBackground: true,
-            pageSize: "A4",
-            margins: { top: 0.4, bottom: 0.4, left: 0.3, right: 0.3 },
-          });
-          await fs.writeFile(r.filePath, pdf);
-        } finally {
-          report.destroy();
-        }
+        await fs.writeFile(
+          r.filePath,
+          await htmlToPdf(
+            await generateReport(task, { includeThumbnails: true }),
+            { top: 0.4, bottom: 0.4, left: 0.3, right: 0.3 },
+          ),
+        );
       }
       await syncReport(r.filePath);
       return r.filePath;

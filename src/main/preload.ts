@@ -108,6 +108,8 @@ contextBridge.exposeInMainWorld("api", {
   previewProjectDeletion: call("projects:delete-preview"),
   deleteProject: call("projects:delete"),
   inspectProjectStructure: call("projects:inspect-structure"),
+  inspectProjectSave: call("projects:inspect-save"),
+  repairSavedProjectStructure: call("projects:repair-saved-structure"),
   saveProject: call("projects:save"),
   claimProjectVolume: call("projects:claim-volume"),
   exportReport: call("report:export"),

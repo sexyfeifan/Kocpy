@@ -10,6 +10,7 @@ export { groupLogicalVolumes } from "../common/logical-volumes";
 import type {
   BackupTask,
   ProjectConfig,
+  ProjectRuleChange,
   ProjectRuleDefinition,
   ProjectRuleSnapshot,
   ProjectTemplate,
@@ -44,6 +45,82 @@ export function projectRuleDefinition(project: ProjectConfig): ProjectRuleDefini
 const ruleJson = (rules: ProjectRuleDefinition) => JSON.stringify(rules);
 const ruleSha256 = (rules: ProjectRuleDefinition) =>
   createHash("sha256").update(ruleJson(rules)).digest("hex");
+
+const projectRuleLabels: Record<keyof ProjectRuleDefinition, string> = {
+  projectFolderName: "项目目录",
+  shootingDateStart: "拍摄开始日期",
+  shootingDateEnd: "拍摄结束日期",
+  devices: "设备／机位",
+  volumePrefix: "默认素材卷前缀",
+  volumePrefixByDevice: "各设备素材卷前缀",
+  devicePositions: "设备机位设置",
+  destinationPaths: "备份目的地",
+  requiredCopies: "物理独立副本要求",
+  namingRule: "目录命名规则",
+  completionActions: "完成动作",
+  checklists: "开工／收工检查表",
+};
+
+const completionActionLabels = {
+  report: "校验报告",
+  delivery: "交付清单",
+  proxy: "代理任务",
+  eject: "安全推出",
+};
+
+function ruleValueSummary(
+  field: keyof ProjectRuleDefinition,
+  value: ProjectRuleDefinition[keyof ProjectRuleDefinition],
+): string {
+  if (field === "requiredCopies") return `${value} 份`;
+  if (field === "devices" || field === "destinationPaths")
+    return (value as string[]).join("、") || "未设置";
+  if (field === "completionActions")
+    return (
+      (value as ProjectRuleDefinition["completionActions"])
+        .map((item) => completionActionLabels[item])
+        .join("、") || "无"
+    );
+  if (field === "volumePrefixByDevice")
+    return (
+      Object.entries(value as Record<string, string>)
+        .map(([device, prefix]) => `${device}: ${prefix}`)
+        .join("；") || "未设置"
+    );
+  if (field === "devicePositions")
+    return (
+      Object.entries(value as Record<string, string[]>)
+        .map(([device, positions]) => `${device}: ${positions.join("/")}`)
+        .join("；") || "未设置"
+    );
+  if (field === "checklists")
+    return (
+      (value as ProjectRuleDefinition["checklists"])
+        .map(
+          (item) =>
+            `${item.phase === "start" ? "开工" : "收工"}: ${item.label}`,
+        )
+        .join("；") || "未设置"
+    );
+  return String(value || "未设置");
+}
+
+/** Exact, human-readable rule delta used by both the safety gate and UI. */
+export function projectRuleChanges(
+  previous: ProjectConfig,
+  incoming: ProjectConfig,
+): ProjectRuleChange[] {
+  const before = projectRuleDefinition(previous),
+    after = projectRuleDefinition(incoming);
+  return (Object.keys(projectRuleLabels) as Array<keyof ProjectRuleDefinition>)
+    .filter((field) => JSON.stringify(before[field]) !== JSON.stringify(after[field]))
+    .map((field) => ({
+      field,
+      label: projectRuleLabels[field],
+      before: ruleValueSummary(field, before[field]),
+      after: ruleValueSummary(field, after[field]),
+    }));
+}
 
 function snapshot(
   project: ProjectConfig,

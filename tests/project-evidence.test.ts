@@ -6,6 +6,7 @@ import {
   appendTemplateApplicationEvidence,
   attachTaskEvidence,
   groupLogicalVolumes,
+  projectRuleChanges,
   recordDailyPlanDecision,
 } from "../src/main/project-evidence";
 import type { ProjectConfig } from "../src/main/types";
@@ -37,6 +38,33 @@ describe("append-only project evidence", () => {
     const savedAgain = appendProjectRuleSnapshot(created, { ...created, name: "Renamed metadata only" }, { at: 20 });
     expect(savedAgain.ruleSnapshots).toHaveLength(1);
     expect(savedAgain.activeRuleSnapshotId).toBe(created.activeRuleSnapshotId);
+  });
+
+  it("describes exact safety-rule changes without treating metadata as a rule", () => {
+    const before = project();
+    const changes = projectRuleChanges(before, {
+      ...before,
+      name: "Metadata-only rename",
+      destinationPaths: ["/Volumes/CANBOX_05"],
+      requiredCopies: 2,
+    });
+    expect(changes).toEqual([
+      {
+        field: "destinationPaths",
+        label: "备份目的地",
+        before: "/tmp/synthetic-master",
+        after: "/Volumes/CANBOX_05",
+      },
+      {
+        field: "requiredCopies",
+        label: "物理独立副本要求",
+        before: "1 份",
+        after: "2 份",
+      },
+    ]);
+    expect(projectRuleChanges(before, { ...before, name: "Renamed" })).toEqual(
+      [],
+    );
   });
 
   it("does not let project editing rewrite operational evidence", () => {
