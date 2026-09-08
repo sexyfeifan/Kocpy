@@ -2,190 +2,163 @@
 
 <p align="center"><img src="resources/icon-256.png" width="112" alt="Kocpy icon"></p>
 
-<p align="center"><strong>面向片场与工作室的 macOS 素材备份与项目归档工作台。</strong><br>本地优先 · 多目的地安全拷贝 · 独立回读校验 · 项目全周期记录</p>
+<p align="center"><strong>面向片场与工作室的 macOS 素材备份与项目归档工作台。</strong><br>本地优先 · 多目的地备份 · 独立回读校验 · 可追溯的项目记录</p>
 
 <p align="center"><a href="#中文">中文</a> · <a href="#english">English</a> · <a href="#日本語">日本語</a></p>
 
+当前正式版：**0.1.36** · [下载](https://github.com/sexyfeifan/Kocpy/releases/latest) · [使用手册](docs/USER_GUIDE.md) · [文档导航](docs/README.md) · [本版更新](docs/RELEASE_NOTES_0.1.36.md)
+
 ![Kocpy 工作台](docs/screenshots/dashboard.png)
 
-当前仓库代码与正式安装包：**0.1.36** · [完整使用手册](docs/USER_GUIDE.md) · [0.1.36 更新说明](docs/RELEASE_NOTES_0.1.36.md) · [下载最新版本](https://github.com/sexyfeifan/Kocpy/releases/latest)
-
-0.1.36 修复真实项目编辑与大型 PDF 报告：保存前明确列出项目安全规则的原值和新值，规则变更必须填写实际修改人；按已保存规则补齐原项目目录可与保存表单修改分开执行。报告不再把整份 HTML 和缩略图放进超长 `data:` URL，而是从权限受限的临时文件加载并立即清理，避免大型报告触发 `ERR_INVALID_URL (-300)`。它不改变素材复制、哈希或独立回读校验算法；边界见 [验证记录](docs/VERIFICATION.md)。
+> 截图用于展示主要界面，具体按钮与文案以当前安装版本为准。Kocpy 专注可靠接收与规范交付，不是剪辑软件，也不以历史绿色状态代替当前磁盘健康检查。
 
 ## 中文
 
-### 一套完整的素材工作流
+### 下载与安装
 
-Kocpy 将素材卡接收、多目标备份、逐目标回读校验、项目归档、媒体预览、代理生成和交付报告放在一个本地工作空间中。素材源按只读原则处理，文件先写入任务专属断点文件，同步完成后再发布为最终文件；每份副本随后独立回读并与源哈希比对。
+| 你的 Mac | 0.1.36 安装包 |
+| --- | --- |
+| Apple Silicon（M 系列） | [下载 arm64 DMG](https://github.com/sexyfeifan/Kocpy/releases/download/v0.1.36/Kocpy-0.1.36-arm64.dmg) |
+| Intel | [下载 x64 DMG](https://github.com/sexyfeifan/Kocpy/releases/download/v0.1.36/Kocpy-0.1.36-x64.dmg) |
 
-普通备份无需创建项目，适合快速接收一个或多个来源，提供“按次保存”和“保留源文件夹（镜像备份）”。项目模式绑定拍摄项目，保存拍摄周期、设备、机位、素材卷前缀与备份根目录，并采用：
+下载后先核对同一 Release 的 [SHA256SUMS.txt](https://github.com/sexyfeifan/Kocpy/releases/download/v0.1.36/SHA256SUMS.txt)，再打开 DMG，将 Kocpy 拖入“应用程序”。
 
-```text
-备份根目录 / 项目开始日期_项目名 / 拍摄日期 / 设备 / [同型号机位] / 设备_任务开始时间 /
-```
+**当前没有 Developer ID 签名或 Apple 公证。** 安装包的 ad-hoc 签名和 SHA-256 一致，不等于 Apple 来源认证或公证。遇到系统阻止、架构不符或“已损坏”提示，请按[安装、升级与排查说明](docs/INSTALLATION.md)处理，不要直接关闭系统安全防护。
 
-例如：`20260827_山海之间/20260829/FX3/A/FX3_202608291430/`。机位名称可自定义；未启用同型号多机位时不会产生机位层级。
+### 先选择适合自己的工作方式
 
-![项目备份完整路径](docs/screenshots/project-backup-path.png)
+| 工作方式 | 适合谁 | 怎么开始 |
+| --- | --- | --- |
+| 普通备份 | 只想把素材安全备份，不需要项目管理 | 选择素材源 → 设置 1–4 个目的地 → 核对最终路径并开始 |
+| 项目备份 | 需要按拍摄日、设备、机位管理并收工交接 | 创建项目与副本规则 → 按拍摄日接收 → 检查收工状态 → 导出与交接 |
+| 接管既有备份 | 已有素材，希望中途纳入项目记录 | 选择已有目录 → 确认日期／设备／卷映射 → 选择清单校验、首次基线或仅导入结构 |
 
-### 安全备份与真实状态
+普通备份无需先创建项目。素材源和目的地均支持从 Finder 拖入文件夹；目的地选择的是**存放副本的父目录**，开始前会显示每个来源的实际最终路径。
 
-- 同时写入 1–4 个目的地，一次读取素材数据块并分发给多个目标。
-- 支持 SHA-256、SHA-1 与 MD5；拷贝结束后逐目标独立回读校验。
-- 支持暂停、继续、取消、异常恢复、大文件断点续传、失败目标单独重试与完成后复校验。
-- 恢复中心集中列出异常退出、暂停任务、离线目标和未完成校验，并区分“当前位置继续”“扫描并复用断点”“仅重试失败目标”和“重新校验全部副本”。成功目标不会在单目标重试中重新读取或初始化。
-- 失败任务可进入“检查并恢复”：按身份、离线、权限、空间或校验错误提供下一步，先只读比较记录身份和当前挂载卷，再由用户确认重试。查询失败与真实换盘分别提示；不会自动覆盖旧 UUID。
-- 记录卷 UUID，防止同名磁盘替换后误写；按物理卷合并预检空间和临时发布余量。
-- 慢盘可以从快速分发中分离，健康目标继续完成。
-- 选择素材源后扫描本次实际待备份容量、文件数量，并显示磁盘总容量和可用空间；不再自动遍历所有未选择的介质。
-- 设置目的地时可直接点击外接磁盘，并从该磁盘继续选择目标文件夹。
-- 紫色进度表示拷贝，绿色覆盖表示校验；显示真实有效传输速度、回读速度、百分比与时分秒剩余时间。
-- 速度按操作系统确认完成的字节以 1 秒间隔采样和平滑处理；多目标速度不会重复累加。
-- 任务详情分别显示源素材哈希读取、源素材分发读取、各目标写入和校验回读曲线；完整任务记录保留平均值、P50、P95、峰值与停顿次数，并指出持续最慢的目的地。
-- 校验结束后结算任务并显示不抢焦点的完成提示，媒体缩略图随后在后台生成。
+普通备份有两种目录组织方式：
+
+- **按次保存**：创建 `源文件夹名_时间戳`，内部文件名与子目录保持不变。
+- **保留源文件夹（镜像备份）**：保留所选源文件夹这一层，不添加时间戳或随机码。它不是删除式同步，不删除目的地额外文件，也不静默覆盖冲突内容。
+
+例如：源为 `/Volumes/CARD/拍摄素材`，目的地选择 `/Volumes/BACKUP/交付`，镜像备份落点就是 `/Volumes/BACKUP/交付/拍摄素材`。
+
+项目模式按项目、拍摄日、设备、可选机位与素材卷管理目录；命名规则可配置，界面预览与实际写入使用相同规则。[查看完整操作步骤](docs/USER_GUIDE.md#2-新建备份与命名)。
+
+### 当前主要功能
+
+| 模块 | 已实现能力 |
+| --- | --- |
+| 备份与校验 | 1–4 个目的地；SHA-256／SHA-1／MD5；逐目标独立回读；完整源与最终目的地路径；实时写入、回读速度与进度 |
+| 暂停与恢复 | 暂停／继续、大文件断点恢复、异常退出恢复、只重试失败目标；离线、空间、权限与身份异常的检查引导 |
+| 拍摄项目 | 日期 × 设备／机位矩阵；逻辑素材卷去重统计；收工副本要求；日计划、临时设备、规则版本、检查表与交接 |
+| 模板与项目记录 | 五个有差异说明的系统模板；自定义新建／编辑／导入导出／选择性应用；受保护的内部项目记录删除 |
+| 既有备份接管 | 单张素材卡、单日所有机位、整个项目；映射预览与修正；MHL／SHA 清单比对、首次基线、旧接管记录刷新 |
+| 清单差异处理 | 缺失／额外／大小／哈希差异明细；Finder 定位；健康副本修复；重要确认后的经审计 MHL 修订 |
+| 素材库 | 缩略图与媒体信息、分页搜索、Finder／播放入口；移动目录后通过完整哈希重新定位或关联健康副本 |
+| 代理与交付 | H.264／ProRes Proxy；预设与自定义参数；依赖、暂停、恢复、重试；源与输出哈希证据；交付前重新校验 |
+| 报告与清单 | 任务／拍摄日／项目 PDF、JSON、CSV、MHL／ASC MHL；Resolve／Premiere／Final Cut 媒体清单；附 SHA-256 的项目归档包 |
+| 长期归档 | 按盘、项目、拍摄日、素材卷或单文件复校验；健康历史、位置变化、周期提醒、保留损坏原件的副本修复 |
+| 工作站协作 | 元数据包导出、只读预检、逐项冲突决定、可恢复合并与审计；同包同决定重复导入不重复写入；可选只读局域网索引 |
+| 安全自动化 | 历史素材卡与疑似重复建议；完成后报告／代理／交付／推出建议；用户逐项确认后执行并保留结果 |
+| 诊断与界面 | 受控读写预检、故障时间线、脱敏诊断；深浅色外观、固定侧栏字图比例、独立滚动、减少动态效果支持、按需展开的使用说明 |
+
+备份工作优先于后台代理；用户手动暂停的代理不会被自动恢复。工作站包交换记录与证据，不复制原始素材，也不证明另一台 Mac 上的素材当前健康。
+
+### 如何理解“完成”和“安全”
+
+- **复制完成 ≠ 校验完成。** 每个目标必须独立回读并与哈希基准比对，才有内容验证证据。
+- **通过校验 ≠ 副本数量达标。** 同盘文件夹、分区、不同 UUID 不必然物理独立；未知 RAID／NAS 关系不会自动增加独立副本数。
+- **首次基线 ≠ 接管前完整。** 它只记录接管时存在的内容，不能证明此前没有漏拷或被删文件。
+- **没有文件夹 ≠ 当天未使用设备。** 项目空白单元保持待确认；休息或未使用标记不能掩盖已记录素材的风险。
+- **刷新记录 ≠ 重新校验。** 刷新修正识别与重复统计，不重新读取全部内容哈希。
+- **历史通过 ≠ 永久健康。** 长期保存需要重新读取归档盘校验；报告只代表其记录时点。
+
+普通备份按只读原则处理素材源。修复副本、修订 MHL 等维护写入必须经过明确确认；MHL 修订保留原始清单与审计，不删除素材，也不允许豁免大小或哈希异常。删除项目只清理 Kocpy 内部记录，不删除磁盘素材、报告或清单。
+
+### 0.1.36 更新重点
+
+1. **项目保存更清晰**：列出安全规则的原值与新值，真实变化必须填写修改人；只补齐已保存项目的缺失目录，不会意外保存表单中的其他修改。
+2. **大型 PDF 报告修复**：不再用超长 `data:` URL 加载报告，避免 `ERR_INVALID_URL (-300)`；临时 HTML 受限访问并在加载后清理。
+3. **错误反馈有边界**：不再把整份编码报告暴露在错误提示中；报告失败不会改变已完成的素材校验结论。
+
+[完整更新说明](docs/RELEASE_NOTES_0.1.36.md) · [历史正式发布](https://github.com/sexyfeifan/Kocpy/releases)
+
+### 验证范围与已知限制
+
+0.1.36 已完成原生 Apple Silicon／Intel CI 回归、包内运行时检查、正式附件摘要核对与隔离 GUI 验收；具体测试、候选与正式包的区别见[验证记录](docs/VERIFICATION.md)。
+
+- 没有 Developer ID／Apple 公证，不宣称通过 App Store 审核。
+- 历史硬件或双机结果不能泛化成当前版本在所有设备上通过；真实外置双盘、NAS、拔盘、睡眠与空间耗尽的本版复验边界仍明确保留。
+- Resolve 有已记录的合成样本实际导入证据；Premiere Pro／Final Cut Pro 清单完成结构与生成检查，未宣称完成对应软件实机导入。
+- 自动测试、磁盘映像和同盘多目录不代替真实现场介质验收。正式使用前请先用非生产数据验证自己的读卡器、连接方式与存储设备。
+
+### 界面预览
+
+<details>
+<summary>展开查看传输、项目、素材库与帮助界面</summary>
 
 ![传输队列](docs/screenshots/transfers.png)
 
 ![任务校验详情](docs/screenshots/verification-detail.png)
 
-![恢复中心](docs/screenshots/recovery.png)
-
-### 项目全周期看板
-
-项目页按“拍摄日期 × 设备/机位”展示素材卷、文件、容量和副本状态。可设置 1–4 份收工标准；休息／未使用只解释空白单元，不掩盖已有素材的风险。同盘目录或分区不重复计算；不同 UUID 本身也不证明物理独立。校验后依据同次系统存储拓扑保守计数，旧记录或未知阵列／网络关系不自动增加第二份。连接原目标重新校验可更新证据，原哈希记录仍保留。
-
-既有备份可按单张素材卡、单日所有机位或整个项目接管。Kocpy 会复用项目命名规则识别日期、设备、项目机位和任意名称的素材卷；接管任务与原生任务共同进入项目矩阵，缺少历史机位元数据的旧任务会明确显示为“未标机位”。
-
-接管读取过程显示素材卷、文件、字节、速度、剩余时间和当前文件。目录识别、外部清单校验、首次基线与清单不匹配使用不同状态；项目外设备只在实际发现的拍摄日显示，没有文件夹的设备先标为“待确认”，不会直接推断成漏备份或当天未使用。
-
-0.1.24 的接管预览会逐卷显示并允许修正日期、设备、机位和卷名。预览保存当前目录清单摘要；开始接管和全部读取完成后都会再次扫描，目录内容或识别映射变化时整批停止且不写入记录。用户须确认相同完整哈希的不同路径属于同一逻辑素材卷；位于同一物理盘的多个目录仍只计一份。素材库的重定位在原副本离线时更新位置，全部旧副本仍在线时则可关联另一份经过完整哈希核对的健康副本。
-
-同一个素材卷路径重复接管时只保留一条逻辑记录。0.1.8 的“刷新接管信息”还会识别并移除旧版本误生成的日期/设备父级汇总记录，只保留下层真实卡卷；同时读取卡卷根目录的 MHL/SHA 清单元数据，明确显示缺少、额外和大小不同的文件。Kocard MHL 的十进制 xxHash32 已可用于完整清单接管校验。
-
-刷新只处理已经接管到 Kocpy 的外部记录：不会重新哈希、移动、删除或重新复制素材，不会修改 Kocpy 原生备份任务，也不会自动发现后来新加入且从未接管的文件夹。来源暂时离线时原记录会保留；重新连接后可再次刷新。关于接管可信度、目录识别、收工状态和旧项目修正，请参阅[完整使用手册](docs/USER_GUIDE.md#5-018刷新接管信息)。
-
-0.1.10 将素材卷明细中的清单差异改为可点击的处理入口：可以查看全部差异路径并在 Finder 中定位；缺失文件可从用户选择的同卷健康副本补回，写入前后均按原清单校验，随后自动整卷重校验；单纯的额外文件可在已有完整哈希基线后由用户明确确认。原 MHL 不会被修改，差异与处理决定会保留在审计记录中。
-
-0.1.11 修复健康副本经过目录重组后无法补回的问题。用户可选择素材卡根目录、对应素材子目录或其上级目录；Kocpy 只在找到唯一且完整的清单路径映射时继续，并在写入前校验全部源文件与剩余空间。文件会先在目标卷统一暂存并回读校验，再安全提交；歧义、内容不符或中途失败均不会留下半套修复结果。
-
-0.1.12 增加“操作人有意剔除素材”的经审计 MHL 修订流程。仅有纯缺失差异时，用户填写原因、勾选风险确认并输入指定文字后，Kocpy 才允许从生效 MHL 排除这些记录。原始清单会先按 SHA-256 备份到素材卷内隐藏的审计目录，并随素材卷迁移；修订清单自检和整卷重校验通过后，素材卷明确显示排除数量，并可随时定位原始 MHL。素材文件不会被删除，大小或哈希异常不能借此跳过。
-
-0.1.13 优化“缺失 + 额外”混合清单差异：弹窗明确给出先补回、再核对、最后处理额外文件的顺序；修复成功后即使仍有差异，也会保留修复结果并原地刷新，不再显示成远程调用错误。带 `(1)` 的缺失路径与相似额外路径会作为疑似同名冲突列出双方大小，0 字节额外文件会单独警告。有效额外文件可直接在同一弹窗建立完整当前哈希基线后确认，无需退出重进。
-
-0.1.14 是一次安全加固版本：任务完成前重新扫描素材源并持续核对卷身份，修复慢速目标分发偏移，最终文件与任务数据库执行落盘同步和原子发布；数据库/JSON 双记录按最新检查点合并，冷归档写后重读，安全推出重新核对素材卡。MHL 改为记录已校验副本的真实最终路径，未解决清单差异或副本不足时拒绝生成可信归档；诊断包进一步哈希化任务名、卷名和标签。
-
-0.1.15 让传输任务更容易辨认和追踪：视频、照片/RAW、音频、混合素材与其他素材卷使用不同图标，图标颜色继续表达任务状态；每条任务完整列出源路径和所有目的地的实际最终路径，并可直接在 Finder 中定位。已归档项目新增受保护的内部记录删除入口，便于重新执行完整测试；它只清理 Kocpy 的项目、任务、代理和归档维护记录，不删除素材、备份目录、报告、MHL 或已导出的归档文件。
-
-0.1.16 将受保护的内部记录删除扩展到进行中项目，无需为了重做测试而先归档；删除前会显示准确范围，要求勾选风险确认并输入完整项目名称，任何活动备份或代理任务都会阻止删除。项目模板升级为可解释、可新建、重命名、编辑、导入导出和选择性应用的制作流程；五个系统模板会直接说明其设备、副本、检查表和完成动作差异。低高度窗口中的侧栏不再压缩文字和图标，中间导航改为独立滚动。
-
-项目完成后可导出：
-
-- 项目完整 PDF：项目总览、日期与设备矩阵、全部素材卷、目的地、校验结论和完整文件明细。
-- 项目完整 JSON：项目配置与所有任务、目标、文件、哈希和校验记录，便于长期归档或二次处理。
-- 项目 CSV：按日期、设备、机位和素材卷整理的表格数据。
-- 项目归档包：一次导出项目 PDF、完整 JSON、统计 CSV、每个素材卷的 MHL 清单和用于验证整个归档包的 `SHA256SUMS.txt`。
-- 单任务 PDF / JSON / MHL / ASC MHL。
-- 拍摄日汇总 PDF 与 Resolve 媒体池 CSV。
-
-![拍摄项目](docs/screenshots/project-editor.png)
-
-### 素材、代理与报告
-
-- 素材库展示已校验副本、首帧缩略图、摄影机型号、拍摄时间、分辨率、帧率、时长、编码与时间码。
-- 扫描来源时按视频、照片 / RAW、音频和其他文件分类显示数量与容量。
-- 可批量生成 H.264 或 ProRes Proxy，支持进度、取消、重试和定位输出。
-- 提供通用审片、剪辑代理和离线剪辑预设，支持自定义输出命名规则、暂停/继续，并保留原始任务与相对路径关联。
-- 自定义代理预设可保存、更新和删除；代理任务支持显式依赖链，项目可在备份完成后建议加入代理队列，用户确认后以稳定来源键幂等入队。
-- 代理完成后检查帧率、时间码和音轨，并可导出 Resolve CSV、Premiere CSV、Final Cut XML 或完整 JSON 交付清单。
-- 归档维护中心支持项目级长期复校验、健康历史、从健康副本修复失败副本，并保留原损坏文件以供检查。
-- 长期复校验覆盖整盘、项目、拍摄日、素材卷和单文件，记录操作人、运行摘要、逐素材卷结论、真实读取吞吐、风险等级、离线／身份未知目标、未登记新增文件、位置迁移与变化时间线。
-- 周期提醒依据最近一次成功复校验计算；发送系统通知不会推进校验日期。归档证据与任务状态在同一权威工作区修订中提交，变化记录形成摘要链，项目证据报告包含可复算 SHA-256。
-- 项目模板可自定义名称、说明、设备/机位、每台设备的素材卷前缀、副本标准、预计卷数、命名规则、完成动作、开工/收工检查表和制作人员；应用前可逐项预览并选择覆盖范围，自定义模板支持导入导出。
-- 插入历史素材卡时会按卷身份建议项目、设备和下一卷号并列出依据；发现相同相对路径与字节数时只提示疑似重复，不冒充内容哈希一致，且不会自动应用或开始写入。
-- 支持完整本地数据备份，以及多台 Kocpy 工作站之间经过只读预检、逐项冲突决定和审计的项目、任务、模板与健康记录合并；稳定 ID、内容指纹和删除墓碑用于避免重复、误覆盖与记录复活。
-- 大型素材库按批次加载，诊断、事件和健康历史均设有体积上限，避免长期项目拖慢界面与记录写入。
-- SQLite/WASM 索引保存完整任务与文件记录，支持增量更新、分页、轮换备份、损坏恢复、项目冷归档，并通过十万与百万文件压力测试。
-- PDF 报告使用与应用一致的版式，并在素材条目中嵌入可用缩略图。
-- 报告与清单可镜像到用户指定的同步文件夹；素材文件不会被上传。
-- 本地快照、隐藏挂载目录与系统备份卷不会被识别为可选存储设备。
-- 存储设备页可批量安全推出所有已完成设备；仍被备份或代理任务使用、存在未被后续成功任务覆盖的失败记录时，磁盘会被保留并说明原因。
-- 诊断中心可对选定磁盘执行受控的 64 MiB 写入与回读性能预检，自动清理临时文件，并导出不含素材内容、完整私人路径或账号信息的脱敏诊断包。
-- 任务记录保留最近的暂停、继续、预检异常和完成事件，帮助判断素材源失联、目的地离线、断点可恢复及副本未校验等状态。
-- 软件内“使用说明”按模块提供操作步骤、注意事项与直达入口，覆盖从第一次备份到长期归档的完整工作流；页面标题不绑定版本号，模块默认全部折叠，仅在用户点击后展开。实际构建版本继续显示在应用固定版本位置，更新历史保留对应版本号。
-
-![软件内使用说明](docs/screenshots/help.png)
+![项目备份完整路径](docs/screenshots/project-backup-path.png)
 
 ![素材库](docs/screenshots/library.png)
 
 ![代理队列](docs/screenshots/proxy-queue.png)
 
-![报告中心](docs/screenshots/reports.png)
+![软件内使用说明](docs/screenshots/help.png)
 
-### 外观、隐私与更新
+</details>
 
-Kocpy 支持真实深色与浅色外观，任务、项目、偏好、缩略图和代理记录保存在 `~/Library/Application Support/Kocpy/`。软件无需账号，不上传素材。应用会根据当前显示器可用区域选择默认窗口尺寸；在 1080 × 720 最小窗口中，内容页、表格和弹窗使用各自的安全滚动区域。侧栏始终保持正常文字、图标和品牌比例，高度不足时仅中间导航区域滚动。功能按“工作台 → 项目 → 接收与恢复 → 素材管理与交付 → 存储与维护 → 诊断与说明”排列。左下角可检查 GitHub Release 更新，并提供作者 [@sexyfeifan](https://github.com/sexyfeifan) 的 GitHub 与[小红书](https://www.xiaohongshu.com/user/profile/5d24d2ca000000001103fe97)入口。
+### 文档与问题反馈
 
-![存储设备](docs/screenshots/storage.png)
+- [文档导航](docs/README.md)：按使用、排查、验证与开发分类。
+- [完整使用手册](docs/USER_GUIDE.md)：从第一份备份到清单差异、交接和长期归档。
+- [安装与升级](docs/INSTALLATION.md)：架构选择、SHA-256、签名限制、版本检查。
+- [架构与安全边界](docs/ARCHITECTURE.md) · [UI 规范](docs/UI_SYSTEM.md) · [真实介质测试协议](docs/HARDWARE_TEST.md)。
+- [反馈问题](https://github.com/sexyfeifan/Kocpy/issues)：请提供应用版本、Mac 架构、macOS 版本、复现步骤与预期／实际结果；截图和诊断附件先检查脱敏，不上传素材、完整私人路径、原始生产清单或账号信息。
 
-![偏好设置](docs/screenshots/settings.png)
+Kocpy 无需账号。默认应用记录位于 `~/Library/Application Support/Kocpy/`；素材保留在用户选择的源与目的地。报告同步文件夹、工作站包或局域网索引只在用户主动配置或操作后使用。选择云同步文件夹时，实际上传行为由该同步服务决定。
 
-### 安装
+### 从源码运行
 
-从 [GitHub Releases](https://github.com/sexyfeifan/Kocpy/releases) 下载对应架构：
-
-- `Kocpy-0.1.36-arm64.dmg`：Apple Silicon Mac
-- `Kocpy-0.1.36-x64.dmg`：Intel Mac
-
-0.1.36 已完成双架构正式构建与隔离界面验收。远端可下载版本以 latest Release 的实际附件与 `SHA256SUMS.txt` 为准。
-
-打开 DMG，将 Kocpy 拖入“应用程序”。当前公开包尚未使用 Apple Developer ID 签名和公证。若 macOS 明确提示应用“已损坏”，请先确认文件来自本仓库官方 Release，再执行：
+在 macOS 上使用 Node.js 22 与 npm，进入仓库后：
 
 ```bash
-xattr -dr com.apple.quarantine "/Applications/Kocpy.app"
+npm ci
+npm run verify:release
+npm run typecheck
+npm test
+npm run dev
 ```
 
-不要全局关闭 Gatekeeper。
+`verify:release` 检查源码树卫生与媒体运行时来源，不表示已经完成发布验收。`npm run build` 构建应用代码；架构候选包可使用 `npm run dist:arm64` 或 `npm run dist:x64`。真实介质测试有写入操作，只能按[测试协议](docs/HARDWARE_TEST.md)在可牺牲卷上显式执行。贡献前请阅读[工程与发布规则](AGENTS.md)。
 
 ## English
 
-Kocpy is a local-first macOS workspace for verified media offload and production archiving. It copies one source to up to four destinations, reads every copy back for checksum verification, resumes interrupted large files, tracks physical volumes, and produces task, shooting-day, and full-project reports. Its Recovery Center can retry only failed destinations while preserving successful copies and their verification records.
+Kocpy is a local-first macOS workspace for verified media offload and production archiving. Ordinary backup needs no project setup: choose sources, choose up to four destination parent folders, review the final paths, then copy and independently read back each destination. Mirror layout preserves the selected source folder; it is not deletion-based synchronization.
 
-Project mode organizes media by project, date, camera, optional camera position, and card volume. Closeout distinguishes verified targets from independent-copy evidence: different UUIDs alone do not prove different disks. Only contemporaneous known storage topology adds independent copies; unknown relationships are conservative. Rest/unused exceptions apply only to empty cells, never recorded media risks. Records export as PDF, JSON, CSV, or an archive with MHL and SHA-256 checksums.
+Project mode adds shooting days, cameras and positions, logical card volumes, closeout requirements, versioned rules, editable templates and handoff records. Existing backups can be adopted against MHL/SHA manifests, read into a first baseline, or imported as unverified structure. A first baseline does not prove historical completeness, and different volume UUIDs alone do not prove physical independence.
 
-Kocpy also includes media thumbnails and metadata, H.264/ProRes proxy queues, Resolve CSV export, light/dark appearance, update checks, and architecture-specific DMGs for Apple Silicon and Intel Macs. An in-app guide documents every module with steps, safety notes, and direct links. Media and records stay on the Mac unless the user explicitly selects a report mirror folder.
+Current features also include recovery, media relinking, evidence-backed H.264/ProRes proxies, delivery manifests, archive reverification, audited metadata exchange between workstations, opt-in completion actions, diagnostics, light/dark themes and reduced motion. Release **0.1.36** clarifies project-rule changes and directory repair, and fixes oversized PDF report loading.
 
-Version 0.1.12 adds an audited MHL revision workflow for media intentionally withheld due to privacy, rights, or delivery scope. It is available only for pure missing-file differences and requires a reason, a risk acknowledgement, and typed confirmation. Kocpy preserves the original MHL with its SHA-256 in local audit history, validates the revised manifest, fully reverifies the retained media set, and labels the result with the exclusion count. It never deletes media, and size or checksum mismatches cannot be waived.
+[Download](https://github.com/sexyfeifan/Kocpy/releases/latest) · [Installation](docs/INSTALLATION.md) · [Guide (Chinese)](docs/USER_GUIDE.md) · [Verification scope](docs/VERIFICATION.md)
 
-Version 0.1.13 makes mixed manifest differences actionable in place. Missing files are repaired first, successful repairs remain committed when unrelated extras still need review, likely numbered-name collisions show both expected and actual sizes, and zero-byte extras receive a dedicated warning. A complete current hash baseline can be established from the same dialog before intentionally accepting valid extra files.
-
-Version 0.1.14 hardens completion, persistence, and recovery. Kocpy rescans the source before success, continuously verifies volume identity, fixes slow-destination write offsets, fsyncs published media and records, reconciles its JSON mirror with the indexed catalog, verifies cold archives after writing, and rechecks source inventory before safe eject. MHL exports now use the verified destination's actual paths, while unresolved manifest differences and insufficient physical copies cannot be packaged as a trusted archive.
-
-Version 0.1.15 adds media-aware task icons, full source and final-destination paths with Finder reveal, and a guarded reset for archived projects. Project reset removes only Kocpy's internal project, task, proxy, and archive-maintenance records; it never deletes media, backup folders, reports, MHL manifests, or exported archives.
-
-Version 0.1.16 extends guarded internal-record deletion to active projects, while blocking deletion whenever backup or proxy work is unfinished and requiring both an acknowledgement and exact project-name confirmation. Project templates are now described, editable, importable/exportable, and selectively applied after a field-by-field preview. The sidebar keeps stable text and icon proportions at reduced window heights and scrolls only its navigation area.
+Separate arm64 and x64 installers are available. They currently use ad-hoc signing, **not Developer ID signing or Apple notarization**. Automated tests and historical hardware results are not certification for every storage setup.
 
 ## 日本語
 
-Kocpy は、macOS 向けのローカル優先メディアバックアップ／プロジェクト管理アプリです。1つの素材ソースを最大4つの保存先へコピーし、各コピーを独立して読み戻してチェックサム検証します。大容量ファイルの再開、物理ボリューム識別、容量事前確認に加え、成功済みコピーを保持したまま失敗した保存先だけを再試行できます。
+Kocpy は macOS 向けのローカル優先メディアバックアップ／プロジェクト管理アプリです。通常バックアップではプロジェクト作成は不要です。素材と最大4つの保存先親フォルダを選び、最終パスを確認してからコピーし、保存先ごとに独立して読み戻し検証します。ミラーレイアウトは選択したソースフォルダを保持し、削除型同期は行いません。
 
-プロジェクト、撮影日、カメラ、任意のカメラ位置、素材巻で整理します。UUID が異なるだけでは物理的独立性を認定せず、同時に確認したストレージ構成に基づき保守的に数えます。不明な関係は独立コピーを増やさず、休止指定も既存素材のリスクを隠しません。PDF／JSON／CSV、MHL と SHA-256 を含むアーカイブを書き出せます。
+プロジェクトモードでは撮影日、カメラ／位置、素材巻、必要コピー数、ルール履歴、テンプレート、引き継ぎを管理できます。既存素材の取り込み、MHL／SHA 比較、復旧、プロキシ、納品リスト、長期再検証、監査付きメタデータ交換にも対応します。初回基準は取り込み以前の完全性を証明せず、異なる UUID だけでは物理的に独立したコピーと認定しません。
 
-素材サムネイルとメタデータ、H.264／ProRes プロキシキュー、Resolve CSV、ライト／ダーク表示、更新確認、Apple Silicon／Intel 用 DMG も備えています。アプリ内ガイドでは、各機能の手順、注意事項、画面への直接リンクを確認できます。素材と記録は、ユーザーが明示的にレポート同期先を選ばない限り Mac 内に保持されます。
+現行版 **0.1.36** は、プロジェクト設定変更と不足ディレクトリ補完の確認を改善し、大規模 PDF の読み込みエラーを修正しています。
 
-バージョン 0.1.12 では、プライバシー、権利、納品範囲の理由で意図的に除外した素材について、監査可能な MHL 改訂フローを追加しました。純粋な不足差異の場合のみ利用でき、理由、リスク確認、指定文字の入力が必要です。元の MHL と SHA-256 は監査履歴に保存され、改訂後のマニフェストを自己検証してから保持素材全体を再検証します。素材ファイルは削除せず、サイズやハッシュの異常を免除することはできません。
+[ダウンロード](https://github.com/sexyfeifan/Kocpy/releases/latest) · [インストール（中国語）](docs/INSTALLATION.md) · [使用手冊（中国語）](docs/USER_GUIDE.md) · [検証範囲](docs/VERIFICATION.md)
 
-バージョン 0.1.13 では、不足と余分なファイルが同時にあるマニフェスト差異を段階的に処理できます。不足ファイルの修復成功は保持され、残る差異は同じ画面で更新されます。番号付き同名候補は双方のサイズを表示し、0 バイトの余分なファイルは個別に警告します。有効な余分ファイルを保持する場合は、同じ画面で現在の完全なハッシュ基準を作成できます。
-
-バージョン 0.1.14 では、完了判定、永続化、復旧を強化しました。完了前の素材ソース再走査、ボリューム識別の継続確認、低速保存先の書き込み位置修正、ファイルと記録の fsync、JSON と索引の最新チェックポイント統合、冷却アーカイブの書き込み後検証、安全取り出し前の再確認を行います。MHL は検証済み保存先の実際のパスを記録し、未解決差異やコピー不足を信頼済みアーカイブとして出力しません。
-
-バージョン 0.1.15 では、素材種別ごとのタスクアイコン、Finder で表示できる完全なソース／最終保存先パス、そしてアーカイブ済みプロジェクトの保護されたリセット機能を追加しました。リセットは Kocpy 内部のプロジェクト、タスク、プロキシ、アーカイブ保守記録だけを削除し、素材、バックアップフォルダ、レポート、MHL、書き出し済みアーカイブには触れません。
-
-バージョン 0.1.16 では、保護された内部記録の削除を進行中プロジェクトにも拡張しました。未完了のバックアップまたはプロキシ作業がある場合は拒否され、確認チェックと正確なプロジェクト名入力が必要です。プロジェクトテンプレートは説明表示、編集、読み込み／書き出し、項目別プレビュー後の選択適用に対応しました。低いウインドウでもサイドバーの文字とアイコン比率を維持し、ナビゲーション部分だけをスクロールします。
-
-0.1.18 improves folder layout previews, restores native folder drag-and-drop, keeps transfer details live, and hashes fresh files during copying while retaining independent destination readback. New mirror tasks retain the selected source folder; legacy tasks keep their original destination layout. See [release notes](docs/RELEASE_NOTES_0.1.18.md).
+Apple Silicon／Intel 用インストーラは別々です。現在は ad-hoc 署名のみで、**Developer ID 署名・Apple 公証はありません**。自動テストをあらゆる実機構成の検証とみなさないでください。
 
 ## License
 
-Kocpy source code is available under the MIT License. The separately invoked FFmpeg 9.0.1/x264 runtime is GPL-2.0-or-later. Complete notices, pinned corresponding source archives and build scripts are bundled under the app's `Contents/Resources/ffmpeg` directory and provided alongside installers in each new Release. See [media notices](resources/ffmpeg/NOTICE.md). This does not claim App Store approval or patent clearance.
-
-0.1.18 adds explicit maintenance scopes, retry-safe batch submission, shared path previews, editable camera positions, item-by-item checklists, background operation history, paginated media browsing, scoped exports, and NAS/LAN controls. Desktop acceptance limits are documented; independent destination verification remains mandatory.
+Kocpy source code is available under the [MIT License](LICENSE). The separately invoked FFmpeg/x264 runtime has its own GPL-2.0-or-later license; it is not covered by Kocpy's MIT license. Full notices, pinned corresponding sources and build scripts are bundled in `Contents/Resources/ffmpeg` and supplied alongside installers in each current Release. See [media notices](resources/ffmpeg/NOTICE.md) and [third-party notices](THIRD_PARTY_NOTICES.md). These notices do not claim App Store approval or patent clearance.
