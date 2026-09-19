@@ -1,6 +1,6 @@
 # Kocpy 文档导航
 
-当前正式版：**0.1.36**。本目录说明已经实现的功能、操作方法和验证边界。[返回项目首页](../README.md) · [下载正式版](https://github.com/sexyfeifan/Kocpy/releases/latest)
+当前正式版：**0.1.37**。本目录说明已经实现的功能、操作方法和验证边界。[返回项目首页](../README.md) · [下载正式版](https://github.com/sexyfeifan/Kocpy/releases/latest)
 
 ## 使用 Kocpy
 
@@ -13,6 +13,8 @@
 | 纳入已有素材、核对 MHL／SHA 差异 | [接管既有备份](USER_GUIDE.md#4-接管既有备份) |
 | 修正旧接管记录与重复统计 | [刷新接管信息](USER_GUIDE.md#5-刷新接管信息) |
 | 建立项目规则、模板、收工标准与交接 | [项目矩阵与收工状态](USER_GUIDE.md#6-项目矩阵与收工状态) |
+| 处理混合日期完整卡并生成每日交付 | [完整卡日期归属与当日交付](USER_GUIDE.md#完整卡日期归属与当日交付) |
+| 将完整项目文件夹校验转存到 NAS | [独立 NAS 归档转存](USER_GUIDE.md#独立-nas-归档转存) |
 | 找回移动后的素材路径 | [素材库与重新定位](USER_GUIDE.md#7-素材库与重新定位) |
 | 生成代理、报告与交付目录 | [代理与交付](USER_GUIDE.md#8-代理与交付) |
 | 复校验归档、查看健康历史与提醒 | [诊断与长期归档](USER_GUIDE.md#9-诊断与长期归档) |
@@ -23,6 +25,7 @@
 
 ## 版本与验证
 
+- [0.1.37 更新说明](RELEASE_NOTES_0.1.37.md)：完整范围、拍摄日分组、每日交付、自动 PDF、空目录治理与独立 NAS 归档转存。
 - [0.1.36 更新说明](RELEASE_NOTES_0.1.36.md)：项目规则确认、目录补齐与大型 PDF 修复。
 - [GitHub Releases](https://github.com/sexyfeifan/Kocpy/releases)：真正公开的安装包、对应源码、摘要与发布说明。
 - [验证记录](VERIFICATION.md)：按版本保留自动测试、实际界面、双机、候选包与正式附件证据，以及跳过／未验证项目。

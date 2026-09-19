@@ -1,4 +1,38 @@
-# Kocpy 0.1.36 architecture
+# Kocpy 0.1.37 architecture
+
+## Frozen complete inventory and compatibility boundary
+
+Every new transfer freezes a `complete-v2` inventory policy and its initial scope. Complete mode includes hidden entries, AppleDouble/system metadata, existing manifests/reports and empty directories; the source fingerprint covers included file paths, sizes and timestamps, directory metadata and every explicit exclusion. Symlinks and non-file/non-directory special entries fail explicitly instead of disappearing from the scope. A final source rescan must match the frozen fingerprint before the task can complete, and each destination must contain the recorded directory scope as well as independently verified files.
+
+Turning off hidden entries creates a filtered policy, not a silent legacy scan. Each excluded file or directory is recorded with path, type, byte count, modified time and reason, and generated manifests describe that exact policy. A task without an inventory-policy field is a historical task and keeps the historical scanner for resume/retry; normalization does not retrofit a wider scope into old evidence.
+
+## Automatic per-destination report boundary
+
+New tasks freeze whether automatic PDF is enabled; the default is enabled. Publication is eligible only after a native Kocpy transfer reaches terminal completion and every actual destination is verified. One report is planned beneath each resolved backup root at `Kocpy报告`, and the planned path is re-derived from the destination record before every external write.
+
+Report bytes and expected SHA-256 are checkpointed before an exclusive no-replace publication, then the published file is read back. A restart can recover only the exact registered artifact with the expected digest. A conflicting file is never overwritten. Per-target failures remain separate from backup trust, and retry visits only unfinished report targets; imported workstation records and legacy tasks do not replay pending automatic writes.
+
+## Immutable full-card and daily-delivery boundary
+
+A mixed-day workflow begins from a resolved, verified destination of a completed full-card task. Date evidence from media metadata, path names and timestamps is advisory. Operator-confirmed assignments are stored against stable material groups; unassigned groups remain explicit and the full-card directory and original manifests are never modified.
+
+A daily delivery is a distinct derivative run. Before copying, Kocpy rechecks the selected destination identity, actual recorded file paths, file sizes and the original task hash algorithm/digest. Target publication is contained beneath a user-selected parent, does not replace existing data, supports its own interrupted-state recovery, and independently rereads output with SHA-256 before completing. Its MHL/JSON and PDF are separately authorized and digest-checked. `DailyDeliveryRun` is excluded from logical-card, backup-task and independent-copy counts by design.
+
+## Project-day and managed-directory boundary
+
+Project detail derives a separate group for every normalized shooting date. A group aggregates logical volumes, confirmed mixed-day allocation, files, bytes, closeout cells and risk; unassigned mixed-day material remains attached to the original task date with an explicit unresolved state. Current or risky days stay expanded, while safe days are presentation-only collapsible state. Daily-delivery derivatives never contribute backup trust.
+
+New projects default to lazy directory creation. A real date/device/position path is created by the first backup that needs it; projects without the mode field retain historical precreation behavior. Explicit precreation records the exact leaf, workstation and volume evidence used for any later cleanup decision.
+
+An unused-device or rest-day decision can request a read-only cleanup preview, but never authorizes removal by itself. Eligible paths must be strict descendants of a configured destination, have a local Kocpy creation proof, still match the recorded volume, remain empty normal directories, have no task or media references, and not be shared by an out-of-scope date/device/position through a custom naming rule. Execution requires a current preview, operator and explicit confirmation, repeats every check immediately before non-recursive `rmdir`, and appends per-target results. A durable recovery journal brackets the filesystem change and authoritative project audit; unresolved journal state blocks another cleanup/repair for that project until startup reconciliation completes.
+
+## Standalone NAS archive-transfer boundary
+
+NAS archive transfer has its own persistence domain and does not create a backup task, logical card or project-copy count. Source and mounted destination parent are canonicalized; aliases, nesting, symlinks, unsupported entries, insufficient space, identity changes and an existing final target stop the operation. The final target preserves the source-root name. Writes use owned temporary/resume state and no-replace publication; recovery revalidates both source scope and destination identity.
+
+Completion requires the final NAS target to match the frozen relative-path inventory, exact bytes, empty-directory set and a fresh SHA-256 read of every file. Existing MHL/XML/PDF files are ordinary payload and their historical conclusions are not changed. Detail PDF and high-resolution PNG reports share one immutable fact contract containing name provenance, shooting date, counts, exact bytes, source/final paths, times, inventory digest and evidence boundary. Report failure does not invalidate completed data and creates a new report-attempt ID on retry instead of overwriting an unknown artifact.
+
+The archive conclusion deliberately excludes allocated disk usage, ACLs, extended attributes, permissions, creation/modification timestamps, server-side disk topology and historical shooting completeness. A mounted network path cannot prove independent physical fault domains from the client.
 
 ## Project-rule preview and directory-repair boundary
 

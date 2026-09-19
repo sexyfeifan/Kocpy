@@ -6,7 +6,7 @@
 
 <p align="center"><a href="#中文">中文</a> · <a href="#english">English</a> · <a href="#日本語">日本語</a></p>
 
-当前正式版：**0.1.36** · [下载](https://github.com/sexyfeifan/Kocpy/releases/latest) · [使用手册](docs/USER_GUIDE.md) · [文档导航](docs/README.md) · [本版更新](docs/RELEASE_NOTES_0.1.36.md)
+当前正式版：**0.1.37** · [下载](https://github.com/sexyfeifan/Kocpy/releases/latest) · [使用手册](docs/USER_GUIDE.md) · [文档导航](docs/README.md) · [本版更新](docs/RELEASE_NOTES_0.1.37.md)
 
 ![Kocpy 工作台](docs/screenshots/dashboard.png)
 
@@ -16,12 +16,12 @@
 
 ### 下载与安装
 
-| 你的 Mac | 0.1.36 安装包 |
+| 你的 Mac | 0.1.37 安装包 |
 | --- | --- |
-| Apple Silicon（M 系列） | [下载 arm64 DMG](https://github.com/sexyfeifan/Kocpy/releases/download/v0.1.36/Kocpy-0.1.36-arm64.dmg) |
-| Intel | [下载 x64 DMG](https://github.com/sexyfeifan/Kocpy/releases/download/v0.1.36/Kocpy-0.1.36-x64.dmg) |
+| Apple Silicon（M 系列） | [下载 arm64 DMG](https://github.com/sexyfeifan/Kocpy/releases/download/v0.1.37/Kocpy-0.1.37-arm64.dmg) |
+| Intel | [下载 x64 DMG](https://github.com/sexyfeifan/Kocpy/releases/download/v0.1.37/Kocpy-0.1.37-x64.dmg) |
 
-下载后先核对同一 Release 的 [SHA256SUMS.txt](https://github.com/sexyfeifan/Kocpy/releases/download/v0.1.36/SHA256SUMS.txt)，再打开 DMG，将 Kocpy 拖入“应用程序”。
+下载后先核对同一 Release 的 [SHA256SUMS.txt](https://github.com/sexyfeifan/Kocpy/releases/download/v0.1.37/SHA256SUMS.txt)，再打开 DMG，将 Kocpy 拖入“应用程序”。
 
 **当前没有 Developer ID 签名或 Apple 公证。** 安装包的 ad-hoc 签名和 SHA-256 一致，不等于 Apple 来源认证或公证。遇到系统阻止、架构不符或“已损坏”提示，请按[安装、升级与排查说明](docs/INSTALLATION.md)处理，不要直接关闭系统安全防护。
 
@@ -48,15 +48,17 @@
 
 | 模块 | 已实现能力 |
 | --- | --- |
-| 备份与校验 | 1–4 个目的地；SHA-256／SHA-1／MD5；逐目标独立回读；完整源与最终目的地路径；实时写入、回读速度与进度 |
+| 备份与校验 | 1–4 个目的地；SHA-256／SHA-1／MD5；逐目标独立回读；新任务默认完整清单包含隐藏项与空目录；完整源与最终目的地路径；实时写入、回读速度与进度 |
 | 暂停与恢复 | 暂停／继续、大文件断点恢复、异常退出恢复、只重试失败目标；离线、空间、权限与身份异常的检查引导 |
-| 拍摄项目 | 日期 × 设备／机位矩阵；逻辑素材卷去重统计；收工副本要求；日计划、临时设备、规则版本、检查表与交接 |
+| 拍摄项目 | 按拍摄日分组的设备／机位矩阵和素材卷明细；逻辑素材卷去重统计；收工副本要求；按需创建目录、安全空脚手架整理；日计划、规则版本、检查表与交接 |
 | 模板与项目记录 | 五个有差异说明的系统模板；自定义新建／编辑／导入导出／选择性应用；受保护的内部项目记录删除 |
 | 既有备份接管 | 单张素材卡、单日所有机位、整个项目；映射预览与修正；MHL／SHA 清单比对、首次基线、旧接管记录刷新 |
 | 清单差异处理 | 缺失／额外／大小／哈希差异明细；Finder 定位；健康副本修复；重要确认后的经审计 MHL 修订 |
 | 素材库 | 缩略图与媒体信息、分页搜索、Finder／播放入口；移动目录后通过完整哈希重新定位或关联健康副本 |
 | 代理与交付 | H.264／ProRes Proxy；预设与自定义参数；依赖、暂停、恢复、重试；源与输出哈希证据；交付前重新校验 |
-| 报告与清单 | 任务／拍摄日／项目 PDF、JSON、CSV、MHL／ASC MHL；Resolve／Premiere／Final Cut 媒体清单；附 SHA-256 的项目归档包 |
+| 报告与清单 | 新任务默认在每个已校验目的地自动保存 PDF；任务／拍摄日／项目 PDF、JSON、CSV、MHL／ASC MHL；Resolve／Premiere／Final Cut 媒体清单；附 SHA-256 的项目归档包 |
+| 完整卡与每日交付 | 完整素材卡保持不可变；素材日期建议与人工分配；从已校验完整卡生成、独立回读并报告的每日交付；派生产物不增加独立副本计数 |
+| NAS 归档转存 | 普通文件夹或项目文件夹独立转存到已挂载 NAS；不覆盖、可恢复、逐文件 SHA-256 回读；最终目录内 PDF 与高清 PNG 事实报告 |
 | 长期归档 | 按盘、项目、拍摄日、素材卷或单文件复校验；健康历史、位置变化、周期提醒、保留损坏原件的副本修复 |
 | 工作站协作 | 元数据包导出、只读预检、逐项冲突决定、可恢复合并与审计；同包同决定重复导入不重复写入；可选只读局域网索引 |
 | 安全自动化 | 历史素材卡与疑似重复建议；完成后报告／代理／交付／推出建议；用户逐项确认后执行并保留结果 |
@@ -72,23 +74,26 @@
 - **没有文件夹 ≠ 当天未使用设备。** 项目空白单元保持待确认；休息或未使用标记不能掩盖已记录素材的风险。
 - **刷新记录 ≠ 重新校验。** 刷新修正识别与重复统计，不重新读取全部内容哈希。
 - **历史通过 ≠ 永久健康。** 长期保存需要重新读取归档盘校验；报告只代表其记录时点。
+- **完整范围 ≠ 磁盘占用字节相同。** 新任务默认按路径、内容、精确文件字节与空目录保证冻结清单一致；文件系统分配、ACL、扩展属性和时间戳不在内容校验结论内。主动排除隐藏项时会留下明确排除清单。
+- **每日交付 ≠ 新的完整备份。** 它从已校验完整卡派生并重新校验，但不增加素材卡、任务或物理独立副本数量。
 
 普通备份按只读原则处理素材源。修复副本、修订 MHL 等维护写入必须经过明确确认；MHL 修订保留原始清单与审计，不删除素材，也不允许豁免大小或哈希异常。删除项目只清理 Kocpy 内部记录，不删除磁盘素材、报告或清单。
 
-### 0.1.36 更新重点
+### 0.1.37 更新重点
 
-1. **项目保存更清晰**：列出安全规则的原值与新值，真实变化必须填写修改人；只补齐已保存项目的缺失目录，不会意外保存表单中的其他修改。
-2. **大型 PDF 报告修复**：不再用超长 `data:` URL 加载报告，避免 `ERR_INVALID_URL (-300)`；临时 HTML 受限访问并在加载后清理。
-3. **错误反馈有边界**：不再把整份编码报告暴露在错误提示中；报告失败不会改变已完成的素材校验结论。
+1. **完整接收和每日交付分离**：整张卡先完整备份；混合日期仅给出建议并由操作人确认，可生成独立校验的当日交付，但不增加素材卡或物理独立副本计数。
+2. **新任务默认 A=B 完整范围**：隐藏项、AppleDouble、既有报告／清单和空目录纳入冻结清单；主动关闭隐藏项时逐项记录排除，旧任务继续沿用历史策略。
+3. **项目日视图与目录治理**：项目详情按日分组；新项目默认按需创建目录，确认未使用／休息后只在逐路径预览、再次授权和安全证明全部通过时整理空脚手架。
+4. **自动报告与 NAS 归档**：每个已校验目的地默认保存 PDF，可关闭或单独重试；新增独立 NAS 转存、逐文件回读和 PDF／PNG 报告流程。
 
-[完整更新说明](docs/RELEASE_NOTES_0.1.36.md) · [历史正式发布](https://github.com/sexyfeifan/Kocpy/releases)
+[完整更新说明](docs/RELEASE_NOTES_0.1.37.md) · [历史正式发布](https://github.com/sexyfeifan/Kocpy/releases)
 
 ### 验证范围与已知限制
 
-0.1.36 已完成原生 Apple Silicon／Intel CI 回归、包内运行时检查、正式附件摘要核对与隔离 GUI 验收；具体测试、候选与正式包的区别见[验证记录](docs/VERIFICATION.md)。
+0.1.37 的精确自动测试、架构、候选包与正式附件验收范围见[验证记录](docs/VERIFICATION.md)和同版 Release；任何未执行项目不会计作通过。
 
 - 没有 Developer ID／Apple 公证，不宣称通过 App Store 审核。
-- 历史硬件或双机结果不能泛化成当前版本在所有设备上通过；真实外置双盘、NAS、拔盘、睡眠与空间耗尽的本版复验边界仍明确保留。
+- 历史硬件或双机结果不能泛化成当前版本在所有设备上通过；真实外置双盘、NAS 网络中断／重挂载、拔盘、睡眠与空间耗尽的本版复验边界仍明确保留。
 - Resolve 有已记录的合成样本实际导入证据；Premiere Pro／Final Cut Pro 清单完成结构与生成检查，未宣称完成对应软件实机导入。
 - 自动测试、磁盘映像和同盘多目录不代替真实现场介质验收。正式使用前请先用非生产数据验证自己的读卡器、连接方式与存储设备。
 
@@ -141,11 +146,11 @@ Kocpy is a local-first macOS workspace for verified media offload and production
 
 Project mode adds shooting days, cameras and positions, logical card volumes, closeout requirements, versioned rules, editable templates and handoff records. Existing backups can be adopted against MHL/SHA manifests, read into a first baseline, or imported as unverified structure. A first baseline does not prove historical completeness, and different volume UUIDs alone do not prove physical independence.
 
-Current features also include recovery, media relinking, evidence-backed H.264/ProRes proxies, delivery manifests, archive reverification, audited metadata exchange between workstations, opt-in completion actions, diagnostics, light/dark themes and reduced motion. Release **0.1.36** clarifies project-rule changes and directory repair, and fixes oversized PDF report loading.
+Current features also include recovery, media relinking, evidence-backed H.264/ProRes proxies, delivery manifests, archive reverification, audited metadata exchange between workstations, opt-in completion actions, diagnostics, light/dark themes and reduced motion. Release **0.1.37** groups project detail by shooting day, freezes a complete inventory for new tasks, creates per-destination automatic PDFs by default, keeps full mixed-day cards immutable while producing separately verified daily deliveries, and adds a standalone verified NAS archive-transfer flow with PDF/PNG reports. Daily deliveries are derivatives and never increase independent-copy counts.
 
 [Download](https://github.com/sexyfeifan/Kocpy/releases/latest) · [Installation](docs/INSTALLATION.md) · [Guide (Chinese)](docs/USER_GUIDE.md) · [Verification scope](docs/VERIFICATION.md)
 
-Separate arm64 and x64 installers are available. They currently use ad-hoc signing, **not Developer ID signing or Apple notarization**. Automated tests and historical hardware results are not certification for every storage setup.
+Separate arm64 and x64 installers are available. They currently use ad-hoc signing, **not Developer ID signing or Apple notarization**. Automated tests and historical hardware results are not certification for every storage setup; this release does not claim complete real-NAS or two-independent-external-disk coverage.
 
 ## 日本語
 
@@ -153,11 +158,11 @@ Kocpy は macOS 向けのローカル優先メディアバックアップ／プ�
 
 プロジェクトモードでは撮影日、カメラ／位置、素材巻、必要コピー数、ルール履歴、テンプレート、引き継ぎを管理できます。既存素材の取り込み、MHL／SHA 比較、復旧、プロキシ、納品リスト、長期再検証、監査付きメタデータ交換にも対応します。初回基準は取り込み以前の完全性を証明せず、異なる UUID だけでは物理的に独立したコピーと認定しません。
 
-現行版 **0.1.36** は、プロジェクト設定変更と不足ディレクトリ補完の確認を改善し、大規模 PDF の読み込みエラーを修正しています。
+現行版 **0.1.37** は、撮影日ごとのプロジェクト表示、新規タスクの完全な対象スナップショット、保存先ごとの自動 PDF、完全カードを変更しない日別納品、独立した NAS アーカイブ転送と PDF／PNG レポートを追加します。日別納品は派生成果物であり、独立コピー数には加算されません。
 
 [ダウンロード](https://github.com/sexyfeifan/Kocpy/releases/latest) · [インストール（中国語）](docs/INSTALLATION.md) · [使用手冊（中国語）](docs/USER_GUIDE.md) · [検証範囲](docs/VERIFICATION.md)
 
-Apple Silicon／Intel 用インストーラは別々です。現在は ad-hoc 署名のみで、**Developer ID 署名・Apple 公証はありません**。自動テストをあらゆる実機構成の検証とみなさないでください。
+Apple Silicon／Intel 用インストーラは別々です。現在は ad-hoc 署名のみで、**Developer ID 署名・Apple 公証はありません**。自動テストをあらゆる実機構成の検証とみなさないでください。すべての実 NAS／独立した外付け二台構成を検証済みとは表明していません。
 
 ## License
 

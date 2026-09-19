@@ -1,6 +1,6 @@
 # Kocpy 安装与升级
 
-当前正式版：**0.1.36**。[返回首页](../README.md) · [文档导航](README.md) · [使用手册](USER_GUIDE.md)
+当前正式版：**0.1.37**。[返回首页](../README.md) · [文档导航](README.md) · [使用手册](USER_GUIDE.md)
 
 ## 1. 选择安装包
 
@@ -8,17 +8,17 @@
 
 | Mac 类型 | 安装文件 |
 | --- | --- |
-| Apple Silicon，M 系列芯片 | [Kocpy-0.1.36-arm64.dmg](https://github.com/sexyfeifan/Kocpy/releases/download/v0.1.36/Kocpy-0.1.36-arm64.dmg) |
-| Intel 处理器 | [Kocpy-0.1.36-x64.dmg](https://github.com/sexyfeifan/Kocpy/releases/download/v0.1.36/Kocpy-0.1.36-x64.dmg) |
+| Apple Silicon，M 系列芯片 | [Kocpy-0.1.37-arm64.dmg](https://github.com/sexyfeifan/Kocpy/releases/download/v0.1.37/Kocpy-0.1.37-arm64.dmg) |
+| Intel 处理器 | [Kocpy-0.1.37-x64.dmg](https://github.com/sexyfeifan/Kocpy/releases/download/v0.1.37/Kocpy-0.1.37-x64.dmg) |
 
 每个安装包只包含匹配架构的媒体运行时，无需另装 FFmpeg。Release 的媒体对应源码包用于许可与重建，不是安装器。GitHub 自动生成的 “Source code” ZIP／tar.gz 也不是可直接打开的应用。
 
 ## 2. 核对 SHA-256
 
-同时下载本版 [SHA256SUMS.txt](https://github.com/sexyfeifan/Kocpy/releases/download/v0.1.36/SHA256SUMS.txt)。在终端输入 `shasum -a 256 `（末尾有空格），把下载的 DMG 拖入终端，再按回车。例如文件位于默认下载目录时：
+同时下载本版 [SHA256SUMS.txt](https://github.com/sexyfeifan/Kocpy/releases/download/v0.1.37/SHA256SUMS.txt)。在终端输入 `shasum -a 256 `（末尾有空格），把下载的 DMG 拖入终端，再按回车。例如文件位于默认下载目录时：
 
 ```bash
-shasum -a 256 "$HOME/Downloads/Kocpy-0.1.36-arm64.dmg"
+shasum -a 256 "$HOME/Downloads/Kocpy-0.1.37-arm64.dmg"
 ```
 
 Intel 包使用对应的 x64 文件名。输出的 64 位十六进制摘要须与同版清单中的对应行完全一致；不一致则不要安装，重新从官方 Release 下载。
@@ -42,7 +42,7 @@ Intel 包使用对应的 x64 文件名。输出的 64 位十六进制摘要须�
 1. 等待备份、校验、接管、代理和归档维护操作安全结束，不要在写入过程中强制退出或更换应用。
 2. 升级前在设置中导出本地数据备份，并保管好已有素材与独立副本。应用数据备份不包含全部素材内容，不能代替素材备份。
 3. 正常退出 Kocpy，用新 DMG 中的应用替换“应用程序”中的 Kocpy。
-4. 从“应用程序”启动，查看应用固定版本位置是否为 0.1.36，再检查项目与任务状态。
+4. 从“应用程序”启动，查看应用固定版本位置是否为 0.1.37，再检查项目与任务状态。
 5. 正式拍摄前，用隔离的非生产素材完成一次复制与回读，确认自己的介质、权限和连接方式符合预期。
 
 不要通过删除 `~/Library/Application Support/Kocpy/` 来修复升级提示；这里存有项目、任务与证据。新版权威记录与旧版兼容镜像的恢复边界见[工作区记录与安全升级](USER_GUIDE.md#工作区记录与安全升级)。回退旧版后写入记录再升级，可能需要额外恢复处理。
@@ -58,4 +58,4 @@ Intel 包使用对应的 x64 文件名。输出的 64 位十六进制摘要须�
 3. 退出旧进程后，重新打开已安装的新包，查看固定版本位置。
 4. 网络检查失败时保留具体提示，稍后重试；不要把失败误认为服务器确认“已是最新”。
 
-本次 GitHub 文字整理不改变 0.1.36 安装包、标签或 SHA-256，也不会让已安装应用自动变成另一个版本。
+文档或源码中的版本文字本身不会生成安装包、发布标签或改变 SHA-256。只有 GitHub 正式 Release 已公开 0.1.37 附件、摘要核对一致，并且本机实际替换应用后，更新才算完成。
