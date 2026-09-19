@@ -85,6 +85,29 @@ export function parseMediaProbe(stderr: string) {
   };
 }
 
+/**
+ * Read only the media header needed for date suggestions. The returned date is
+ * advisory: camera clocks and timezone metadata can be wrong, so callers must
+ * still require an operator confirmation.
+ */
+export async function probeMediaCreationTime(input: string) {
+  const stat = await fs.stat(input);
+  if (!stat.isFile()) throw new Error("素材不存在");
+  let stderr = "";
+  try {
+    stderr = (
+      await exec(
+        ffmpegPath(),
+        ["-nostdin", "-hide_banner", "-i", input],
+        { maxBuffer: 4 * 1024 * 1024, timeout: 15000 },
+      )
+    ).stderr;
+  } catch (error: any) {
+    stderr = error.stderr || "";
+  }
+  return parseMediaProbe(stderr).creationTime;
+}
+
 export async function inspectMedia(input: string, cacheDir: string) {
   const stat = await fs.stat(input);
   if (!stat.isFile()) throw new Error("素材不存在");

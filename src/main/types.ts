@@ -198,6 +198,99 @@ export interface FileRecord {
   skipped?: boolean;
 }
 
+export type MediaDateSuggestionBasis =
+  | "embedded-media"
+  | "path-date"
+  | "file-modified-time"
+  | "user-confirmed"
+  | "unknown";
+
+export interface CardDateAllocationGroup {
+  /** Stable digest of the paths in this clip family. */
+  id: string;
+  label: string;
+  relativePaths: string[];
+  files: number;
+  bytes: number;
+  suggestedDate?: string;
+  suggestionBasis: MediaDateSuggestionBasis;
+  suggestionConfidence: "high" | "review" | "unknown";
+  evidence: string[];
+  assignedDate?: string;
+  confirmedAt?: number;
+  confirmedBy?: string;
+}
+
+export interface CardDateAllocationPlan {
+  schemaVersion: 1;
+  sourceTaskId: string;
+  sourceEvidenceDigest: string;
+  generatedAt: number;
+  updatedAt: number;
+  /** A suggestion aid only. Dates do not become authoritative until confirmed. */
+  groups: CardDateAllocationGroup[];
+}
+
+export interface CardDateAllocationDecision {
+  groupId: string;
+  /** Empty clears a previous assignment; suggestions never confirm themselves. */
+  shootingDate?: string;
+}
+
+export interface DailyDeliveryFileEvidence {
+  relativePath: string;
+  size: number;
+  sourceChecksum: string;
+  sourceVerifiedAt: number;
+  deliveredChecksum: string;
+  verified: boolean;
+}
+
+export interface DailyDeliveryRun {
+  id: string;
+  sourceTaskId: string;
+  projectId?: string;
+  projectNameSnapshot?: string;
+  shootingDate: string;
+  operator: string;
+  createdAt: number;
+  startedAt?: number;
+  completedAt?: number;
+  status:
+    | "pending"
+    | "running"
+    | "interrupted"
+    | "completed"
+    | "failed";
+  sourceDestinationId: string;
+  sourceRoot: string;
+  sourceVolumeId?: string;
+  sourceVolumeUuid?: string;
+  destinationParent: string;
+  finalPath: string;
+  destinationVolumeId?: string;
+  destinationVolumeUuid?: string;
+  hashAlgorithm: "sha256";
+  allocationDigest: string;
+  totalFiles: number;
+  totalBytes: number;
+  completedFiles: number;
+  completedBytes: number;
+  files: DailyDeliveryFileEvidence[];
+  publicationInProgress?: {
+    relativePath: string;
+    stagingPath: string;
+    finalPath: string;
+  };
+  recoveryArtifacts?: string[];
+  manifestPaths?: string[];
+  reportStatus?: "pending" | "completed" | "failed";
+  reportPaths?: string[];
+  reportSha256?: Record<string, string>;
+  reportError?: string;
+  error?: string;
+}
+
 export interface ExternalManifestComparison {
   path: string;
   algorithm?: HashAlgorithm;
@@ -342,6 +435,10 @@ export interface BackupTask {
   }>;
   /** Audited, user-authorized completion suggestions. Never implies backup trust. */
   completionActionRecords?: CompletionActionRecord[];
+  /** Logical shooting-day allocation. This never rewrites the verified card copy. */
+  dateAllocation?: CardDateAllocationPlan;
+  /** Separate, verified daily-delivery copies. These are not backup-copy evidence. */
+  dailyDeliveryRuns?: DailyDeliveryRun[];
 }
 
 export interface TaskConfig {

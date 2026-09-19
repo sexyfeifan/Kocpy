@@ -6,6 +6,9 @@ import type {
   ArchiveReminder,
   ArchiveVerificationRun,
   BackupTask,
+  CardDateAllocationDecision,
+  CardDateAllocationPlan,
+  DailyDeliveryRun,
   ExistingCandidateDecision,
   ExistingImportPreview,
   ExistingImportProgress,
@@ -38,6 +41,9 @@ export type {
   ArchiveReminder,
   ArchiveVerificationRun,
   BackupTask,
+  CardDateAllocationDecision,
+  CardDateAllocationPlan,
+  DailyDeliveryRun,
   ExistingCandidateDecision,
   ExistingImportPreview,
   ExistingImportProgress,
@@ -183,6 +189,28 @@ export interface API {
     action: CompletionActionKind,
     operator: string,
   ): Promise<CompletionActionRecord | null>;
+  previewCardDateAllocation(
+    taskId: string,
+    sourceDestinationId: string,
+  ): Promise<CardDateAllocationPlan>;
+  saveCardDateAllocation(
+    taskId: string,
+    sourceDestinationId: string,
+    decisions: CardDateAllocationDecision[],
+    operator: string,
+  ): Promise<CardDateAllocationPlan>;
+  createDailyDelivery(input: {
+    taskId: string;
+    runId?: string;
+    shootingDate: string;
+    sourceDestinationId: string;
+    destinationParent: string;
+    operator: string;
+  }): Promise<DailyDeliveryRun>;
+  retryDailyDeliveryReport(
+    taskId: string,
+    runId: string,
+  ): Promise<DailyDeliveryRun>;
   scanSource(path: string, includeHidden?: boolean): Promise<Scan>;
   listVolumes(): Promise<Volume[]>;
   driveInfo(

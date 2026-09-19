@@ -42,7 +42,12 @@ import { makeProxy } from "./proxy";
 import { mainWindowLayout } from "./window-layout";
 import { installMainWindowConstraints } from "./window-constraints";
 import { withTemporaryReportHtml } from "./report-html";
-import { inspectMedia, isThumbnailMedia, pruneMediaCache } from "./media";
+import {
+  inspectMedia,
+  isThumbnailMedia,
+  probeMediaCreationTime,
+  pruneMediaCache,
+} from "./media";
 import {
   generateReport,
   generateDailyReport,
@@ -61,6 +66,8 @@ import type {
   CompletionActionRecord,
   ExistingAuditEvent,
   ExistingCandidateDecision,
+  CardDateAllocationDecision,
+  DailyDeliveryRun,
   NasPreset,
   ProjectConfig,
   ProjectTemplate,
@@ -72,6 +79,13 @@ import type {
   WorkspaceImportDecision,
   WorkspaceImportPreview,
 } from "./types";
+import {
+  applyCardDateAllocationDecisions,
+  buildCardDateAllocation,
+  dailyDeliveryReportHtml,
+  executeDailyDeliveryRun,
+  prepareDailyDeliveryRun,
+} from "./mixed-day-delivery";
 import {
   beginCompletionAction,
   ensureCompletionActionPlan,
@@ -702,6 +716,8 @@ const maintenanceNames: Record<string, string> = {
   "diagnostics:validate-volume": "有限介质测试",
   "nas:test": "NAS 读写检查",
   "proxy:export-package": "生成交付目录",
+  "mixed-day:deliver": "生成当日素材交付",
+  "mixed-day:retry-report": "重试当日交付报告",
   "volumes:eject-completed": "安全推出设备",
 };
 const guardedCommands = new Set([
@@ -719,7 +735,7 @@ const guardedCommands = new Set([
   "completion:skip",
 ]);
 const changeChannels =
-  /^(tasks:(create|delete|reverify|retry-failed)|completion:(run|skip)|projects:(save|delete$|claim-volume|sign-checklist|add-handoff|daily-plan)|existing:(import|reanalyze|establish|repair|reverify|accept|revise)|archive:(verify|repair|move|audit)|workspace:(import|cold-archive|restore-cold)|templates:(apply|save|delete|import|hide)|catalog:rebuild|library:relink)/;
+  /^(tasks:(create|delete|reverify|retry-failed)|completion:(run|skip)|mixed-day:(save|deliver|retry-report)|projects:(save|delete$|claim-volume|sign-checklist|add-handoff|daily-plan)|existing:(import|reanalyze|establish|repair|reverify|accept|revise)|archive:(verify|repair|move|audit)|workspace:(import|cold-archive|restore-cold)|templates:(apply|save|delete|import|hide)|catalog:rebuild|library:relink)/;
 const serialCreates = new Map<string, Promise<unknown>>();
 let commandInFlight = 0;
 async function confirmOperation(message: string, detail: string) {
@@ -895,6 +911,59 @@ async function htmlToPdf(
   } finally {
     report.destroy();
   }
+}
+function upsertDailyDeliveryRun(task: BackupTask, run: DailyDeliveryRun) {
+  task.dailyDeliveryRuns = [
+    ...(task.dailyDeliveryRuns || []).filter((item) => item.id !== run.id),
+    structuredClone(run),
+  ].sort((left, right) => left.createdAt - right.createdAt);
+  return task.dailyDeliveryRuns.find((item) => item.id === run.id)!;
+}
+async function publishDailyDeliveryReport(
+  task: BackupTask,
+  run: DailyDeliveryRun,
+) {
+  if (run.status !== "completed")
+    throw new Error("当日交付数据尚未完成校验，不能生成通过报告");
+  const recordedPath = run.reportPaths?.[0],
+    recordedDigest = recordedPath && run.reportSha256?.[recordedPath];
+  if (recordedPath && recordedDigest) {
+    const actual = await hashFile(recordedPath, "sha256").catch(
+      () => undefined,
+    );
+    if (actual === recordedDigest) {
+      run.reportStatus = "completed";
+      run.reportError = undefined;
+      upsertDailyDeliveryRun(task, run);
+      await persist(true);
+      return run;
+    }
+    if (actual)
+      throw new Error(
+        `已记录的报告路径内容发生变化，Kocpy 未覆盖：${recordedPath}`,
+      );
+  }
+  const reports = path.join(run.finalPath, "Kocpy报告"),
+    target = path.join(
+      reports,
+      `Kocpy_${run.shootingDate.replace(/-/g, "")}_${run.id.slice(0, 8)}_当日交付报告.pdf`,
+    ),
+    value = await htmlToPdf(dailyDeliveryReportHtml(task, run)),
+    digest = sha256Bytes(value);
+  run.reportStatus = "pending";
+  run.reportPaths = [target];
+  run.reportSha256 = { [target]: digest };
+  run.reportError = undefined;
+  upsertDailyDeliveryRun(task, run);
+  await persist(true);
+  const existing = await hashFile(target, "sha256").catch(() => undefined);
+  if (existing && existing !== digest)
+    throw new Error(`报告路径已有其他文件，Kocpy 未覆盖：${target}`);
+  if (!existing) await publishNewArtifact(target, value);
+  run.reportStatus = "completed";
+  upsertDailyDeliveryRun(task, run);
+  await persist(true);
+  return run;
 }
 const completionActionLabel: Record<CompletionActionKind, string> = {
   report: "生成校验报告",
@@ -1636,6 +1705,17 @@ app.whenReady().then(async () => {
   for (const task of saved) {
     if (ensureTaskMediaBreakdown(task)) startupRecordsChanged = true;
     if (recoverInterruptedCompletionActions(task)) startupRecordsChanged = true;
+    for (const run of task.dailyDeliveryRuns || [])
+      if (run.status === "running" || run.status === "pending") {
+        run.status = "interrupted";
+        run.error =
+          "上次当日交付在完成结算前中断；完整素材卷未被修改，可从原任务重新检查并继续。";
+        startupRecordsChanged = true;
+      } else if (run.reportStatus === "pending") {
+        run.reportStatus = "failed";
+        run.reportError = "报告发布在完成结算前中断，可单独重试报告。";
+        startupRecordsChanged = true;
+      }
     if (["pending", "running", "paused", "verifying"].includes(task.status)) {
       task.status = "failed";
       task.errorMessage = "上次运行中断。可重新执行并重新校验已有文件。";
@@ -1950,6 +2030,151 @@ app.whenReady().then(async () => {
       const record = skipCompletionAction(task, action, operator);
       await persist(true);
       return record;
+    },
+  );
+  handle(
+    "mixed-day:preview",
+    async (taskId: string, sourceDestinationId: string) => {
+      const task = engine.getTask(taskId),
+        destination = task?.destinations.find(
+          (item) => item.id === sourceDestinationId,
+        );
+      if (!task) throw new Error("素材卷任务不存在");
+      if (!destination?.verified || !destination.resolvedPath)
+        throw new Error("请选择在线且校验通过的完整素材卷副本");
+      return buildCardDateAllocation(task, destination.resolvedPath, {
+        readEmbeddedDate: probeMediaCreationTime,
+      });
+    },
+  );
+  handle(
+    "mixed-day:save",
+    async (
+      taskId: string,
+      sourceDestinationId: string,
+      decisions: CardDateAllocationDecision[],
+      operator: string,
+    ) => {
+      const task = engine.getTask(taskId),
+        destination = task?.destinations.find(
+          (item) => item.id === sourceDestinationId,
+        );
+      if (!task) throw new Error("素材卷任务不存在");
+      if (!destination?.verified || !destination.resolvedPath)
+        throw new Error("请选择在线且校验通过的完整素材卷副本");
+      if (!Array.isArray(decisions) || decisions.length > 100_000)
+        throw new Error("日期归属决定无效");
+      const preview = await buildCardDateAllocation(
+          task,
+          destination.resolvedPath,
+          { readEmbeddedDate: probeMediaCreationTime },
+        ),
+        saved = applyCardDateAllocationDecisions(
+          task,
+          preview,
+          decisions,
+          operator,
+        );
+      await persist(true);
+      return saved;
+    },
+  );
+  handle(
+    "mixed-day:deliver",
+    async (input: {
+      taskId: string;
+      runId?: string;
+      shootingDate: string;
+      sourceDestinationId: string;
+      destinationParent: string;
+      operator: string;
+    }) => {
+      const task = engine.getTask(input?.taskId);
+      if (!task) throw new Error("素材卷任务不存在");
+      if (!task.dateAllocation) throw new Error("请先分析并确认素材日期归属");
+      const project = (await readProjects()).find(
+        (item) => item.id === task.projectId,
+      );
+      let run = input.runId
+        ? task.dailyDeliveryRuns?.find((item) => item.id === input.runId)
+        : undefined;
+      if (input.runId && !run) throw new Error("当日交付恢复记录不存在");
+      if (run) {
+        if (!["failed", "interrupted"].includes(run.status))
+          throw new Error("只有失败或中断的当日交付可以继续");
+        if (
+          run.shootingDate !== input.shootingDate ||
+          run.sourceDestinationId !== input.sourceDestinationId ||
+          path.resolve(run.destinationParent) !==
+            path.resolve(input.destinationParent)
+        )
+          throw new Error("恢复参数与原当日交付记录不一致");
+      } else {
+        run = await prepareDailyDeliveryRun(task, task.dateAllocation, {
+          shootingDate: input.shootingDate,
+          sourceDestinationId: input.sourceDestinationId,
+          destinationParent: input.destinationParent,
+          operator: input.operator,
+          projectName: project?.name,
+        });
+        upsertDailyDeliveryRun(task, run);
+        await persist(true);
+      }
+      let lastCheckpoint = 0;
+      try {
+        run = await executeDailyDeliveryRun(
+          task,
+          task.dateAllocation,
+          run,
+          async (checkpoint) => {
+            run = structuredClone(checkpoint);
+            upsertDailyDeliveryRun(task, run);
+            operations.progress({
+              message: `当日交付 · ${run.completedFiles}/${run.totalFiles}`,
+              totalBytes: run.totalBytes,
+              completedBytes: run.completedBytes,
+            });
+            if (
+              checkpoint.status !== "running" ||
+              Date.now() - lastCheckpoint >= 1000
+            ) {
+              lastCheckpoint = Date.now();
+              await persist(false, false);
+            }
+          },
+        );
+        upsertDailyDeliveryRun(task, run);
+        await persist(true);
+      } catch (error) {
+        await persist(true).catch(() => undefined);
+        throw error;
+      }
+      try {
+        return await publishDailyDeliveryReport(task, run);
+      } catch (error) {
+        run.reportStatus = "failed";
+        run.reportError = error instanceof Error ? error.message : String(error);
+        upsertDailyDeliveryRun(task, run);
+        await persist(true);
+        return run;
+      }
+    },
+  );
+  handle(
+    "mixed-day:retry-report",
+    async (taskId: string, runId: string) => {
+      const task = engine.getTask(taskId),
+        run = task?.dailyDeliveryRuns?.find((item) => item.id === runId);
+      if (!task || !run) throw new Error("当日交付记录不存在");
+      try {
+        return await publishDailyDeliveryReport(task, run);
+      } catch (error) {
+        run.reportStatus = "failed";
+        run.reportError = error instanceof Error ? error.message : String(error);
+        upsertDailyDeliveryRun(task, run);
+        await persist(true);
+        return run;
+      }
     },
   );
   handle("source:scan", async (source: string, includeHidden = true) => {
