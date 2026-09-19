@@ -110,6 +110,7 @@ export interface Settings {
   defaultHash: "sha256" | "md5" | "sha1";
   defaultDuplicateStrategy: "skip" | "suffix";
   includeHidden: boolean;
+  automaticPdf: boolean;
   operator: string;
   theme: "dark" | "light";
   reportSyncPath: string;

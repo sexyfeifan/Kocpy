@@ -248,6 +248,13 @@ const engine = new BackupEngine(
   store = new Storage(app.getPath("userData")),
   catalog = new CatalogDatabase(app.getPath("userData")),
   workspace = new WorkspaceRepository(store, catalog);
+const readSettings = async () => ({
+  ...defaultSettings,
+  ...(await store.read<Partial<typeof defaultSettings>>(
+    "settings.json",
+    defaultSettings,
+  )),
+});
 const hasProjectRuleEvidence = (project: ProjectConfig) =>
   Boolean(
     project.activeRuleSnapshotId &&
@@ -299,7 +306,7 @@ const existingEvent = (
   details: input.details,
 });
 const existingOperator = async () =>
-  (await store.read("settings.json", defaultSettings)).operator?.trim() ||
+  (await readSettings()).operator?.trim() ||
   "本机用户";
 
 const appendExistingTaskEvent = (
@@ -957,7 +964,7 @@ async function refreshNasHealth() {
   await store.write("nas-presets.json", nasPresets);
 }
 async function syncReport(file: string) {
-  const settings = await store.read("settings.json", defaultSettings);
+  const settings = await readSettings();
   if (!settings.reportSyncPath) return;
   await fs.mkdir(settings.reportSyncPath, { recursive: true });
   const target = path.join(settings.reportSyncPath, path.basename(file));
@@ -1730,7 +1737,7 @@ app.whenReady().then(async () => {
     return;
   }
   operations.restore(await store.read("operation-history.json", []));
-  const initialSettings = await store.read("settings.json", defaultSettings);
+  const initialSettings = await readSettings();
   nativeTheme.themeSource =
     initialSettings.theme === "light" ? "light" : "dark";
   archiveTransferManager = new ArchiveTransferManager({
@@ -5798,7 +5805,7 @@ app.whenReady().then(async () => {
             taskTombstones: workspace.snapshot.taskTombstones,
             projectTombstones: workspace.snapshot.projectTombstones,
           },
-          settings: await store.read("settings.json", defaultSettings),
+          settings: await readSettings(),
           proxyJobs,
           projectTemplates,
           healthRecords,
@@ -6083,10 +6090,15 @@ app.whenReady().then(async () => {
     if (!new Set(["dark", "light"]).has(theme)) throw new Error("无效界面主题");
     nativeTheme.themeSource = theme;
   });
-  handle("settings:get", () => store.read("settings.json", defaultSettings));
+  handle("settings:get", () => readSettings());
   handle("settings:save", (settings: typeof defaultSettings) => {
-    nativeTheme.themeSource = settings.theme === "light" ? "light" : "dark";
-    return store.write("settings.json", settings);
+    const normalized = {
+      ...defaultSettings,
+      ...settings,
+      automaticPdf: settings.automaticPdf !== false,
+    };
+    nativeTheme.themeSource = normalized.theme === "light" ? "light" : "dark";
+    return store.write("settings.json", normalized);
   });
   handle("projects:list", async () =>
     (await readProjects()).map(normalizeProject),
@@ -6934,8 +6946,7 @@ app.whenReady().then(async () => {
         new Notification({
           title: "备份与校验完成",
           body: `${task.name} · ${task.totalFiles} 个文件 · ${passed} 个目标通过校验`,
-          silent: !(await store.read("settings.json", defaultSettings))
-            .notificationSound,
+          silent: !(await readSettings()).notificationSound,
         }).show();
       }
       if (

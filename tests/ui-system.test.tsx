@@ -117,12 +117,34 @@ describe("0.1.25 shared UI contract", () => {
     expect(appSource).toContain("KOCPY · QUICK START");
     expect(appSource).toContain("<h2>软件使用说明</h2>");
     expect(appSource).toContain(
-      "<strong>当前更新：项目规则确认与大型 PDF 报告</strong>",
+      "<strong>当前更新：完整接收、按日交付与 NAS 归档</strong>",
     );
     expect(appSource).toContain(
       "<strong>0.1.35：发布链与真实介质验收保护</strong>",
     );
     expect(appSource).not.toContain("KOCPY {APP_VERSION} · QUICK START");
+  });
+
+  it("keeps automatic PDF reports enabled by default and configurable per task", () => {
+    const appSource = rendererSources.find(({ name }) => name === "App.tsx")!
+        .source,
+      composerSource = rendererSources.find(
+        ({ name }) => name === "Composer.tsx",
+      )!.source,
+      storageSource = fs.readFileSync(
+        path.resolve("src/main/storage.ts"),
+        "utf8",
+      ),
+      mainSource = fs.readFileSync(path.resolve("src/main/index.ts"), "utf8");
+    expect(storageSource).toContain("automaticPdf: true");
+    expect(mainSource).toContain("...defaultSettings");
+    expect(mainSource).toContain("automaticPdf: settings.automaticPdf !== false");
+    expect(appSource).toContain("<h3>完成后自动生成 PDF</h3>");
+    expect(appSource).toContain('aria-label="默认自动生成 PDF"');
+    expect(composerSource).toContain(
+      "useState(settings.automaticPdf !== false)",
+    );
+    expect(composerSource).toContain("本任务不自动生成 PDF 报告");
   });
 
   it("wires mixed-day delivery only from verified project task details", () => {

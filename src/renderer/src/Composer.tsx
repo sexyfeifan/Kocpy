@@ -103,7 +103,7 @@ export function Composer({
     [hidden, setHidden] = useState(settings.includeHidden),
     [mirror, setMirror] = useState(false),
     [priority, setPriority] = useState(false),
-    [automaticPdf, setAutomaticPdf] = useState(true);
+    [automaticPdf, setAutomaticPdf] = useState(settings.automaticPdf !== false);
   const [clock, setClock] = useState(Date.now());
   const [busy, setBusy] = useState(false),
     [error, setError] = useState(""),

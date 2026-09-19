@@ -71,6 +71,7 @@ export const defaultSettings = {
   defaultHash: "sha256",
   defaultDuplicateStrategy: "skip",
   includeHidden: true,
+  automaticPdf: true,
   operator: "",
   theme: "dark",
   reportSyncPath: "",

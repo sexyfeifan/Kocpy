@@ -49,6 +49,7 @@ describe("renderer initial render (not a substitute for desktop acceptance)", ()
           defaultHash: "sha256",
           defaultDuplicateStrategy: "skip",
           includeHidden: true,
+          automaticPdf: true,
           operator: "",
           theme: "dark",
           reportSyncPath: "",
