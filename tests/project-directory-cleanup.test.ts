@@ -11,7 +11,15 @@ import {
 import {
   executeProjectDirectoryCleanup as executeCleanup,
   previewProjectDirectoryCleanup as previewCleanup,
+  type ProjectDirectoryCleanupJournal,
 } from "../src/main/project-directory-cleanup";
+import {
+  clearProjectDirectoryCleanupJournal,
+  readProjectDirectoryCleanupJournal,
+  reconcileProjectDirectoryCleanupJournal,
+  writeProjectDirectoryCleanupJournal,
+} from "../src/main/project-directory-cleanup-journal";
+import { Storage } from "../src/main/storage";
 import type { BackupTask, ProjectConfig } from "../src/main/types";
 
 const roots: string[] = [];
@@ -26,10 +34,20 @@ const previewProjectDirectoryCleanup = (
 const executeProjectDirectoryCleanup = (
   ...args: Parameters<typeof executeCleanup>
 ) =>
-  executeCleanup(args[0], args[1], args[2], args[3], {
-    workstationId,
-    ...(args[4] || {}),
-  });
+  executeCleanup(
+    args[0],
+    args[1],
+    args[2],
+    args[3],
+    {
+      workstationId,
+      ...(args[4] || {}),
+    },
+    args[5] || {
+      beforeMutation: async () => {},
+      checkpoint: async () => {},
+    },
+  );
 afterEach(async () => {
   await Promise.all(
     roots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true })),
@@ -118,6 +136,25 @@ describe("project empty framework directory policy", () => {
     );
     expect(result.audit.targets[0]).toMatchObject({ result: "skipped" });
     expect(result.audit.targets[0].reason).toContain("也算内容");
+    expect((await fs.lstat(target)).isDirectory()).toBe(true);
+  });
+
+  it("keeps a target whose cleanup authorization was revoked after preview", async () => {
+    const { project, date, target } = await fixture(),
+      preview = await previewProjectDirectoryCleanup(project, [], {
+        date,
+        scheduleKey: "FX3",
+      });
+    expect(preview.targets[0].status).toBe("eligible");
+    project.unusedDevicesByDate = {};
+    const result = await executeProjectDirectoryCleanup(
+      project,
+      [],
+      preview,
+      "DIT",
+    );
+    expect(result.audit.targets[0]).toMatchObject({ result: "skipped" });
+    expect(result.audit.targets[0].reason).toContain("决定已不存在");
     expect((await fs.lstat(target)).isDirectory()).toBe(true);
   });
 
@@ -243,5 +280,159 @@ describe("project empty framework directory policy", () => {
     expect(preview.targets.every((target) => target.status === "kept")).toBe(true);
     expect(preview.targets[0].reason).toContain("共同使用");
     expect((await fs.lstat(preview.targets[0].path)).isDirectory()).toBe(true);
+  });
+});
+
+describe("project empty-directory cleanup recovery journal", () => {
+  it("refuses to remove an authorized directory without a durable journal", async () => {
+    const { project, date, target } = await fixture(),
+      preview = await previewProjectDirectoryCleanup(project, [], {
+        date,
+        scheduleKey: "FX3",
+      });
+    await expect(
+      executeCleanup(project, [], preview, "DIT", { workstationId }),
+    ).rejects.toThrow("持久化恢复日志");
+    expect((await fs.lstat(target)).isDirectory()).toBe(true);
+  });
+
+  it("recovers a checkpointed removal after project persistence fails", async () => {
+    const { root, project, date, target } = await fixture(),
+      storage = new Storage(path.join(root, "state")),
+      preview = await previewProjectDirectoryCleanup(project, [], {
+        date,
+        scheduleKey: "FX3",
+      }),
+      result = await executeCleanup(
+        project,
+        [],
+        preview,
+        "DIT",
+        { workstationId },
+        {
+          beforeMutation: (journal) =>
+            writeProjectDirectoryCleanupJournal(storage, journal),
+          checkpoint: (journal) =>
+            writeProjectDirectoryCleanupJournal(storage, journal),
+        },
+      );
+    await expect(fs.lstat(target)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(result.audit.targets[0].result).toBe("removed");
+
+    // Simulate writeProjects failing: after restart only the original project
+    // and the durable cleanup journal are available.
+    const persistProject = async (_value: ProjectConfig) => {
+      throw new Error("simulated project persistence failure");
+    };
+    await expect(persistProject(result.project)).rejects.toThrow(
+      "simulated project persistence failure",
+    );
+    const journal = await readProjectDirectoryCleanupJournal(storage);
+    expect(journal?.targets[0].result).toBe("removed");
+    const recovered = await reconcileProjectDirectoryCleanupJournal(
+      [project],
+      journal!,
+      2_000,
+    );
+    expect(recovered.audit.targets[0].result).toBe("removed");
+    expect(
+      recovered.projects[0].managedProjectDirectories?.[0].removedAt,
+    ).toBeTypeOf("number");
+    expect(recovered.projects[0].directoryCleanupAudits).toHaveLength(1);
+
+    await storage.write("projects.test.json", recovered.projects);
+    await clearProjectDirectoryCleanupJournal(storage);
+    expect(await readProjectDirectoryCleanupJournal(storage)).toBeUndefined();
+  });
+
+  it("records an uncheckpointed missing path honestly and recovery is idempotent", async () => {
+    const { root, project, date, target } = await fixture(),
+      storage = new Storage(path.join(root, "state")),
+      preview = await previewProjectDirectoryCleanup(project, [], {
+        date,
+        scheduleKey: "FX3",
+      });
+    await expect(
+      executeCleanup(
+        project,
+        [],
+        preview,
+        "DIT",
+        { workstationId },
+        {
+          beforeMutation: (journal) =>
+            writeProjectDirectoryCleanupJournal(storage, journal),
+          checkpoint: async () => {
+            throw new Error("simulated durable checkpoint failure");
+          },
+        },
+      ),
+    ).rejects.toThrow("simulated durable checkpoint failure");
+    await expect(fs.lstat(target)).rejects.toMatchObject({ code: "ENOENT" });
+
+    const journal = await readProjectDirectoryCleanupJournal(storage);
+    expect(journal?.targets[0].result).toBe("pending");
+    const first = await reconcileProjectDirectoryCleanupJournal(
+      [project],
+      journal!,
+      3_000,
+    );
+    expect(first.audit.targets[0].result).toBe("missing-unconfirmed");
+    expect(
+      first.projects[0].managedProjectDirectories?.[0].removedAt,
+    ).toBeUndefined();
+    expect(
+      first.projects[0].managedProjectDirectories?.[0].missingObservedAt,
+    ).toBe(3_000);
+
+    const second = await reconcileProjectDirectoryCleanupJournal(
+      first.projects,
+      journal!,
+      4_000,
+    );
+    expect(second).toMatchObject({ changed: false, alreadyApplied: true });
+    expect(second.projects[0].directoryCleanupAudits).toHaveLength(1);
+  });
+
+  it("never removes or blesses a journal target without authorization", async () => {
+    const { project, target, destination, relative, date } = await fixture(),
+      proof = project.managedProjectDirectories?.[0];
+    expect(proof).toBeTruthy();
+    const journal: ProjectDirectoryCleanupJournal = {
+      schemaVersion: 1,
+      id: "journal-unauthorized",
+      auditId: "audit-unauthorized",
+      previewId: "preview-unauthorized",
+      projectId: project.id,
+      workstationId,
+      date,
+      scheduleKey: "FX3",
+      operator: "DIT",
+      requestedAt: 1_000,
+      startedAt: 1_100,
+      targets: [
+        {
+          destinationRoot: destination,
+          relativePath: relative,
+          path: target,
+          proofId: proof!.id,
+          authorized: false,
+          authorizationReason: "policy changed",
+          result: "removed",
+          resultReason: "untrusted claim",
+          checkedAt: 1_200,
+        },
+      ],
+    };
+    const recovered = await reconcileProjectDirectoryCleanupJournal(
+      [project],
+      journal,
+      5_000,
+    );
+    expect((await fs.lstat(target)).isDirectory()).toBe(true);
+    expect(recovered.audit.targets[0].result).toBe("skipped");
+    expect(
+      recovered.projects[0].managedProjectDirectories?.[0].removedAt,
+    ).toBeUndefined();
   });
 });

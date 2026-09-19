@@ -124,7 +124,14 @@ import {
   executeProjectDirectoryCleanup,
   previewProjectDirectoryCleanup,
   type ProjectDirectoryCleanupInput,
+  type ProjectDirectoryCleanupJournal,
 } from "./project-directory-cleanup";
+import {
+  clearProjectDirectoryCleanupJournal,
+  readProjectDirectoryCleanupJournal,
+  reconcileProjectDirectoryCleanupJournal,
+  writeProjectDirectoryCleanupJournal,
+} from "./project-directory-cleanup-journal";
 import {
   manifestRequirementMet,
   projectCloseoutSummary,
@@ -464,6 +471,19 @@ const projectDirectoryCleanupPreviews = new Map<
   string,
   Awaited<ReturnType<typeof previewProjectDirectoryCleanup>>
 >();
+let pendingProjectDirectoryCleanup: ProjectDirectoryCleanupJournal | undefined,
+  pendingProjectDirectoryCleanupError: string | undefined;
+const assertNoPendingProjectDirectoryCleanup = (projectId: string) => {
+  if (
+    !pendingProjectDirectoryCleanupError &&
+    pendingProjectDirectoryCleanup?.projectId !== projectId
+  )
+    return;
+  throw new Error(
+    pendingProjectDirectoryCleanupError ||
+      "该项目有一次空目录整理等待恢复调和。请重启 Kocpy 完成调和；在此之前不会补目录、重复整理或删除项目。",
+  );
+};
 const operations = new OperationRegistry((records) =>
   store.write("operation-history.json", records),
 );
@@ -1883,7 +1903,7 @@ app.whenReady().then(async () => {
     }
     engine.loadTask(task);
   }
-  const initialProjects = structuredClone(workspaceLoad.state.projects).map(
+  let initialProjects = structuredClone(workspaceLoad.state.projects).map(
     normalizeProject,
   );
   startupRecordsChanged ||= initialProjects.some(
@@ -1891,12 +1911,34 @@ app.whenReady().then(async () => {
       JSON.stringify(project) !==
       JSON.stringify(workspaceLoad.state.projects[index]),
   );
+  let cleanupRecoveryReadyToClear = false;
+  try {
+    pendingProjectDirectoryCleanup =
+      await readProjectDirectoryCleanupJournal(store);
+    if (pendingProjectDirectoryCleanup) {
+      const recovered = await reconcileProjectDirectoryCleanupJournal(
+        initialProjects,
+        pendingProjectDirectoryCleanup,
+      );
+      initialProjects = recovered.projects;
+      startupRecordsChanged ||= recovered.changed;
+      cleanupRecoveryReadyToClear = true;
+    }
+  } catch (error) {
+    pendingProjectDirectoryCleanupError =
+      error instanceof Error ? error.message : String(error);
+  }
   if (startupRecordsChanged)
     await commitWorkspace({
       tasks: engine.getAllTasks().slice().reverse(),
       projects: initialProjects,
       syncCatalog: true,
     });
+  if (cleanupRecoveryReadyToClear) {
+    await clearProjectDirectoryCleanupJournal(store);
+    pendingProjectDirectoryCleanup = undefined;
+    pendingProjectDirectoryCleanupError = undefined;
+  }
   handle("dialog:directory", async (defaultPath?: string) => {
     const r = await dialog.showOpenDialog({
       properties: ["openDirectory", "createDirectory"],
@@ -5253,6 +5295,7 @@ app.whenReady().then(async () => {
   handle(
     "projects:preview-directory-cleanup",
     async (projectId: string, input: ProjectDirectoryCleanupInput) => {
+      assertNoPendingProjectDirectoryCleanup(projectId);
       const projects = (await readProjects()).map(normalizeProject),
         project = projects.find((item) => item.id === projectId);
       if (!project) throw new Error("项目不存在");
@@ -5275,6 +5318,7 @@ app.whenReady().then(async () => {
   handle(
     "projects:cleanup-empty-directories",
     async (projectId: string, previewId: string, operator: string) => {
+      assertNoPendingProjectDirectoryCleanup(projectId);
       const preview = projectDirectoryCleanupPreviews.get(previewId);
       if (!preview || preview.projectId !== projectId)
         throw new Error("空目录整理预览不存在或已经失效，请重新检查");
@@ -5282,15 +5326,33 @@ app.whenReady().then(async () => {
         index = projects.findIndex((item) => item.id === projectId);
       if (index < 0) throw new Error("项目不存在");
       const workstation = await loadOrCreateWorkstationIdentity(store);
+      let cleanupJournalStarted = false;
       const result = await executeProjectDirectoryCleanup(
         projects[index],
         engine.getAllTasks().filter((task) => task.projectId === projectId),
         preview,
         operator,
         { workstationId: workstation.id },
+        {
+          beforeMutation: async (journal) => {
+            await writeProjectDirectoryCleanupJournal(store, journal);
+            pendingProjectDirectoryCleanup = journal;
+            pendingProjectDirectoryCleanupError = undefined;
+            cleanupJournalStarted = true;
+          },
+          checkpoint: async (journal) => {
+            await writeProjectDirectoryCleanupJournal(store, journal);
+            pendingProjectDirectoryCleanup = journal;
+          },
+        },
       );
       projects[index] = normalizeProject(result.project);
       await writeProjects(projects);
+      if (cleanupJournalStarted) {
+        await clearProjectDirectoryCleanupJournal(store);
+        pendingProjectDirectoryCleanup = undefined;
+        pendingProjectDirectoryCleanupError = undefined;
+      }
       projectDirectoryCleanupPreviews.delete(previewId);
       return { projects, audit: result.audit };
     },
@@ -5954,6 +6016,7 @@ app.whenReady().then(async () => {
     };
   });
   handle("projects:repair-saved-structure", async (projectId: string) => {
+    assertNoPendingProjectDirectoryCleanup(projectId);
     const projects = (await readProjects()).map(normalizeProject),
       index = projects.findIndex((item) => item.id === projectId);
     if (index < 0) throw new Error("项目不存在或已经删除");
@@ -5973,6 +6036,7 @@ app.whenReady().then(async () => {
       operator?: string,
     ) => {
       let project = prepareProject(value);
+      assertNoPendingProjectDirectoryCleanup(project.id);
       if (
         (project.destinationPaths?.length || 0) < (project.requiredCopies || 2)
       )
@@ -6005,6 +6069,7 @@ app.whenReady().then(async () => {
     },
   );
   handle("projects:delete-preview", async (projectId: string) => {
+    assertNoPendingProjectDirectoryCleanup(projectId);
     const projects = (await readProjects()).map(normalizeProject),
       project = projects.find((item) => item.id === projectId);
     if (!project) throw new Error("项目不存在或已经删除");
@@ -6021,6 +6086,7 @@ app.whenReady().then(async () => {
   handle(
     "projects:delete",
     async (projectId: string, confirmationName: string) => {
+      assertNoPendingProjectDirectoryCleanup(projectId);
       const projects = (await readProjects()).map(normalizeProject),
         project = projects.find((item) => item.id === projectId);
       if (!project) throw new Error("项目不存在或已经删除");

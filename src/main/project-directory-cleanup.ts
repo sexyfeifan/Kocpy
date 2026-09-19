@@ -23,6 +23,42 @@ export interface ProjectDirectoryCleanupInput {
   scheduleKey?: string;
 }
 
+export interface ProjectDirectoryCleanupJournalTarget {
+  destinationRoot: string;
+  relativePath: string;
+  path: string;
+  proofId?: string;
+  authorized: boolean;
+  authorizationReason: string;
+  result: "pending" | "removed" | "skipped";
+  resultReason?: string;
+  checkedAt?: number;
+}
+
+export interface ProjectDirectoryCleanupJournal {
+  schemaVersion: 1;
+  id: string;
+  auditId: string;
+  previewId: string;
+  projectId: string;
+  workstationId: string;
+  date: string;
+  scheduleKey?: string;
+  operator: string;
+  requestedAt: number;
+  startedAt: number;
+  targets: ProjectDirectoryCleanupJournalTarget[];
+}
+
+export interface ProjectDirectoryCleanupJournalCallbacks {
+  /** Must durably persist the full authorization before the first rmdir. */
+  beforeMutation: (
+    journal: ProjectDirectoryCleanupJournal,
+  ) => Promise<void>;
+  /** Must durably persist the outcome immediately after every target attempt. */
+  checkpoint: (journal: ProjectDirectoryCleanupJournal) => Promise<void>;
+}
+
 interface CleanupDependencies {
   identity: (directory: string) => Promise<VolumeIdentity>;
   now: () => number;
@@ -303,6 +339,7 @@ export async function executeProjectDirectoryCleanup(
   preview: ProjectDirectoryCleanupPreview,
   operator: string,
   overrides: Partial<CleanupDependencies> = {},
+  journalCallbacks?: ProjectDirectoryCleanupJournalCallbacks,
 ): Promise<{ project: ProjectConfig; audit: ProjectDirectoryCleanupAudit }> {
   if (!operator.trim()) throw new Error("请填写空目录整理操作人");
   if (preview.projectId !== project.id) throw new Error("整理预览不属于当前项目");
@@ -332,35 +369,86 @@ export async function executeProjectDirectoryCleanup(
       ]),
     ),
     auditId = dependencies.id(),
+    journal: ProjectDirectoryCleanupJournal = {
+      schemaVersion: 1,
+      id: dependencies.id(),
+      auditId,
+      previewId: preview.id,
+      projectId: project.id,
+      workstationId: dependencies.workstationId,
+      date: preview.date,
+      scheduleKey: preview.scheduleKey,
+      operator: operator.trim(),
+      requestedAt: preview.createdAt,
+      startedAt,
+      targets: preview.targets.map((shown) => {
+        const current = currentTargets.get(
+            targetKey(shown.destinationRoot, shown.relativePath),
+          ),
+          authorized =
+            shown.status === "eligible" && current?.status === "eligible";
+        return {
+          destinationRoot: current?.destinationRoot || shown.destinationRoot,
+          relativePath: current?.relativePath || shown.relativePath,
+          path: current?.path || shown.path,
+          proofId: current?.proofId || shown.proofId,
+          authorized,
+          authorizationReason: authorized
+            ? current!.reason
+            : current?.reason || shown.reason || "项目目录策略已变化",
+          result: authorized ? "pending" : "skipped",
+          resultReason: authorized
+            ? undefined
+            : current?.reason || shown.reason || "项目目录策略已变化",
+          checkedAt: authorized ? undefined : startedAt,
+        };
+      }),
+    },
     targets: ProjectDirectoryCleanupAudit["targets"] = [];
 
-  for (const shown of preview.targets) {
+  if (journal.targets.some((target) => target.authorized)) {
+    if (!journalCallbacks)
+      throw new Error("空目录整理缺少持久化恢复日志，已在写入前停止");
+    await journalCallbacks.beforeMutation(structuredClone(journal));
+  }
+
+  for (const journalTarget of journal.targets) {
+    if (!journalTarget.authorized) {
+      targets.push({
+        destinationRoot: journalTarget.destinationRoot,
+        relativePath: journalTarget.relativePath,
+        path: journalTarget.path,
+        result: "skipped",
+        reason: journalTarget.resultReason || journalTarget.authorizationReason,
+        checkedAt: journalTarget.checkedAt || startedAt,
+      });
+      continue;
+    }
     const checkedAt = dependencies.now(),
-      current = currentTargets.get(
-        targetKey(shown.destinationRoot, shown.relativePath),
+      current = await evaluateTarget(
+        next,
+        tasks,
+        input,
+        journalTarget.destinationRoot,
+        journalTarget.relativePath,
+        dependencies,
       );
-    if (shown.status !== "eligible") {
+    if (current.status !== "eligible") {
+      journalTarget.result = "skipped";
+      journalTarget.resultReason = current.reason;
+      journalTarget.checkedAt = checkedAt;
       targets.push({
-        destinationRoot: shown.destinationRoot,
-        relativePath: shown.relativePath,
-        path: shown.path,
+        destinationRoot: current.destinationRoot,
+        relativePath: current.relativePath,
+        path: current.path,
         result: "skipped",
-        reason: current?.reason || shown.reason,
+        reason: current.reason,
         checkedAt,
       });
+      await journalCallbacks!.checkpoint(structuredClone(journal));
       continue;
     }
-    if (!current || current.status !== "eligible") {
-      targets.push({
-        destinationRoot: shown.destinationRoot,
-        relativePath: shown.relativePath,
-        path: shown.path,
-        result: "skipped",
-        reason: current?.reason || "项目目录策略已变化",
-        checkedAt,
-      });
-      continue;
-    }
+    let target: ProjectDirectoryCleanupAudit["targets"][number];
     try {
       // rmdir is intentionally non-recursive. A file appearing after the last
       // check turns into ENOTEMPTY and is preserved rather than erased.
@@ -372,16 +460,16 @@ export async function executeProjectDirectoryCleanup(
         proof.removedAt = checkedAt;
         proof.cleanupAuditId = auditId;
       }
-      targets.push({
+      target = {
         destinationRoot: current.destinationRoot,
         relativePath: current.relativePath,
         path: current.path,
         result: "removed",
         reason: "执行时复核为空，已使用非递归方式移除",
         checkedAt,
-      });
+      };
     } catch (error: any) {
-      targets.push({
+      target = {
         destinationRoot: current.destinationRoot,
         relativePath: current.relativePath,
         path: current.path,
@@ -391,8 +479,16 @@ export async function executeProjectDirectoryCleanup(
             ? "执行前目录出现内容，已安全保留"
             : `移除失败：${error?.message || String(error)}`,
         checkedAt,
-      });
+      };
     }
+    targets.push(target);
+    journalTarget.result = target.result === "removed" ? "removed" : "skipped";
+    journalTarget.resultReason = target.reason;
+    journalTarget.checkedAt = target.checkedAt;
+    // If this durable checkpoint fails after rmdir, the older on-disk journal
+    // deliberately remains pending. Startup recovery then records the missing
+    // path as unconfirmed instead of inventing a successful Kocpy deletion.
+    await journalCallbacks!.checkpoint(structuredClone(journal));
   }
   const audit: ProjectDirectoryCleanupAudit = {
     id: auditId,

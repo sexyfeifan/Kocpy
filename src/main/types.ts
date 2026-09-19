@@ -671,6 +671,8 @@ export interface ProjectManagedDirectoryRecord {
   createdAt: number;
   reason: "explicit-precreate" | "repair";
   removedAt?: number;
+  /** Observed missing during recovery, without claiming Kocpy caused removal. */
+  missingObservedAt?: number;
   cleanupAuditId?: string;
 }
 
@@ -678,7 +680,7 @@ export interface ProjectDirectoryCleanupAuditTarget {
   destinationRoot: string;
   relativePath: string;
   path: string;
-  result: "removed" | "skipped";
+  result: "removed" | "skipped" | "missing-unconfirmed";
   reason: string;
   checkedAt: number;
 }
