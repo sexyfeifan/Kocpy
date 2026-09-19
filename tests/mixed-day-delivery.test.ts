@@ -7,6 +7,7 @@ import { hashFile } from "../src/main/backup/BackupEngine";
 import { volumeIdentity } from "../src/main/system";
 import {
   applyCardDateAllocationDecisions,
+  authorizeDailyDeliveryArtifact,
   buildCardDateAllocation,
   dailyDeliveryReportHtml,
   executeDailyDeliveryRun,
@@ -123,6 +124,33 @@ describe("mixed-day full-card allocation and delivery", () => {
     );
     expect(confirmed.groups.every((group) => group.confirmedBy === "DIT")).toBe(
       true,
+    );
+  });
+
+  it("analyzes the actual verified suffix copy instead of a conflicting relative path", async () => {
+    const record = task.fileRecords.find(
+        (item) => item.relativePath === "DCIM/20260915/C002.MOV",
+      )!,
+      original = record.destinations[0].path,
+      suffixCopy = path.join(path.dirname(original), "C002_1.MOV");
+    await fs.rename(original, suffixCopy);
+    await fs.writeFile(original, "conflict!");
+    record.destinations[0].path = suffixCopy;
+    let probed = "";
+    await buildCardDateAllocation(task, verifiedCard, {
+      readEmbeddedDate: async (absolute) => {
+        if (absolute.includes("C002")) probed = absolute;
+        return "2026-09-15T18:20:00Z";
+      },
+    });
+    expect(probed).toBe(await fs.realpath(suffixCopy));
+  });
+
+  it("rejects same-size content drift before offering date suggestions", async () => {
+    const file = path.join(verifiedCard, "DCIM", "20260915", "C001.MOV");
+    await fs.writeFile(file, "wrong");
+    await expect(buildCardDateAllocation(task, verifiedCard)).rejects.toThrow(
+      /偏离原始校验记录/,
     );
   });
 
@@ -292,5 +320,34 @@ describe("mixed-day full-card allocation and delivery", () => {
     const resumed = await executeDailyDeliveryRun(task, plan, latest);
     expect(resumed.status).toBe("completed");
     expect(resumed.manifestPaths).toHaveLength(2);
+  });
+
+  it("rejects a report directory replaced by a symlink", async () => {
+    let plan = await buildCardDateAllocation(task, verifiedCard);
+    plan = applyCardDateAllocationDecisions(
+      task,
+      plan,
+      plan.groups.map((group) => ({
+        groupId: group.id,
+        shootingDate: "2026-09-15",
+      })),
+      "DIT",
+    );
+    const run = await prepareDailyDeliveryRun(task, plan, {
+        shootingDate: "2026-09-15",
+        sourceDestinationId: "verified-copy",
+        destinationParent: deliveryParent,
+        operator: "DIT",
+      }),
+      completed = await executeDailyDeliveryRun(task, plan, run),
+      reportDirectory = path.join(completed.finalPath, "Kocpy报告"),
+      outside = path.join(root, "outside-reports");
+    await fs.rm(reportDirectory, { recursive: true });
+    await fs.mkdir(outside);
+    await fs.symlink(outside, reportDirectory);
+    await expect(
+      authorizeDailyDeliveryArtifact(completed, "report.pdf"),
+    ).rejects.toThrow(/真实目录|符号链接/);
+    expect(await fs.readdir(outside)).toEqual([]);
   });
 });

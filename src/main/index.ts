@@ -81,6 +81,7 @@ import type {
 } from "./types";
 import {
   applyCardDateAllocationDecisions,
+  authorizeDailyDeliveryArtifact,
   buildCardDateAllocation,
   dailyDeliveryReportHtml,
   executeDailyDeliveryRun,
@@ -963,11 +964,8 @@ async function publishDailyDeliveryReport(
         `已记录的报告路径内容发生变化，Kocpy 未覆盖：${recordedPath}`,
       );
   }
-  const reports = path.join(run.finalPath, "Kocpy报告"),
-    target = path.join(
-      reports,
-      `Kocpy_${run.shootingDate.replace(/-/g, "")}_${run.id.slice(0, 8)}_当日交付报告.pdf`,
-    ),
+  const fileName = `Kocpy_${run.shootingDate.replace(/-/g, "")}_${run.id.slice(0, 8)}_当日交付报告.pdf`,
+    target = await authorizeDailyDeliveryArtifact(run, fileName),
     value = await htmlToPdf(dailyDeliveryReportHtml(task, run)),
     digest = sha256Bytes(value);
   run.reportStatus = "pending";
@@ -979,7 +977,10 @@ async function publishDailyDeliveryReport(
   const existing = await hashFile(target, "sha256").catch(() => undefined);
   if (existing && existing !== digest)
     throw new Error(`报告路径已有其他文件，Kocpy 未覆盖：${target}`);
-  if (!existing) await publishNewArtifact(target, value);
+  if (!existing) {
+    await authorizeDailyDeliveryArtifact(run, fileName);
+    await publishNewArtifact(target, value);
+  }
   run.reportStatus = "completed";
   upsertDailyDeliveryRun(task, run);
   await persist(true);

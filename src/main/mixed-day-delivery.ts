@@ -132,6 +132,59 @@ async function mapWithConcurrency<T, R>(
   return result;
 }
 
+async function verifiedSourceDestination(
+  task: BackupTask,
+  sourceRoot: string,
+) {
+  const root = await canonical(sourceRoot),
+    candidates = await Promise.all(
+      task.destinations.map(async (destination, index) => ({
+        destination,
+        index,
+        resolved: destination.resolvedPath
+          ? await canonical(destination.resolvedPath).catch(() => undefined)
+          : undefined,
+      })),
+    ),
+    match = candidates.find(
+      (candidate) =>
+        candidate.resolved === root &&
+        candidate.destination.verified &&
+        candidate.destination.resolvedPath,
+    );
+  if (!match)
+    throw new Error("日期分析来源不再是任务中在线且校验通过的完整副本");
+  const identity = await volumeIdentity(root);
+  assertVolumeIdentity(
+    match.destination.volumeUuid,
+    match.destination.volumeId,
+    identity,
+    "完整素材卷副本",
+  );
+  return { root, destinationIndex: match.index };
+}
+
+async function verifiedRecordPath(
+  task: BackupTask,
+  root: string,
+  destinationIndex: number,
+  record: FileRecord,
+) {
+  const copy = record.destinations[destinationIndex];
+  if (!copy?.verified)
+    throw new Error(`完整副本未通过该文件校验：${record.relativePath}`);
+  const absolute = await canonical(copy.path);
+  if (!inside(absolute, root))
+    throw new Error(`完整副本文件路径越出素材卷目录：${record.relativePath}`);
+  const stat = await fs.stat(absolute);
+  if (!stat.isFile() || stat.size !== record.size)
+    throw new Error(`素材卷副本与记录不一致：${record.relativePath}`);
+  const checksum = await hashFile(absolute, task.hashAlgorithm);
+  if (checksum !== record.srcChecksum || checksum !== copy.checksum)
+    throw new Error(`完整副本内容已偏离原始校验记录：${record.relativePath}`);
+  return { absolute, stat };
+}
+
 /**
  * Build suggestions from a verified card record. Suggestions are never treated
  * as authoritative shooting dates until an operator explicitly confirms them.
@@ -145,7 +198,10 @@ export async function buildCardDateAllocation(
   } = {},
 ): Promise<CardDateAllocationPlan> {
   if (!task.fileRecords.length) throw new Error("该素材卷没有可分配的文件记录");
-  const root = await canonical(sourceRoot);
+  const { root, destinationIndex } = await verifiedSourceDestination(
+    task,
+    sourceRoot,
+  );
   if (!(await fs.stat(root)).isDirectory()) throw new Error("素材卷副本目录不可用");
   const families = new Map<string, FileRecord[]>();
   for (const record of task.fileRecords) {
@@ -167,13 +223,30 @@ export async function buildCardDateAllocation(
           .sort((left, right) => left.localeCompare(right)),
         id = groupId(relativePaths),
         pathDates = new Set(relativePaths.flatMap(datesInText)),
-        evidence: string[] = [];
+        evidence: string[] = [],
+        verified = new Map<
+          string,
+          ReturnType<typeof verifiedRecordPath>
+        >(),
+        readVerified = (record: FileRecord) => {
+          let value = verified.get(record.relativePath);
+          if (!value) {
+            value = verifiedRecordPath(
+              task,
+              root,
+              destinationIndex,
+              record,
+            );
+            verified.set(record.relativePath, value);
+          }
+          return value;
+        };
       let embeddedDate: string | undefined;
       const media = records.find((record) =>
         mediaForEmbeddedDate.test(record.relativePath),
       );
       if (media && options.readEmbeddedDate) {
-        const absolute = await safeChild(root, media.relativePath);
+        const { absolute } = await readVerified(media);
         embeddedDate = dateFromTimestamp(
           await options.readEmbeddedDate(absolute).catch(() => undefined),
         );
@@ -182,10 +255,7 @@ export async function buildCardDateAllocation(
       }
       const modifiedDates = new Set<string>();
       for (const record of records) {
-        const absolute = await safeChild(root, record.relativePath),
-          stat = await fs.stat(absolute);
-        if (!stat.isFile() || stat.size !== record.size)
-          throw new Error(`素材卷副本与记录不一致：${record.relativePath}`);
+        const { stat } = await readVerified(record);
         modifiedDates.add(localDate(stat.mtimeMs));
       }
       if (pathDates.size === 1)
@@ -492,6 +562,60 @@ async function readMarker(file: string) {
     });
 }
 
+export async function authorizeDailyDeliveryArtifact(
+  run: DailyDeliveryRun,
+  fileName: string,
+) {
+  if (path.basename(fileName) !== fileName || !fileName)
+    throw new Error("当日交付报告文件名无效");
+  const destinationParent = await canonical(run.destinationParent),
+    identity = await volumeIdentity(destinationParent);
+  assertVolumeIdentity(
+    run.destinationVolumeUuid,
+    run.destinationVolumeId,
+    identity,
+    "交付目的地",
+  );
+  const expectedFinal = path.join(
+    destinationParent,
+    path.basename(run.finalPath),
+  );
+  if (expectedFinal !== run.finalPath)
+    throw new Error("交付最终目录路径已经变化，已停止发布报告");
+  const finalStat = await fs.lstat(run.finalPath);
+  if (!finalStat.isDirectory() || finalStat.isSymbolicLink())
+    throw new Error("交付最终目录不再是安全的真实目录");
+  const finalRealPath = await fs.realpath(run.finalPath);
+  if (finalRealPath !== run.finalPath)
+    throw new Error("交付最终目录已通过别名或符号链接重定向");
+  const reportDirectory = path.join(run.finalPath, "Kocpy报告");
+  try {
+    const reportStat = await fs.lstat(reportDirectory);
+    if (!reportStat.isDirectory() || reportStat.isSymbolicLink())
+      throw new Error("交付报告位置不是安全的真实目录");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    await fs.mkdir(reportDirectory, { recursive: false });
+  }
+  if ((await fs.realpath(reportDirectory)) !== reportDirectory)
+    throw new Error("交付报告目录已通过符号链接重定向");
+  const target = path.join(reportDirectory, fileName),
+    authorized = await safeChild(
+      run.finalPath,
+      path.relative(run.finalPath, target),
+    );
+  if (path.resolve(authorized) !== path.resolve(target))
+    throw new Error("交付报告路径越出当日交付目录");
+  try {
+    const targetStat = await fs.lstat(target);
+    if (!targetStat.isFile() || targetStat.isSymbolicLink())
+      throw new Error("交付报告目标已存在且不是安全的普通文件");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  return target;
+}
+
 function mhlForDelivery(task: BackupTask, run: DailyDeliveryRun) {
   const created = new Date(run.completedAt || Date.now()).toISOString();
   return `<?xml version="1.0" encoding="UTF-8"?>\n<hashlist version="1.1"><creator><name>Kocpy</name><date>${xml(created)}</date></creator><process><note>${xml(`Daily delivery from immutable task ${task.id}`)}</note></process><hashes>${run.files
@@ -721,13 +845,18 @@ export async function executeDailyDeliveryRun(
     }
     if (run.files.length !== run.totalFiles || run.completedBytes !== run.totalBytes)
       throw new Error("交付文件统计与确认范围不一致");
-    const reports = path.join(finalPath, "Kocpy报告");
-    await fs.mkdir(reports, { recursive: true });
     run.completedAt ||= Date.now();
     const base = `Kocpy_${run.shootingDate.replace(/-/g, "")}_${run.id.slice(0, 8)}`,
-      jsonPath = path.join(reports, `${base}_当日交付清单.json`),
-      mhlPath = path.join(reports, `${base}_当日交付清单.mhl`),
+      jsonPath = await authorizeDailyDeliveryArtifact(
+        run,
+        `${base}_当日交付清单.json`,
+      ),
+      mhlPath = await authorizeDailyDeliveryArtifact(
+        run,
+        `${base}_当日交付清单.mhl`,
+      ),
       completedSnapshot: DailyDeliveryRun = { ...run, status: "completed" };
+    await authorizeDailyDeliveryArtifact(run, path.basename(jsonPath));
     await writeGeneratedArtifactIdempotent(
       jsonPath,
       JSON.stringify(
@@ -749,6 +878,7 @@ export async function executeDailyDeliveryRun(
         2,
       ),
     );
+    await authorizeDailyDeliveryArtifact(run, path.basename(mhlPath));
     await writeGeneratedArtifactIdempotent(
       mhlPath,
       mhlForDelivery(task, completedSnapshot),
