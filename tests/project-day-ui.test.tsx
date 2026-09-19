@@ -43,6 +43,8 @@ describe("project detail date groups", () => {
     expect(html).toContain('aria-expanded="true"');
     expect(html).toContain("风险 1");
     expect(html).toContain("当日状态");
+    expect(html).toContain("FX3");
+    expect(html).toContain("应该有素材 · 缺少备份");
     expect(html).toContain("确认未使用");
   });
 

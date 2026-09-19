@@ -38,7 +38,7 @@ describe("closeout cannot hide recorded unsafe material", () => {
     expect(cell.exempt).toBe(false);
     expect(cell.complete).toBe(false);
     expect(cell.attention).toBe(true);
-    expect(cell.label).not.toMatch(/休息日|当天未使用/);
+    expect(cell.statusLabel).not.toMatch(/休息日|当天未使用/);
     // The original declaration is preserved; only the live conclusion changes.
     expect(projectCellStatus(project, [], date, "FX3").exempt).toBe(true);
   });
@@ -75,7 +75,7 @@ describe("closeout cannot hide recorded unsafe material", () => {
     expect(cell.rows).toHaveLength(1);
     expect(cell.attempts).toHaveLength(2);
     expect(cell.safe).toBe(1);
-    expect(cell.label).toBe("已满足收工要求");
+    expect(cell.statusLabel).toBe("已满足收工要求");
   });
   it("shows an explicitly expected temporary device even before material arrives", () => {
     const { project } = fixture();

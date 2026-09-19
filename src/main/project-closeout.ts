@@ -135,7 +135,7 @@ export function projectCellStatus(
     attention: !exempt && (logicalRows.length ? safe !== logicalRows.length : expected),
     exempt,
     complete: exempt || Boolean(logicalRows.length && safe === logicalRows.length),
-    label: exempt && rest
+    statusLabel: exempt && rest
       ? "休息日"
       : exempt && unused
         ? "当天未使用"

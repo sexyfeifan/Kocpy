@@ -117,7 +117,7 @@ describe("existing backup record consolidation", () => {
         result.records,
         "2026-08-25",
         "FX3",
-      ).label,
+      ).statusLabel,
     ).toBe("已满足收工要求");
   });
 

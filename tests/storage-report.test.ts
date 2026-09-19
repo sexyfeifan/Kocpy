@@ -373,6 +373,7 @@ describe("Persistence and reports", () => {
     );
     expect(expected.pending).toHaveLength(1);
     expect(expected.unconfirmed).toHaveLength(0);
-    expect(expected.pending[0].label).toBe("应该有素材 · 缺少备份");
+    expect(expected.pending[0].label).toBe("FX3");
+    expect(expected.pending[0].statusLabel).toBe("应该有素材 · 缺少备份");
   });
 });

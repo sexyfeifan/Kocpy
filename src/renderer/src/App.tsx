@@ -523,9 +523,9 @@ export function ProjectDayGroups({
                                     ).id,
                                   )
                             }
-                            title={!rows.length ? "恢复为待确认" : cell.label}
+                            title={!rows.length ? "恢复为待确认" : cell.statusLabel}
                           >
-                            {cell.label}
+                            {cell.statusLabel}
                           </button>
                         )}
                       </div>

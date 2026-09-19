@@ -210,4 +210,38 @@ describe("project empty framework directory policy", () => {
     expect(preview.targets[0].reason).toContain("任务引用");
     expect((await fs.lstat(target)).isDirectory()).toBe(true);
   });
+
+  it.each([
+    ["omits the shooting date", "{project}/{device}/{card}"],
+    ["omits the device", "{project}/{shootingDate}/{card}"],
+    ["places card before its date and device", "{project}/{card}/{shootingDate}/{device}"],
+  ])("keeps a shared custom-rule framework that %s", async (_case, namingRule) => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "kocpy-shared-framework-")),
+      destination = path.join(root, "MASTER"),
+      date = "2026-09-19";
+    roots.push(root);
+    await fs.mkdir(destination);
+    const project: ProjectConfig = {
+      id: `shared-${namingRule}`,
+      name: "Shared framework",
+      devices: ["FX3", "A7CR"],
+      volumePrefix: "CARD_",
+      shootingDateStart: date,
+      shootingDateEnd: "2026-09-20",
+      projectFolderName: "20260919_Shared framework",
+      destinationPaths: [destination],
+      directoryCreationMode: "precreate",
+      namingRule,
+      unusedDevicesByDate: { [date]: ["FX3"] },
+    };
+    await createProjectStructure(project, "explicit-precreate", workstationId);
+    const preview = await previewProjectDirectoryCleanup(project, [], {
+      date,
+      scheduleKey: "FX3",
+    });
+    expect(preview.targets.length).toBeGreaterThan(0);
+    expect(preview.targets.every((target) => target.status === "kept")).toBe(true);
+    expect(preview.targets[0].reason).toContain("共同使用");
+    expect((await fs.lstat(preview.targets[0].path)).isDirectory()).toBe(true);
+  });
 });

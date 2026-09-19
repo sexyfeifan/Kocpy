@@ -342,7 +342,7 @@ export async function generateProjectReport(
             rows = cell.rows;
           const files = rows.reduce((sum, task) => sum + task.totalFiles, 0),
             size = rows.reduce((sum, task) => sum + task.totalBytes, 0);
-          return `<tr><td>${esc(shootingDate)}</td><td>${esc(label)}</td><td>${rows.length}</td><td>${files}</td><td>${formatBytes(size)}</td><td class="${cell.complete ? "ok" : rows.length ? "warn" : "muted"}">${cell.label}</td></tr>`;
+          return `<tr><td>${esc(shootingDate)}</td><td>${esc(label)}</td><td>${rows.length}</td><td>${files}</td><td>${formatBytes(size)}</td><td class="${cell.complete ? "ok" : rows.length ? "warn" : "muted"}">${cell.statusLabel}</td></tr>`;
         },
       ),
     )

@@ -2,9 +2,13 @@ import path from "node:path";
 import { promises as fs } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { compareVolumeIdentity, type VolumeIdentity } from "../common/volume-identity";
+import { normalizePositions } from "../common/interaction";
 import { shootingDateKey } from "../common/shooting-dates";
 import { volumeIdentity } from "./system";
-import { projectFrameworkPaths } from "./project-path";
+import {
+  projectFrameworkPaths,
+  projectShootingDates,
+} from "./project-path";
 import type {
   BackupTask,
   ProjectConfig,
@@ -61,6 +65,60 @@ function scheduleDecisionExists(
     .filter(([date]) => shootingDateKey(date) === day)
     .flatMap(([, values]) => values)
     .includes(input.scheduleKey);
+}
+
+function frameworkScopes(project: ProjectConfig) {
+  if (!project.shootingDateStart) return [];
+  return projectShootingDates(
+    project.shootingDateStart,
+    project.shootingDateEnd || project.shootingDateStart,
+  ).flatMap((date) =>
+    project.devices.flatMap((device) => {
+      const positions = normalizePositions(project.devicePositions?.[device]);
+      return (positions.length ? positions : [undefined]).map((position) => ({
+        id: `${date}\0${device}\0${position || ""}`,
+        date,
+        device,
+        position,
+        scheduleKey: position ? `${device}::${position}` : device,
+      }));
+    }),
+  );
+}
+
+/**
+ * A pre-card framework path may be shared when a custom naming rule places the
+ * card token before date/device tokens or omits those tokens altogether. A
+ * cleanup decision can authorize that path only when every scope that owns it
+ * is covered by the same decision.
+ */
+function frameworkPathSharedOutsideDecision(
+  project: ProjectConfig,
+  input: ProjectDirectoryCleanupInput,
+  relativePath: string,
+) {
+  const date = shootingDateKey(input.date),
+    scopes = frameworkScopes(project),
+    selected = new Set(
+      scopes
+        .filter((scope) => {
+          if (scope.date !== date) return false;
+          if (!input.scheduleKey) return true;
+          const [device, position] = input.scheduleKey.split("::");
+          return (
+            scope.device === device &&
+            (!position ||
+              scope.position === (position === "unassigned" ? undefined : position))
+          );
+        })
+        .map((scope) => scope.id),
+    ),
+    owners = scopes.filter((scope) =>
+      projectFrameworkPaths(project, scope.date, scope.scheduleKey).includes(
+        relativePath,
+      ),
+    );
+  return !owners.length || owners.some((scope) => !selected.has(scope.id));
 }
 
 function taskOutputPaths(task: BackupTask): string[] {
@@ -124,6 +182,10 @@ async function evaluateTarget(
     return kept("对应的未使用或休息决定已不存在");
   if (!isStrictChild(destinationRoot, target))
     return kept("目标不是备份根目录内的安全子目录");
+  if (frameworkPathSharedOutsideDecision(project, input, relativePath))
+    return kept(
+      "该框架目录被其他日期、设备或机位共同使用，不能按当前决定整理",
+    );
   const proof = proofFor(project, destinationRoot, relativePath);
   if (!proof) return kept("没有 Kocpy 创建证明，未知或旧目录会保留");
   if (
