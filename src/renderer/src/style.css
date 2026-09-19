@@ -6,6 +6,189 @@
   background: var(--panel2);
   overflow-wrap: anywhere;
 }
+
+.archive-transfer-panel {
+  scroll-margin-top: 24px;
+}
+.archive-transfer-safety {
+  color: var(--green, #65c48f);
+  border: 1px solid color-mix(in srgb, currentColor 35%, transparent);
+  border-radius: 999px;
+  padding: 5px 9px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.archive-transfer-steps {
+  display: grid;
+  gap: 14px;
+  margin-top: 18px;
+}
+.archive-transfer-step {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  align-items: start;
+  gap: 12px;
+}
+.archive-transfer-step > b {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--accent, #d79a43);
+  color: #161719;
+  font-size: 13px;
+}
+.archive-transfer-drop {
+  min-height: 86px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  padding: 15px;
+  border: 1px dashed var(--border, #34373c);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--panel, #202226) 88%, transparent);
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.archive-transfer-drop.is-over {
+  border-color: var(--accent, #d79a43);
+  background: color-mix(in srgb, var(--accent, #d79a43) 9%, var(--panel, #202226));
+}
+.archive-transfer-drop > svg {
+  color: var(--accent, #d79a43);
+}
+.archive-transfer-drop > div {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+.archive-transfer-drop span {
+  overflow-wrap: anywhere;
+  color: var(--muted, #9ca0a6);
+  font-size: 12px;
+}
+.archive-transfer-plan,
+.archive-transfer-results {
+  border: 1px solid var(--border, #34373c);
+  border-radius: 12px;
+  padding: 15px;
+}
+.archive-transfer-plan {
+  display: grid;
+  gap: 13px;
+}
+.archive-transfer-plan > label {
+  display: grid;
+  gap: 7px;
+  color: var(--muted, #9ca0a6);
+  font-size: 12px;
+}
+.archive-transfer-preview {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.archive-transfer-preview > div:not(.row) {
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--panel-2, #292c31) 86%, transparent);
+}
+.archive-transfer-preview span,
+.archive-transfer-preview small {
+  color: var(--muted, #9ca0a6);
+  font-size: 11px;
+}
+.archive-transfer-final-path,
+.archive-transfer-preview > .row,
+.archive-transfer-warning,
+.archive-transfer-boundary {
+  grid-column: 1 / -1;
+}
+.archive-transfer-warning,
+.archive-transfer-boundary {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.55;
+}
+.archive-transfer-warning {
+  color: #d6a555;
+  background: color-mix(in srgb, #d6a555 9%, transparent);
+}
+.archive-transfer-boundary {
+  color: var(--muted, #9ca0a6);
+  border-left: 3px solid var(--border-strong, #555b63);
+}
+.archive-transfer-results {
+  display: grid;
+  gap: 10px;
+}
+.archive-transfer-results h3 {
+  margin: 0 0 3px;
+  font-size: 14px;
+}
+.archive-transfer-result {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--panel-2, #292c31) 80%, transparent);
+}
+.archive-transfer-result-head,
+.archive-transfer-result-head > span {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.archive-transfer-result-head > span {
+  justify-content: flex-start;
+}
+.archive-transfer-result-head small,
+.archive-transfer-result > small {
+  color: var(--muted, #9ca0a6);
+}
+.archive-transfer-result > p {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--muted, #9ca0a6);
+}
+.archive-transfer-progress {
+  height: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--border, #34373c) 85%, transparent);
+}
+.archive-transfer-progress i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--green, #65c48f);
+  transition: width 0.2s ease;
+}
+.archive-transfer-error {
+  color: var(--red, #ed7e78) !important;
+  font-size: 12px;
+}
+@media (max-width: 760px) {
+  .archive-transfer-drop {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+  .archive-transfer-drop > button {
+    grid-column: 1 / -1;
+    justify-self: stretch;
+  }
+  .archive-transfer-preview {
+    grid-template-columns: 1fr;
+  }
+  .archive-transfer-preview > * {
+    grid-column: 1 !important;
+  }
+}
 .trust-evidence p {
   margin: 8px 0;
   color: var(--sub);

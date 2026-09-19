@@ -1,6 +1,12 @@
 import type { ArchiveScope } from "../../common/interaction";
 import type { OperationRecord } from "../../main/operations";
 import type {
+  ArchiveTransferInventorySummary,
+  ArchiveTransferPreview,
+  ArchiveTransferProgress,
+  ArchiveTransferTaskSummary,
+} from "../../main/archive-transfer";
+import type {
   ArchiveChangeRecord,
   ArchiveHealthRecord,
   ArchiveReminder,
@@ -38,6 +44,9 @@ import type {
 } from "../../main/types";
 export { statusText } from "../../common/status";
 export type {
+  ArchiveTransferInventorySummary,
+  ArchiveTransferProgress,
+  ArchiveTransferTaskSummary,
   ArchiveChangeRecord,
   ArchiveHealthRecord,
   ArchiveReminder,
@@ -73,6 +82,10 @@ export type {
   WorkstationIdentity,
   WorkstationImportAuditRecord,
 };
+export type ArchiveTransferPreviewSummary = Omit<
+  ArchiveTransferPreview,
+  "inventory"
+> & { inventory: ArchiveTransferInventorySummary };
 export interface Volume {
   name: string;
   path: string;
@@ -266,6 +279,22 @@ export interface API {
     preservedDamagedOriginals: number;
     verificationRunId: string;
   }>;
+  getArchiveTransfers(): Promise<ArchiveTransferTaskSummary[]>;
+  previewArchiveTransfer(input: {
+    sourcePath: string;
+    destinationParent: string;
+    projectId?: string;
+  }): Promise<ArchiveTransferPreviewSummary>;
+  startArchiveTransfer(input: {
+    sourcePath: string;
+    destinationParent: string;
+    projectId?: string;
+    previewDigest: string;
+  }): Promise<ArchiveTransferTaskSummary>;
+  resumeArchiveTransfer(id: string): Promise<ArchiveTransferTaskSummary>;
+  retryArchiveTransferReports(
+    id: string,
+  ): Promise<ArchiveTransferTaskSummary>;
   getProjectTemplates(): Promise<ProjectTemplate[]>;
   createTemplateFromProject(
     projectId: string,
@@ -540,6 +569,9 @@ export interface API {
   ): () => void;
   onExistingImportProgress(
     callback: (progress: ExistingImportProgress) => void,
+  ): () => void;
+  onArchiveTransferProgress(
+    callback: (progress: ArchiveTransferProgress) => void,
   ): () => void;
 }
 declare global {

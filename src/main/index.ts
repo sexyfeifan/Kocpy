@@ -209,6 +209,17 @@ import {
   recordDailyPlanDecision,
 } from "./project-evidence";
 import { normalizeProject } from "./project-normalization";
+import {
+  ArchiveTransferManager,
+  summarizeArchiveTransfer,
+  type ArchiveTransferContext,
+  type ArchiveTransferReportSnapshot,
+  type ArchiveTransferTask,
+} from "./archive-transfer";
+import {
+  buildArchiveTransferDetailHtml,
+  buildArchiveTransferSummaryHtml,
+} from "./archive-transfer-report";
 
 app.setName("Kocpy");
 const appDataRoot = app.getPath("appData");
@@ -427,6 +438,7 @@ let main: BrowserWindow | null = null,
   proxyPauseRequested: string | undefined,
   backupStartPending = 0,
   proxyJobs: ProxyJob[] = [];
+let archiveTransferManager: ArchiveTransferManager;
 const proxyIdleWaiters = new Set<() => void>();
 let benchmarkHistory: BenchmarkResult[] = [];
 let reliabilityValidations: ReliabilityValidationRecord[] = [];
@@ -555,6 +567,38 @@ const persist = (syncCatalog = false, syncCompatibility = true) =>
       throw error;
     });
 const readProjects = async () => workspace.getProjects();
+const archiveTransferContext = async (
+  projectId?: string,
+): Promise<ArchiveTransferContext | undefined> => {
+  if (!projectId) return undefined;
+  const project = (await readProjects()).find((item) => item.id === projectId);
+  if (!project) throw new Error("关联项目不存在，请重新选择");
+  const related = engine
+      .getAllTasks()
+      .filter((task) => task.projectId === project.id),
+    dates = projectDates(project, related),
+    historicalEvidence = related.flatMap((task) => {
+      const messages: string[] = [];
+      if (["failed", "cancelled", "unverified"].includes(task.status))
+        messages.push(`${task.name} 的历史任务状态为 ${task.status}`);
+      const manifest = task.externalManifest;
+      if (manifest && manifest.status !== "verified")
+        messages.push(
+          `${task.name} 的既有清单状态为 ${manifest.status}（缺失 ${manifest.missing.length}、额外 ${manifest.extra.length}、大小异常 ${manifest.sizeMismatches.length}、哈希异常 ${manifest.checksumMismatches.length}）`,
+        );
+      return messages;
+    });
+  return {
+    projectId: project.id,
+    archiveName: project.name,
+    archiveNameSource: "project",
+    shootingDate:
+      dates.length > 1
+        ? `${dates[0]} 至 ${dates.at(-1)}`
+        : dates[0] || undefined,
+    historicalEvidence: [...new Set(historicalEvidence)].slice(0, 200),
+  };
+};
 const writeProjects = (projects: ProjectConfig[]) =>
   workspace
     .commitProjects(projects, true)
@@ -729,6 +773,9 @@ const maintenanceNames: Record<string, string> = {
   "archive:repair-copy": "修复归档副本",
   "archive:audit-untracked": "扫描未记录文件",
   "archive:move-copy": "更新副本位置",
+  "archive-transfer:start": "归档转存到 NAS",
+  "archive-transfer:resume": "恢复 NAS 归档转存",
+  "archive-transfer:retry-reports": "重试归档转存报告",
   "workspace:cold-archive": "冷归档",
   "workspace:restore-cold": "恢复冷归档",
   "workspace:import-apply": "合并工作站",
@@ -985,6 +1032,85 @@ async function publishDailyDeliveryReport(
   upsertDailyDeliveryRun(task, run);
   await persist(true);
   return run;
+}
+async function htmlToPng(html: Buffer | string) {
+  const report = new BrowserWindow({
+    show: false,
+    width: 1920,
+    height: 1080,
+    useContentSize: true,
+    webPreferences: {
+      sandbox: true,
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+  try {
+    await withTemporaryReportHtml(html, (file) => report.loadFile(file));
+    await report.webContents
+      .executeJavaScript("document.fonts.ready.then(() => true)", true)
+      .catch(() => undefined);
+    const image = await report.webContents.capturePage({
+      x: 0,
+      y: 0,
+      width: 1920,
+      height: 1080,
+    });
+    return image.toPNG();
+  } catch (cause) {
+    const detail = cause instanceof Error ? cause.message : String(cause);
+    throw new Error(
+      `PNG 摘要生成失败：${detail.length > 240 ? `${detail.slice(0, 240)}…` : detail}`,
+    );
+  } finally {
+    report.destroy();
+  }
+}
+async function writeExclusiveArtifact(file: string, data: Buffer) {
+  const handle = await fs.open(file, "wx", 0o644);
+  try {
+    await handle.writeFile(data);
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+}
+async function renderArchiveTransferReports(
+  snapshot: ArchiveTransferReportSnapshot,
+  artifactReportId: string,
+) {
+  if (!/^KAT-[A-Z0-9TZ-]+(?:-R\d+)?$/.test(artifactReportId))
+    throw new Error("报告编号无效，已停止发布");
+  const reportDirectory = path.join(snapshot.finalPath, "Kocpy报告"),
+    pdfPath = path.join(
+      reportDirectory,
+      `Kocpy_NAS归档_${artifactReportId}.pdf`,
+    ),
+    pngPath = path.join(
+      reportDirectory,
+      `Kocpy_NAS归档_${artifactReportId}.png`,
+    );
+  const finalReal = await fs.realpath(snapshot.finalPath);
+  if (finalReal !== snapshot.finalPath)
+    throw new Error("归档目标现在通过别名指向其他位置，报告未写入");
+  const reportStat = await fs.lstat(reportDirectory).catch((error) => {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  });
+  if (reportStat && (!reportStat.isDirectory() || reportStat.isSymbolicLink()))
+    throw new Error("Kocpy报告 位置不是安全的普通目录，报告未写入");
+  if (!reportStat) await fs.mkdir(reportDirectory);
+  if ((await fs.realpath(reportDirectory)) !== reportDirectory)
+    throw new Error("Kocpy报告 目录通过别名指向其他位置，报告未写入");
+  const [pdf, png] = await Promise.all([
+    htmlToPdf(buildArchiveTransferDetailHtml(snapshot, artifactReportId)),
+    htmlToPng(buildArchiveTransferSummaryHtml(snapshot, artifactReportId)),
+  ]);
+  await writeExclusiveArtifact(pdfPath, pdf);
+  await writeExclusiveArtifact(pngPath, png);
+  await syncFileAndParent(pdfPath);
+  await syncFileAndParent(pngPath);
+  return { pdfPath, pngPath };
 }
 const completionActionLabel: Record<CompletionActionKind, string> = {
   report: "生成校验报告",
@@ -1512,6 +1638,19 @@ app.whenReady().then(async () => {
   const initialSettings = await store.read("settings.json", defaultSettings);
   nativeTheme.themeSource =
     initialSettings.theme === "light" ? "light" : "dark";
+  archiveTransferManager = new ArchiveTransferManager({
+    identifyVolume: volumeIdentity,
+    availableBytes: async (location) => (await driveInfo(location)).free,
+    persist: (tasks) => store.write("archive-transfers.json", tasks),
+    renderReports: renderArchiveTransferReports,
+    onProgress: (progress) => {
+      if (main && !main.isDestroyed())
+        main.webContents.send("archive-transfer:progress", progress);
+    },
+  });
+  await archiveTransferManager.initialize(
+    await store.read<ArchiveTransferTask[]>("archive-transfers.json", []),
+  );
   await pruneMediaCache(
     path.join(app.getPath("userData"), "thumbnails"),
     Math.max(1, Math.min(100, initialSettings.thumbnailCacheGiB || 2)) *
@@ -1786,6 +1925,65 @@ app.whenReady().then(async () => {
       }),
     );
   });
+  handle("archive-transfer:list", () =>
+    archiveTransferManager.summaries(),
+  );
+  handle(
+    "archive-transfer:preview",
+    async (input: {
+      sourcePath: string;
+      destinationParent: string;
+      projectId?: string;
+    }) => {
+      if (!input || typeof input !== "object")
+        throw new Error("归档转存参数无效");
+      const preview = await archiveTransferManager.preview(
+          input.sourcePath,
+          input.destinationParent,
+          await archiveTransferContext(input.projectId),
+        ),
+        { files: _files, directories: _directories, emptyDirectories, ...inventory } =
+          preview.inventory;
+      return {
+        ...preview,
+        inventory: {
+          ...inventory,
+          emptyDirectoryCount: emptyDirectories.length,
+        },
+      };
+    },
+  );
+  handle(
+    "archive-transfer:start",
+    async (input: {
+      sourcePath: string;
+      destinationParent: string;
+      projectId?: string;
+      previewDigest: string;
+    }) => {
+      if (!input?.previewDigest) throw new Error("请先完成源与目标预检");
+      const context =
+          (await archiveTransferContext(input.projectId)) ||
+          ({
+            archiveName: "",
+            archiveNameSource: "folder",
+            historicalEvidence: [],
+          } satisfies ArchiveTransferContext),
+        task = await archiveTransferManager.start({
+          sourcePath: input.sourcePath,
+          destinationParent: input.destinationParent,
+          previewDigest: input.previewDigest,
+          context,
+        });
+      return summarizeArchiveTransfer(task);
+    },
+  );
+  handle("archive-transfer:resume", async (id: string) =>
+    summarizeArchiveTransfer(await archiveTransferManager.resume(id)),
+  );
+  handle("archive-transfer:retry-reports", async (id: string) =>
+    summarizeArchiveTransfer(await archiveTransferManager.retryReports(id)),
+  );
   handle("tasks:list", () =>
     engine.getAllTasks().map((task) => ({ ...task, fileRecords: [] })),
   );

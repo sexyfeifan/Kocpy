@@ -59,6 +59,11 @@ contextBridge.exposeInMainWorld("api", {
   exportArchiveChanges: call("archive:export-changes"),
   verifyProjectArchive: call("archive:verify-project"),
   repairArchiveCopy: call("archive:repair-copy"),
+  getArchiveTransfers: call("archive-transfer:list"),
+  previewArchiveTransfer: call("archive-transfer:preview"),
+  startArchiveTransfer: call("archive-transfer:start"),
+  resumeArchiveTransfer: call("archive-transfer:resume"),
+  retryArchiveTransferReports: call("archive-transfer:retry-reports"),
   getProjectTemplates: call("templates:list"),
   createTemplateFromProject: call("templates:from-project"),
   saveProjectTemplate: call("templates:save"),
@@ -158,5 +163,11 @@ contextBridge.exposeInMainWorld("api", {
     const listener = (_event: unknown, payload: unknown) => callback(payload);
     ipcRenderer.on("existing:progress", listener);
     return () => ipcRenderer.removeListener("existing:progress", listener);
+  },
+  onArchiveTransferProgress: (callback: (payload: unknown) => void) => {
+    const listener = (_event: unknown, payload: unknown) => callback(payload);
+    ipcRenderer.on("archive-transfer:progress", listener);
+    return () =>
+      ipcRenderer.removeListener("archive-transfer:progress", listener);
   },
 });

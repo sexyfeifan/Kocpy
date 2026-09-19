@@ -103,6 +103,7 @@ import {
 import { Composer } from "./Composer";
 import { ProjectEditor } from "./ProjectEditor";
 import { WorkstationImportDialog } from "./WorkstationImportDialog";
+import { ArchiveTransferPanel } from "./ArchiveTransferPanel";
 import {
   TemplateApplyDialog,
   TemplateEditor,
@@ -6130,6 +6131,11 @@ function MaintenancePage({
           </Button>
         </div>
       </section>
+      <ArchiveTransferPanel
+        projects={projects}
+        initialProjectId={initialProjectId}
+        notify={notify}
+      />
       {workstationAudits.length > 0 && (
         <details className="panel workstation-audit-panel">
           <summary>

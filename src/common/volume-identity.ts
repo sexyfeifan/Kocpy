@@ -6,6 +6,9 @@ export interface VolumeIdentity {
   device: string;
   fileSystem?: string;
   mountPoint?: string;
+  /** Digest of the mounted filesystem source (for example an SMB host/share).
+   * Stored as a digest so volume identity checks do not persist credentials. */
+  mountSourceDigest?: string;
 }
 
 export function compareVolumeIdentity(

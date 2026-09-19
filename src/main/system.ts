@@ -2,6 +2,7 @@ import { promises as fs, constants } from "node:fs";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import type { VolumeIdentity } from "../common/volume-identity";
 const exec = promisify(execFile);
 export function isTimeMachineVolume(
@@ -86,6 +87,9 @@ export async function volumeIdentity(dir: string): Promise<VolumeIdentity> {
       "Macintosh HD",
     device: String(stat.dev),
     mountPoint: mount.mountPoint,
+    mountSourceDigest: createHash("sha256")
+      .update(mount.filesystem)
+      .digest("hex"),
     fileSystem: diskPlistField(output, "FilesystemType"),
   };
 }
