@@ -53,6 +53,7 @@ import {
   generateReport,
   generateDailyReport,
   generateProjectReport,
+  dailyReportContribution,
 } from "./backup/ReportGenerator";
 import { generateMhl, generateAscMhl } from "./backup/ManifestGenerator";
 import type {
@@ -6291,10 +6292,7 @@ app.whenReady().then(async () => {
       .filter(
         (t) =>
           (!projectId || t.projectId === projectId) &&
-          (t.shootingDate ||
-            new Date(t.completedAt || t.createdAt || 0).toLocaleDateString(
-              "sv-SE",
-            )) === shootingDate,
+          Boolean(dailyReportContribution(t, shootingDate)),
       );
     if (!tasks.length) throw new Error("所选拍摄日没有可汇总的任务");
     const project = (await readProjects()).find((p) => p.id === projectId);

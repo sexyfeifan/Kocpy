@@ -125,6 +125,21 @@ describe("0.1.25 shared UI contract", () => {
     expect(appSource).not.toContain("KOCPY {APP_VERSION} · QUICK START");
   });
 
+  it("wires mixed-day delivery only from verified project task details", () => {
+    const appSource = rendererSources.find(({ name }) => name === "App.tsx")!
+        .source,
+      dialogSource = rendererSources.find(
+        ({ name }) => name === "MixedDayDeliveryDialog.tsx",
+      )!.source;
+    expect(appSource).toContain("<MixedDayDeliveryDialog");
+    expect(appSource).toContain("selected.projectId &&");
+    expect(appSource).toContain("taskTrustState(selected).contentVerified");
+    expect(appSource).toContain("destination.verified && destination.resolvedPath");
+    expect(appSource).toContain("日期归属与当日交付");
+    expect(dialogSource).toContain("完整素材卷和原始清单始终保持不变");
+    expect(dialogSource).toContain("不替代正式备份证据");
+  });
+
   it("keeps native form controls named by a label or accessibility attribute", () => {
     const failures: string[] = [];
     for (const { name, source } of rendererSources) {

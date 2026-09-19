@@ -3408,6 +3408,35 @@ small {
   display: block;
   margin-top: 9px;
 }
+.mixed-day-entry {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  margin: 16px 0 22px;
+  padding: 15px 17px;
+  border: 1px solid #a99aff3d;
+  border-radius: 11px;
+  background: #a99aff0a;
+}
+.mixed-day-entry > div {
+  min-width: 0;
+}
+.mixed-day-entry strong {
+  display: block;
+  margin-bottom: 5px;
+  color: var(--text);
+  font-size: 11px;
+}
+.mixed-day-entry p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.7;
+}
+.mixed-day-entry > .btn {
+  flex: 0 0 auto;
+}
 .progress-track {
   position: relative;
   height: 5px;
@@ -6360,6 +6389,15 @@ small {
 .form-body,
 .composer-main {
   min-width: 0;
+}
+@media (max-width: 760px) {
+  .mixed-day-entry {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .mixed-day-entry > .btn {
+    justify-content: center;
+  }
 }
 .detail-path,
 .chosen-path,

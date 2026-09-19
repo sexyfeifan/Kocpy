@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { BackupEngine } from "../src/main/backup/BackupEngine";
 import {
+  dailyReportContribution,
   generateDailyReport,
   generateProjectReport,
 } from "../src/main/backup/ReportGenerator";
@@ -129,6 +130,27 @@ function deliveryRun(task: BackupTask, id: string): DailyDeliveryRun {
 }
 
 describe("cross-day card statistics", () => {
+  it("selects assigned days for reports while preserving legacy completion-date reports", () => {
+    const { task } = fixture();
+    expect(dailyReportContribution(task, secondDay)).toMatchObject({
+      files: 2,
+      bytes: 250,
+      scope: "daily-allocation",
+    });
+    const legacy = {
+      ...task,
+      shootingDate: undefined,
+      dateAllocation: undefined,
+      completedAt: new Date(`${secondDay}T12:00:00`).getTime(),
+    };
+    expect(dailyReportContribution(legacy, secondDay)).toMatchObject({
+      files: 5,
+      bytes: 500,
+      scope: "full-card",
+    });
+    expect(dailyReportContribution(legacy, firstDay)).toBeUndefined();
+  });
+
   it("allocates confirmed groups to both days and keeps unresolved material on the task date", () => {
     const { project, task } = fixture(),
       first = projectDaySummary(project, [task], firstDay, secondDay),

@@ -46,6 +46,27 @@ function esc(s: string): string {
     .replace(/"/g, "&quot;");
 }
 
+export function dailyReportContribution(
+  task: BackupTask,
+  shootingDate: string,
+) {
+  const allocated = taskDateContribution(task, shootingDate);
+  if (allocated) return allocated;
+  if (shootingDateKey(task.shootingDate)) return undefined;
+  const legacyDate = new Date(
+    task.completedAt || task.createdAt || 0,
+  ).toLocaleDateString("sv-SE");
+  if (legacyDate !== shootingDate) return undefined;
+  return {
+    shootingDate,
+    files: task.totalFiles,
+    bytes: task.totalBytes,
+    scope: "full-card" as const,
+    pendingAllocation: false,
+    pendingGroups: 0,
+  };
+}
+
 export function resolvedReportContext(
   task: BackupTask,
   project?: Pick<ProjectConfig, "id" | "name">,
@@ -348,7 +369,7 @@ export async function generateDailyReport(
   const safeTasks = tasks
     .map((task) => ({
       task,
-      contribution: taskDateContribution(task, shootingDate),
+      contribution: dailyReportContribution(task, shootingDate),
     }))
     .filter(
       (item): item is {

@@ -302,7 +302,13 @@ export function MixedDayDeliveryDialog({
   if (!task)
     return (
       <div className="modal-backdrop top-layer">
-        <section className="form-modal mixed-day-dialog" role="dialog" aria-busy="true">
+        <section
+          className="form-modal mixed-day-dialog"
+          role="dialog"
+          aria-modal="true"
+          aria-label="正在读取完整素材卷记录"
+          aria-busy="true"
+        >
           <div className="modal-header"><h2>读取完整素材卷记录…</h2></div>
         </section>
       </div>
@@ -366,7 +372,15 @@ export function MixedDayDeliveryDialog({
                 ))}
               </div>
               <div className="mixed-day-review-tools">
-                <input value={search} onChange={(event) => { setSearch(event.target.value); setVisibleGroups(200); }} placeholder="搜索卷名或相对路径" />
+                <input
+                  aria-label="搜索卷名或相对路径"
+                  value={search}
+                  onChange={(event) => {
+                    setSearch(event.target.value);
+                    setVisibleGroups(200);
+                  }}
+                  placeholder="搜索卷名或相对路径"
+                />
                 <span>{matchingGroups.length} 组</span>
               </div>
               <div className="mixed-day-groups">

@@ -104,6 +104,7 @@ import { Composer } from "./Composer";
 import { ProjectEditor } from "./ProjectEditor";
 import { WorkstationImportDialog } from "./WorkstationImportDialog";
 import { ArchiveTransferPanel } from "./ArchiveTransferPanel";
+import { MixedDayDeliveryDialog } from "./MixedDayDeliveryDialog";
 import {
   TemplateApplyDialog,
   TemplateEditor,
@@ -629,6 +630,7 @@ export function App() {
     } | null>(null),
     [existingBaseline, setExistingBaseline] = useState<BackupTask | null>(null),
     [manifestIssue, setManifestIssue] = useState<BackupTask | null>(null),
+    [mixedDayTaskId, setMixedDayTaskId] = useState<string | null>(null),
     [detail, setDetail] = useState<string | null>(null),
     [detailTask, setDetailTask] = useState<BackupTask | null>(null),
     [taskCommand, setTaskCommand] = useState<{
@@ -3067,6 +3069,14 @@ export function App() {
           />
         )}
       </div>
+      {mixedDayTaskId && (
+        <MixedDayDeliveryDialog
+          taskId={mixedDayTaskId}
+          defaultOperator={settings.operator}
+          onClose={() => setMixedDayTaskId(null)}
+          onChanged={refresh}
+        />
+      )}
       {recoveryId && tasks.find((t) => t.id === recoveryId) && (
         <RecoveryDialog
           key={recoveryId}
@@ -3244,6 +3254,31 @@ export function App() {
                   </div>
                 </div>
               )}
+              {selected.projectId &&
+                taskTrustState(selected).contentVerified &&
+                selected.destinations.some(
+                  (destination) =>
+                    destination.verified && destination.resolvedPath,
+                ) && (
+                  <div className="mixed-day-entry">
+                    <div>
+                      <strong>一张完整素材卡包含多个拍摄日？</strong>
+                      <p>
+                        保留完整卡与原始校验证据，只确认素材组日期，并从已验证副本生成独立回读的当日交付；交付不会增加备份副本数。
+                      </p>
+                    </div>
+                    <Button
+                      kind="subtle"
+                      onClick={() => {
+                        setMixedDayTaskId(selected.id);
+                        setDetail(null);
+                      }}
+                    >
+                      <CalendarDays size={15} />
+                      日期归属与当日交付
+                    </Button>
+                  </div>
+                )}
               {selected.status === "completed" &&
                 !!selected.completionActionRecords?.length && (
                   <section
