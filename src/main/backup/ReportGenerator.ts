@@ -4,10 +4,12 @@ import { formatBytes } from "../report-builder";
 import { projectDates, shootingDateKey } from "../../common/shooting-dates";
 import { APP_VERSION } from "../../common/version";
 import { copyEvidenceSummary } from "../../common/copy-evidence";
+import { taskDateContribution } from "../../common/date-allocation";
 import { taskTrustState, savedDestinationBytes } from "../../common/task-trust";
 import {
   projectCellStatus,
   projectCloseoutSummary,
+  projectDaySummary,
   projectDeviceCells,
   taskMeetsCopyRequirement,
 } from "../project-closeout";
@@ -285,19 +287,38 @@ export async function generateDailyReport(
   shootingDate: string,
   projectName = "全部项目",
 ): Promise<Buffer> {
-  const safeTasks = tasks.filter((t) => t.fileRecords.length > 0);
-  const files = safeTasks.reduce((n, t) => n + t.totalFiles, 0),
-    bytes = safeTasks.reduce((n, t) => n + t.totalBytes, 0);
+  const safeTasks = tasks
+    .map((task) => ({
+      task,
+      contribution: taskDateContribution(task, shootingDate),
+    }))
+    .filter(
+      (item): item is {
+        task: BackupTask;
+        contribution: NonNullable<typeof item.contribution>;
+      } => item.task.fileRecords.length > 0 && Boolean(item.contribution),
+    );
+  const files = safeTasks.reduce(
+      (total, item) => total + item.contribution.files,
+      0,
+    ),
+    bytes = safeTasks.reduce(
+      (total, item) => total + item.contribution.bytes,
+      0,
+    );
   const rows = safeTasks
     .map(
-      (t) => {
+      ({ task: t, contribution }) => {
         const trust = taskTrustState(t);
-        return `<tr><td>${esc(t.name)}</td><td>${esc((t.devices || []).join(" / ") || "-")}</td><td>${t.totalFiles}</td><td>${formatBytes(t.totalBytes)}</td><td style="color:${trust.contentVerified ? "#21b76b" : "#d9545d"}">${esc(trust.label)} · ${trust.countableCopies} 份可计数副本<br>${esc(trust.nextStep)}</td></tr>`;
+        const scope = contribution.scope === "daily-allocation"
+          ? `当日分配${contribution.pendingAllocation ? ` · ${contribution.pendingGroups} 组待分配` : ""}`
+          : "整卡";
+        return `<tr><td>${esc(t.name)}</td><td>${esc((t.devices || []).join(" / ") || "-")}</td><td>${contribution.files}</td><td>${formatBytes(contribution.bytes)}<br>${scope}</td><td style="color:${trust.contentVerified ? "#21b76b" : "#d9545d"}">${esc(trust.label)} · ${trust.countableCopies} 份可计数副本<br>${esc(trust.nextStep)}</td></tr>`;
       },
     )
     .join("");
   const destinationRows = safeTasks
-    .flatMap((t) =>
+    .flatMap(({ task: t }) =>
       t.destinations.map(
         (d) =>
           `<tr><td>${esc(t.name)}</td><td>${esc(d.volumeName || d.label)}</td><td>${esc(d.resolvedPath || d.path)}</td><td>${d.verified ? "✓ 通过" : `✗ ${esc(d.error || "未通过")}`}</td></tr>`,
@@ -340,17 +361,15 @@ export async function generateProjectReport(
               cameraPosition,
             ),
             rows = cell.rows;
-          const files = rows.reduce((sum, task) => sum + task.totalFiles, 0),
-            size = rows.reduce((sum, task) => sum + task.totalBytes, 0);
-          return `<tr><td>${esc(shootingDate)}</td><td>${esc(label)}</td><td>${rows.length}</td><td>${files}</td><td>${formatBytes(size)}</td><td class="${cell.complete ? "ok" : rows.length ? "warn" : "muted"}">${cell.statusLabel}</td></tr>`;
+          return `<tr><td>${esc(shootingDate)}</td><td>${esc(label)}</td><td>${rows.length}</td><td>${cell.files}</td><td>${formatBytes(cell.bytes)}</td><td class="${cell.complete ? "ok" : rows.length ? "warn" : "muted"}">${cell.statusLabel}</td></tr>`;
         },
       ),
     )
     .join("");
   const dailyRows = dates
     .map((shootingDate) => {
-      const rows = tasks.filter((task) => shootingDateKey(task.shootingDate) === shootingDateKey(shootingDate));
-      return `<tr><td>${shootingDate}</td><td>${rows.length}</td><td>${rows.reduce((sum, task) => sum + task.totalFiles, 0)}</td><td>${formatBytes(rows.reduce((sum, task) => sum + task.totalBytes, 0))}</td></tr>`;
+      const summary = projectDaySummary(project, tasks, shootingDate);
+      return `<tr><td>${shootingDate}</td><td>${summary.volumes}</td><td>${summary.files}</td><td>${formatBytes(summary.bytes)}</td></tr>`;
     })
     .join("");
   const deviceRows = devices

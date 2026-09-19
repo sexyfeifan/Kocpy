@@ -251,7 +251,15 @@ function ProjectVolumeRows({
   onManifestIssue,
   onBaseline,
 }: {
-  volumes: ReturnType<typeof groupLogicalVolumes>;
+  volumes: Array<
+    ReturnType<typeof groupLogicalVolumes>[number] & {
+      dateFiles?: number;
+      dateBytes?: number;
+      allocationScope?: "full-card" | "daily-allocation";
+      pendingAllocation?: boolean;
+      pendingAllocationGroups?: number;
+    }
+  >;
   showDate?: boolean;
   onOpen: (taskId: string) => void;
   onManifestIssue: (task: BackupTask) => void;
@@ -266,7 +274,10 @@ function ProjectVolumeRows({
     )
     .map((logicalVolume) => {
       const task = logicalVolume.representative,
-        trust = taskTrustState(task);
+        trust = taskTrustState(task),
+        dateScoped = logicalVolume.dateFiles !== undefined,
+        displayFiles = logicalVolume.dateFiles ?? task.totalFiles,
+        displayBytes = logicalVolume.dateBytes ?? task.totalBytes;
       return (
         <div className="project-task-breakdown-row" key={logicalVolume.id}>
           <span>
@@ -288,7 +299,17 @@ function ProjectVolumeRows({
             )}
           </button>
           <small>
-            {task.totalFiles} 个文件 · {bytes(task.totalBytes)}
+            {displayFiles} 个文件 · {bytes(displayBytes)}
+            {dateScoped && (
+              <>
+                {logicalVolume.allocationScope === "daily-allocation"
+                  ? " · 当日分配"
+                  : " · 整卡"}
+                {logicalVolume.pendingAllocation
+                  ? ` · ${logicalVolume.pendingAllocationGroups || 1} 组待分配（暂留原日期）`
+                  : ""}
+              </>
+            )}
             {active(task) && (
               <span className="project-live-transfer">
                 {task.status === "paused"
@@ -457,19 +478,9 @@ export function ProjectDayGroups({
                         <strong>{cell.label}</strong>
                         <span>{rows.length}</span>
                         <span>
-                          {rows.reduce(
-                            (sum, task) => sum + task.totalFiles,
-                            0,
-                          )}
+                          {cell.files}
                         </span>
-                        <span>
-                          {bytes(
-                            rows.reduce(
-                              (sum, task) => sum + task.totalBytes,
-                              0,
-                            ),
-                          )}
-                        </span>
+                        <span>{bytes(cell.bytes)}</span>
                         {cell.unconfirmed ? (
                           <span className="matrix-decisions">
                             <button
@@ -553,7 +564,9 @@ export function ProjectDayGroups({
                   <div className="project-task-breakdown project-day-rolls">
                     <div className="project-task-breakdown-title">
                       <strong>当日素材卷明细</strong>
-                      <span>按唯一素材卷统计；实时传输与校验状态会继续更新</span>
+                      <span>
+                        文件与容量按当日分配统计；可信状态仍取自完整素材卷备份
+                      </span>
                     </div>
                     <div className="project-task-breakdown-head">
                       <span>设备 / 机位</span>

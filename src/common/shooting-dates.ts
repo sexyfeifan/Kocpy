@@ -1,4 +1,5 @@
 import type { BackupTask, ProjectConfig } from "../main/types";
+import { assignedShootingDates } from "./date-allocation";
 
 /** Read-time canonicalization only: never rewrites existing project/task data. */
 export function shootingDateKey(value?: string): string {
@@ -18,7 +19,10 @@ export function projectDates(
   tasks: BackupTask[],
 ): string[] {
   const dates = new Set(
-    tasks.map((task) => shootingDateKey(task.shootingDate)).filter(Boolean),
+    tasks.flatMap((task) => [
+      shootingDateKey(task.shootingDate),
+      ...assignedShootingDates(task),
+    ]).filter(Boolean),
   );
   const start = shootingDateKey(
     project.shootingDateStart || project.shootingDate,

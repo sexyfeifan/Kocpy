@@ -2,6 +2,7 @@ import type { BackupTask, Destination, ProjectConfig } from "./types";
 import { copyEvidenceSummary, volumeCopyKey } from "../common/copy-evidence";
 import { shootingDateKey } from "../common/shooting-dates";
 import { groupLogicalVolumes } from "../common/logical-volumes";
+import { taskDateContribution } from "../common/date-allocation";
 export { manifestRequirementMet, taskMeetsCopyRequirement } from "../common/task-trust";
 
 export function physicalDestinationKey(destination: Destination): string {
@@ -28,7 +29,7 @@ export function projectDeviceCells(
   const tasksForDate = tasks.filter(
     (task) =>
       !shootingDate ||
-      shootingDateKey(task.shootingDate) === shootingDateKey(shootingDate),
+      Boolean(taskDateContribution(task, shootingDate)),
   );
   const declaredKeys = [
     ...Object.entries(project.expectedDevicesByDate || {}),
@@ -93,7 +94,8 @@ export function projectCellStatus(
 ) {
   const deviceTasks = tasks.filter(
     (task) =>
-      shootingDateKey(task.shootingDate) === shootingDateKey(shootingDate) && task.devices.includes(device),
+      Boolean(taskDateContribution(task, shootingDate)) &&
+      task.devices.includes(device),
   );
   const hasPositionedRows =
     Boolean(project.devicePositions?.[device]?.length) ||
@@ -106,7 +108,20 @@ export function projectCellStatus(
       ? deviceTasks.filter((task) => !task.cameraPosition)
       : deviceTasks;
   const required = project.requiredCopies || 2;
-  const logicalVolumes = groupLogicalVolumes(rows, required);
+  const logicalVolumes = groupLogicalVolumes(rows, required).map((volume) => {
+    const contribution = taskDateContribution(
+      volume.representative,
+      shootingDate,
+    )!;
+    return {
+      ...volume,
+      dateFiles: contribution.files,
+      dateBytes: contribution.bytes,
+      allocationScope: contribution.scope,
+      pendingAllocation: contribution.pendingAllocation,
+      pendingAllocationGroups: contribution.pendingGroups,
+    };
+  });
   const logicalRows = logicalVolumes.map((item) => item.representative);
   const rest = Boolean(project.restDays?.some(date => shootingDateKey(date) === shootingDateKey(shootingDate)));
   const keysFor = (byDate?: Record<string, string[]>) => Object.entries(byDate || {}).filter(([date]) => shootingDateKey(date) === shootingDateKey(shootingDate)).flatMap(([, keys]) => keys);
@@ -122,6 +137,12 @@ export function projectCellStatus(
     : expectedKeys.includes(device) ||
       expectedKeys.includes(`${device}::unassigned`);
   const safe = logicalVolumes.filter((item) => item.compliant).length;
+  const pendingAllocationGroups = logicalVolumes.reduce(
+      (sum, item) => sum + item.pendingAllocationGroups,
+      0,
+    ),
+    files = logicalVolumes.reduce((sum, item) => sum + item.dateFiles, 0),
+    bytes = logicalVolumes.reduce((sum, item) => sum + item.dateBytes, 0);
   // A schedule declaration can explain an empty cell; it cannot waive the
   // verification requirements of material that is actually present.
   const exempt = !logicalRows.length && (rest || unused);
@@ -132,17 +153,34 @@ export function projectCellStatus(
     safe,
     expected,
     unconfirmed: !rest && !unused && !expected && !logicalRows.length,
-    attention: !exempt && (logicalRows.length ? safe !== logicalRows.length : expected),
+    attention:
+      !exempt &&
+      (logicalRows.length
+        ? safe !== logicalRows.length || pendingAllocationGroups > 0
+        : expected),
     exempt,
-    complete: exempt || Boolean(logicalRows.length && safe === logicalRows.length),
+    complete:
+      exempt ||
+      Boolean(
+        logicalRows.length &&
+          safe === logicalRows.length &&
+          pendingAllocationGroups === 0,
+      ),
+    files,
+    bytes,
+    pendingAllocationGroups,
     statusLabel: exempt && rest
       ? "休息日"
       : exempt && unused
         ? "当天未使用"
-        : logicalRows.length && safe === logicalRows.length
-          ? "已满足收工要求"
+        : logicalRows.length &&
+            safe === logicalRows.length &&
+            pendingAllocationGroups > 0
+          ? `整卡备份达标 · ${pendingAllocationGroups} 组日期待分配`
+          : logicalRows.length && safe === logicalRows.length
+            ? "已满足收工要求"
           : logicalRows.length
-            ? `${safe} / ${logicalRows.length} 个素材卷达到 ${required} 份物理独立副本`
+            ? `${safe} / ${logicalRows.length} 个素材卷达到 ${required} 份物理独立副本${pendingAllocationGroups ? ` · ${pendingAllocationGroups} 组日期待分配` : ""}`
             : expected
               ? "应该有素材 · 缺少备份"
               : "当天未发现素材 · 待确认",
@@ -182,9 +220,7 @@ export function projectDaySummary(
   referenceDate = new Date().toISOString().slice(0, 10),
 ) {
   const day = shootingDateKey(shootingDate),
-    rows = tasks.filter(
-      (task) => shootingDateKey(task.shootingDate) === day,
-    ),
+    rows = tasks.filter((task) => Boolean(taskDateContribution(task, day))),
     cells = projectDeviceCells(project, tasks, day).map((cell) => ({
       ...cell,
       ...projectCellStatus(
@@ -195,7 +231,20 @@ export function projectDaySummary(
         cell.cameraPosition,
       ),
     })),
-    logicalVolumes = groupLogicalVolumes(rows, project.requiredCopies || 2),
+    logicalVolumes = groupLogicalVolumes(
+      rows,
+      project.requiredCopies || 2,
+    ).map((volume) => {
+      const contribution = taskDateContribution(volume.representative, day)!;
+      return {
+        ...volume,
+        dateFiles: contribution.files,
+        dateBytes: contribution.bytes,
+        allocationScope: contribution.scope,
+        pendingAllocation: contribution.pendingAllocation,
+        pendingAllocationGroups: contribution.pendingGroups,
+      };
+    }),
     attention = cells.filter((cell) => cell.attention).length,
     unconfirmed = cells.filter((cell) => cell.unconfirmed).length,
     dueUnconfirmed = day <= shootingDateKey(referenceDate) ? unconfirmed : 0,
@@ -207,12 +256,10 @@ export function projectDaySummary(
     logicalVolumes,
     volumes: logicalVolumes.length,
     compliantVolumes: logicalVolumes.filter((item) => item.compliant).length,
-    files: logicalVolumes.reduce(
-      (sum, item) => sum + item.representative.totalFiles,
-      0,
-    ),
-    bytes: logicalVolumes.reduce(
-      (sum, item) => sum + item.representative.totalBytes,
+    files: logicalVolumes.reduce((sum, item) => sum + item.dateFiles, 0),
+    bytes: logicalVolumes.reduce((sum, item) => sum + item.dateBytes, 0),
+    pendingAllocationGroups: logicalVolumes.reduce(
+      (sum, item) => sum + item.pendingAllocationGroups,
       0,
     ),
     completeCells: cells.filter((cell) => cell.complete).length,
