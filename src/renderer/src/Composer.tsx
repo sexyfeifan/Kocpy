@@ -102,7 +102,8 @@ export function Composer({
     [duplicate, setDuplicate] = useState(settings.defaultDuplicateStrategy),
     [hidden, setHidden] = useState(settings.includeHidden),
     [mirror, setMirror] = useState(false),
-    [priority, setPriority] = useState(false);
+    [priority, setPriority] = useState(false),
+    [automaticPdf, setAutomaticPdf] = useState(true);
   const [clock, setClock] = useState(Date.now());
   const [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
@@ -262,8 +263,6 @@ export function Composer({
             `扫描 ${scanned.length + 1}/${sources.length}：${s.path}（扫描阶段无法预估总数）`,
           );
           const scan = await api.scanSource(s.path, hidden);
-          if (!scan.totalFiles)
-            throw new Error(`${leaf(s.path)} 没有可备份文件`);
           scanned.push({ ...s, scan });
           setDetectedScans((all) => ({ ...all, [s.path]: scan }));
         }
@@ -378,6 +377,7 @@ export function Composer({
                 : ("normal" as const),
             duplicateStrategy: duplicate,
             includeHidden: hidden,
+            automaticPdf,
             priority,
           };
           return await api.createTask(config);
@@ -801,7 +801,11 @@ export function Composer({
                         (sum, source) => sum + (source.scan?.totalFiles || 0),
                         0,
                       )}{" "}
-                      个文件 · {bytes(total)}
+                      个文件 · {sources.reduce(
+                        (sum, source) =>
+                          sum + (source.scan?.totalDirectories || 0),
+                        0,
+                      )} 个目录 · {bytes(total)}
                     </p>
                     <div className="source-breakdown">
                       {(["video", "photo", "audio", "other"] as const).map(
@@ -842,6 +846,44 @@ export function Composer({
                       和未识别类型；这些文件仍会备份。RAW 与 JPG 各算一个文件。
                     </p>
                   </section>
+                )}
+                {sources.some((source) => source.scan?.exclusions.length) && (
+                  <details className="backup-advanced">
+                    <summary>
+                      本任务明确排除的隐藏条目
+                      <span>
+                        {sources.reduce(
+                          (sum, source) =>
+                            sum + (source.scan?.exclusions.length || 0),
+                          0,
+                        )}{" "}
+                        项 ·{" "}
+                        {bytes(
+                          sources.reduce(
+                            (sum, source) =>
+                              sum + (source.scan?.skippedBytes || 0),
+                            0,
+                          ),
+                        )}
+                      </span>
+                    </summary>
+                    <p className="muted small">
+                      以下路径不参与复制或校验；原因均为“用户选择过滤隐藏条目”。
+                    </p>
+                    <div className="final-path-list">
+                      {sources.flatMap((source) =>
+                        (source.scan?.exclusions || []).map((item) => (
+                          <p
+                            className="mono"
+                            key={`${source.path}:${item.relativePath}`}
+                          >
+                            {leaf(source.path)}/{item.relativePath} ·{" "}
+                            {item.kind === "file" ? bytes(item.bytes) : "目录"}
+                          </p>
+                        )),
+                      )}
+                    </div>
+                  </details>
                 )}
                 {mode === "card" && (
                   <fieldset className="copy-layout-choice">
@@ -1288,6 +1330,19 @@ export function Composer({
                         <small>排在其他等待任务之前，不打断当前任务</small>
                       </span>
                     </label>
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={automaticPdf}
+                        onChange={(e) => setAutomaticPdf(e.target.checked)}
+                      />
+                      <span>
+                        完成后自动生成 PDF
+                        <small>
+                          每个已校验素材卷都会保存到 Kocpy报告 目录
+                        </small>
+                      </span>
+                    </label>
                     <div className="locked-option">
                       <ShieldCheck size={17} />
                       <span>
@@ -1297,7 +1352,7 @@ export function Composer({
                     </div>
                     <small className="muted">
                       隐藏文件：{hidden ? "包含" : "排除"}
-                      （跟随偏好设置）；系统索引文件始终排除。
+                      （跟随偏好设置）；完整模式会保留 AppleDouble、已有报告和清单。
                     </small>
                   </div>
                 </details>
@@ -1310,7 +1365,10 @@ export function Composer({
                       (mirror
                         ? " 保留源文件夹，不加时间戳。"
                         : " 按次保存：源文件夹名_开始时的时间戳。")}
-                    隐藏文件：{hidden ? "包含" : "排除"}；系统索引文件始终排除。
+                    隐藏文件：{hidden ? "包含" : "排除"}；
+                    {automaticPdf
+                      ? "完成后自动保存 PDF 报告。"
+                      : "本任务不自动生成 PDF 报告。"}
                   </span>
                 </div>
                 <div className="path-preview">
@@ -1367,9 +1425,7 @@ export function Composer({
                   <div className="readiness-grid">
                     <div
                       className={
-                        sources.every((source) =>
-                          Boolean(source.scan?.totalFiles),
-                        )
+                        sources.every((source) => Boolean(source.scan))
                           ? "ready"
                           : "warning"
                       }
@@ -1384,7 +1440,11 @@ export function Composer({
                               sum + (source.scan?.totalFiles || 0),
                             0,
                           )}{" "}
-                          个文件
+                          个文件 · {sources.reduce(
+                            (sum, source) =>
+                              sum + (source.scan?.totalDirectories || 0),
+                            0,
+                          )} 个目录
                         </small>
                       </span>
                     </div>
@@ -1526,7 +1586,13 @@ export function Composer({
             {sources.some((s) => s.scan?.skipped) && (
               <div className="small muted">
                 排除 {sources.reduce((n, s) => n + (s.scan?.skipped || 0), 0)}{" "}
-                项系统或隐藏条目
+                项隐藏条目 ·{" "}
+                {bytes(
+                  sources.reduce(
+                    (n, s) => n + (s.scan?.skippedBytes || 0),
+                    0,
+                  ),
+                )}
               </div>
             )}
             <div className="summary-flow">

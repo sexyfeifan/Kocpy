@@ -1,5 +1,9 @@
 import * as fs from "fs";
-import type { BackupTask, ProjectConfig } from "../types";
+import type {
+  BackupTask,
+  ProjectConfig,
+  ReportContextSnapshot,
+} from "../types";
 import { formatBytes } from "../report-builder";
 import { projectDates, shootingDateKey } from "../../common/shooting-dates";
 import { APP_VERSION } from "../../common/version";
@@ -42,11 +46,42 @@ function esc(s: string): string {
     .replace(/"/g, "&quot;");
 }
 
+export function resolvedReportContext(
+  task: BackupTask,
+  project?: Pick<ProjectConfig, "id" | "name">,
+): ReportContextSnapshot {
+  if (task.reportContext) return task.reportContext;
+  return {
+    capturedAt: task.completedAt || task.createdAt || Date.now(),
+    projectId: task.projectId || project?.id,
+    projectName: project?.name,
+    projectNameSource: project?.name
+      ? "legacy-project-lookup"
+      : "unassigned",
+    shootingDate: task.shootingDate || undefined,
+    shootingDateSource: task.shootingDate
+      ? "legacy-task-field"
+      : "unrecorded",
+  };
+}
+
+const projectLabel = (task: BackupTask) =>
+  task.reportContext?.projectName ||
+  task.reportContext?.projectId ||
+  task.projectId ||
+  "未归属项目";
+
 export async function generateReport(
   task: BackupTask,
-  options: { includeThumbnails?: boolean } = {},
+  options: {
+    includeThumbnails?: boolean;
+    project?: Pick<ProjectConfig, "id" | "name">;
+    generatedAt?: number;
+  } = {},
 ): Promise<Buffer> {
   const trust = taskTrustState(task);
+  const context = resolvedReportContext(task, options.project);
+  const generatedAt = options.generatedAt ?? Date.now();
   const statusLabel = trust.label;
   const statusColor =
     trust.contentVerified
@@ -81,6 +116,21 @@ export async function generateReport(
         `<tr><td>${new Date(event.at).toLocaleString("zh-CN")}</td><td>${esc(event.phase)}</td><td style="color:${event.level === "error" ? "#ef4444" : event.level === "warning" ? "#b7791f" : "#555"}">${esc(event.message)}</td></tr>`,
     )
     .join("");
+  const inventory = task.inventoryScope,
+    inventoryLabel = inventory
+      ? inventory.policy.mode === "complete"
+        ? `完整文件范围 · ${inventory.policy.version}`
+        : `明确过滤范围 · ${inventory.policy.version}`
+      : "历史扫描范围 · 不追溯改标完整",
+    exclusionLabel = inventory
+      ? `${inventory.excludedFiles} 个文件 / ${inventory.excludedDirectories} 个目录 / ${formatBytes(inventory.excludedBytes)}`
+      : `${task.skippedFiles || 0} 项（旧记录未保存精确路径和字节）`,
+    exclusionRows = (inventory?.exclusions || [])
+      .map(
+        (item) =>
+          `<tr><td>${esc(item.relativePath)}</td><td>${item.kind === "file" ? "文件" : "目录"}</td><td>${formatBytes(item.bytes)}</td><td>用户选择过滤隐藏条目</td></tr>`,
+      )
+      .join("");
 
   const fileRows = (
     await Promise.all(
@@ -220,7 +270,7 @@ export async function generateReport(
   <div>
     <h1>Kocpy</h1>
     <p>VERIFIED MEDIA TRANSFER REPORT · v${APP_VERSION}</p>
-    <p style="margin-top:8px;font-size:12px;color:#aaa">生成时间：${new Date().toLocaleString("zh-CN")}</p>
+    <p style="margin-top:8px;font-size:12px;color:#aaa">生成时间：${new Date(generatedAt).toLocaleString("zh-CN")}</p>
   </div>
   <div class="badge">${statusLabel}</div>
 </div>
@@ -243,12 +293,18 @@ ${eventRows ? `<div class="section"><h2>任务事件时间线</h2><table><thead>
   <div class="info-grid">
     <span class="label">任务名称</span><span class="value">${esc(task.name)}</span>
     <span class="label">任务编号</span><span class="value">${esc(task.id)}</span>
+    <span class="label">项目名称</span><span class="value">${esc(context.projectName || "未归属项目")}</span>
+    <span class="label">项目编号</span><span class="value">${esc(context.projectId || "-")}</span>
+    <span class="label">拍摄日期</span><span class="value">${esc(context.shootingDate || "未记录")}</span>
+    <span class="label">报告上下文来源</span><span class="value">项目：${esc(context.projectNameSource)} · 日期：${esc(context.shootingDateSource)}</span>
     ${task.errorMessage ? `<span class="label">异常说明</span><span class="value">${esc(task.errorMessage)}</span>` : ""}
     <span class="label">源路径</span><span class="value">${esc(task.sourcePath)}</span>
     <span class="label">机位</span><span class="value">${esc((task.devices || []).join(" / ") || "-")}</span>
     <span class="label">哈希算法</span><span class="value">${task.hashAlgorithm.toUpperCase()}</span>
     <span class="label">总文件数</span><span class="value">${task.totalFiles} 个</span>
     <span class="label">总数据量</span><span class="value">${formatBytes(task.totalBytes)}</span>
+    <span class="label">备份范围</span><span class="value">${esc(inventoryLabel)}</span>
+    <span class="label">明确排除</span><span class="value">${esc(exclusionLabel)}</span>
     <span class="label">开始时间</span><span class="value">${task.startedAt ? new Date(task.startedAt).toLocaleString("zh-CN") : "-"}</span>
     <span class="label">完成时间</span><span class="value">${task.completedAt ? new Date(task.completedAt).toLocaleString("zh-CN") : "-"}</span>
     <span class="label">耗时</span><span class="value">${duration}</span>
@@ -256,6 +312,8 @@ ${eventRows ? `<div class="section"><h2>任务事件时间线</h2><table><thead>
     <span class="label">源分发读取</span><span class="value">${performanceLabel(task.sourceCopyReadPerformance)}</span>
   </div>
 </div>
+
+${exclusionRows ? `<div class="section"><h2>明确排除清单</h2><p>以下路径不属于本任务的备份与校验范围；完整路径、数量、字节和原因已随任务记录持久化。</p><table><thead><tr><th>相对路径</th><th>类型</th><th>字节</th><th>原因</th></tr></thead><tbody>${exclusionRows}</tbody></table></div>` : ""}
 
 <div class="section destination-section">
   <h2>备份目的地</h2>
@@ -313,7 +371,7 @@ export async function generateDailyReport(
         const scope = contribution.scope === "daily-allocation"
           ? `当日分配${contribution.pendingAllocation ? ` · ${contribution.pendingGroups} 组待分配` : ""}`
           : "整卡";
-        return `<tr><td>${esc(t.name)}</td><td>${esc((t.devices || []).join(" / ") || "-")}</td><td>${contribution.files}</td><td>${formatBytes(contribution.bytes)}<br>${scope}</td><td style="color:${trust.contentVerified ? "#21b76b" : "#d9545d"}">${esc(trust.label)} · ${trust.countableCopies} 份可计数副本<br>${esc(trust.nextStep)}</td></tr>`;
+        return `<tr><td>${esc(projectLabel(t))}</td><td>${esc(t.name)}</td><td>${esc((t.devices || []).join(" / ") || "-")}</td><td>${contribution.files}</td><td>${formatBytes(contribution.bytes)}<br>${scope}</td><td style="color:${trust.contentVerified ? "#21b76b" : "#d9545d"}">${esc(trust.label)} · ${trust.countableCopies} 份可计数副本<br>${esc(trust.nextStep)}</td></tr>`;
       },
     )
     .join("");
@@ -321,12 +379,12 @@ export async function generateDailyReport(
     .flatMap(({ task: t }) =>
       t.destinations.map(
         (d) =>
-          `<tr><td>${esc(t.name)}</td><td>${esc(d.volumeName || d.label)}</td><td>${esc(d.resolvedPath || d.path)}</td><td>${d.verified ? "✓ 通过" : `✗ ${esc(d.error || "未通过")}`}</td></tr>`,
+          `<tr><td>${esc(projectLabel(t))}</td><td>${esc(t.name)}</td><td>${esc(d.volumeName || d.label)}</td><td>${esc(d.resolvedPath || d.path)}</td><td>${d.verified ? "✓ 通过" : `✗ ${esc(d.error || "未通过")}`}</td></tr>`,
       ),
     )
     .join("");
   return Buffer.from(
-    `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><style>*{box-sizing:border-box}body{font-family:-apple-system,"PingFang SC",sans-serif;color:#24212c;padding:30px;background:#f3f1f6;font-size:12px}.cover{padding:30px;border-radius:18px;color:white;background:linear-gradient(135deg,#111216,#332b54);display:flex;justify-content:space-between}.cover h1{font-size:27px;margin:0}.cover p{color:#aaa4b8}.date{font-size:18px;color:#b5a6ff}.cards{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:18px 0}.cards div,.section{background:white;border:1px solid #e8e5ed;border-radius:12px;padding:18px}.cards strong{display:block;font-size:21px}.cards span{font-size:9px;color:#8b8593}.section{margin-top:14px}.section h2{font-size:12px;color:#77717e;border-bottom:1px solid #eee;padding-bottom:10px}table{width:100%;border-collapse:collapse;table-layout:fixed}th{background:#282331;color:white;text-align:left;padding:9px}td{padding:9px;border-bottom:1px solid #eee;overflow-wrap:anywhere}tr{break-inside:avoid}@media print{body{padding:0;background:white}}</style></head><body><div class="cover"><div><h1>Kocpy · 拍摄日汇总</h1><p>${esc(projectName)} · VERIFIED MEDIA DAY REPORT</p></div><div class="date">${esc(shootingDate)}</div></div><div class="cards"><div><strong>${safeTasks.length}</strong><span>BACKUPS / 备份任务</span></div><div><strong>${files}</strong><span>FILES / 文件</span></div><div><strong>${formatBytes(bytes)}</strong><span>MEDIA / 素材总量</span></div></div><div class="section"><h2>任务结论</h2><table><thead><tr><th>任务</th><th>机位</th><th>文件</th><th>大小</th><th>结论</th></tr></thead><tbody>${rows}</tbody></table></div><div class="section"><h2>目的地与校验</h2><table><thead><tr><th>任务</th><th>磁盘</th><th>路径</th><th>状态</th></tr></thead><tbody>${destinationRows}</tbody></table></div></body></html>`,
+    `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><style>*{box-sizing:border-box}body{font-family:-apple-system,"PingFang SC",sans-serif;color:#24212c;padding:30px;background:#f3f1f6;font-size:12px}.cover{padding:30px;border-radius:18px;color:white;background:linear-gradient(135deg,#111216,#332b54);display:flex;justify-content:space-between}.cover h1{font-size:27px;margin:0}.cover p{color:#aaa4b8}.date{font-size:18px;color:#b5a6ff}.cards{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:18px 0}.cards div,.section{background:white;border:1px solid #e8e5ed;border-radius:12px;padding:18px}.cards strong{display:block;font-size:21px}.cards span{font-size:9px;color:#8b8593}.section{margin-top:14px}.section h2{font-size:12px;color:#77717e;border-bottom:1px solid #eee;padding-bottom:10px}table{width:100%;border-collapse:collapse;table-layout:fixed}th{background:#282331;color:white;text-align:left;padding:9px}td{padding:9px;border-bottom:1px solid #eee;overflow-wrap:anywhere}tr{break-inside:avoid}@media print{body{padding:0;background:white}}</style></head><body><div class="cover"><div><h1>Kocpy · 拍摄日汇总</h1><p>${esc(projectName)} · VERIFIED MEDIA DAY REPORT</p></div><div class="date">${esc(shootingDate)}</div></div><div class="cards"><div><strong>${safeTasks.length}</strong><span>BACKUPS / 备份任务</span></div><div><strong>${files}</strong><span>FILES / 文件</span></div><div><strong>${formatBytes(bytes)}</strong><span>MEDIA / 素材总量</span></div></div><div class="section"><h2>任务结论</h2><table><thead><tr><th>项目</th><th>任务</th><th>机位</th><th>文件</th><th>大小</th><th>结论</th></tr></thead><tbody>${rows}</tbody></table></div><div class="section"><h2>目的地与校验</h2><table><thead><tr><th>项目</th><th>任务</th><th>磁盘</th><th>路径</th><th>状态</th></tr></thead><tbody>${destinationRows}</tbody></table></div></body></html>`,
     "utf8",
   );
 }

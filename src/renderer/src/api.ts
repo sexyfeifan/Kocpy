@@ -118,8 +118,16 @@ export interface Settings {
 }
 export interface Scan {
   totalFiles: number;
+  totalDirectories: number;
   totalBytes: number;
   skipped: number;
+  skippedBytes: number;
+  exclusions: Array<{
+    relativePath: string;
+    kind: "file" | "directory";
+    bytes: number;
+    reason: "hidden-by-user-filter";
+  }>;
   sample: string[];
   breakdown: Record<
     "video" | "photo" | "audio" | "other",
@@ -505,6 +513,7 @@ export interface API {
     id: string,
     format: "pdf" | "json" | "mhl" | "ascmhl",
   ): Promise<string | null>;
+  retryAutomaticReport(id: string): Promise<BackupTask["automaticReport"]>;
   exportDailyReport(date: string, projectId?: string): Promise<string | null>;
   exportProjectReport(
     projectId: string,

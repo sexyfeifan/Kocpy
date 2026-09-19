@@ -12,7 +12,14 @@ import type {
   Destination,
   TransferPerformance,
 } from "../types";
-import { canonical, inside, scan, segment, safeChild } from "./safety";
+import {
+  canonical,
+  completeInventoryPolicy,
+  inside,
+  scan,
+  segment,
+  safeChild,
+} from "./safety";
 import { volumeIdentity } from "../system";
 import { refreshStorageEvidence } from "../storage-topology";
 import { inspectMedia, isThumbnailMedia } from "../media";
@@ -365,6 +372,9 @@ export class BackupEngine extends EventEmitter {
       : "";
     const projectFolder = projectCardPath ? path.dirname(projectCardPath) : "",
       projectCard = projectCardPath ? path.basename(projectCardPath) : folder;
+    const createdAt = Date.now(),
+      includeHidden = config.includeHidden ?? true,
+      automaticPdf = config.automaticPdf ?? true;
     const task: BackupTask = {
       id,
       logicalVolumeId: id,
@@ -372,7 +382,7 @@ export class BackupEngine extends EventEmitter {
       operationAttempts: [
         {
           id,
-          startedAt: Date.now(),
+          startedAt: createdAt,
           reason: "initial",
           status: "pending",
         },
@@ -381,10 +391,34 @@ export class BackupEngine extends EventEmitter {
       sourcePath: config.sourcePath,
       devices: config.devices || [],
       projectId: config.projectId,
+      reportContext: {
+        capturedAt: createdAt,
+        projectId: config.projectId,
+        projectName: config.projectName?.trim() || undefined,
+        projectNameSource: config.projectName?.trim()
+          ? config.projectId
+            ? "project-selection"
+            : "task-input"
+          : "unassigned",
+        shootingDate: config.shootingDate || undefined,
+        shootingDateSource: config.shootingDate
+          ? "task-input"
+          : "unrecorded",
+      },
+      inventoryPolicy: completeInventoryPolicy(includeHidden, createdAt),
+      automaticReport: {
+        schema: 1,
+        enabled: automaticPdf,
+        requestedAt: createdAt,
+        operationAttemptId: id,
+        status: automaticPdf ? "pending" : "disabled",
+        attempts: 0,
+        targets: [],
+      },
       projectFolderName,
       shootingDate: config.shootingDate,
       cameraPosition: config.cameraPosition,
-      createdAt: Date.now(),
+      createdAt,
       hashAlgorithm: config.hashAlgorithm,
       namingTemplate: projectFolderName ? projectCard : folder,
       shootingDateFolder: projectFolder,
@@ -412,12 +446,12 @@ export class BackupEngine extends EventEmitter {
       fileRecords: [],
       priority: config.priority || false,
       duplicateStrategy: config.duplicateStrategy || "skip",
-      includeHidden: config.includeHidden ?? true,
+      includeHidden,
       volumeNumber: config.volumeNumber,
       generateThumbnails: config.generateThumbnails ?? true,
       faultTimeline: [
         {
-          at: Date.now(),
+          at: createdAt,
           phase: "created",
           level: "info",
           message: "任务已创建",
@@ -467,6 +501,14 @@ export class BackupEngine extends EventEmitter {
     if (!failed.length) throw new Error("没有可重试的失败目标");
     const attemptId = randomUUID();
     task.operationAttemptId = attemptId;
+    if (task.automaticReport && task.automaticReport.status !== "completed") {
+      task.automaticReport.operationAttemptId = attemptId;
+      task.automaticReport.status = task.automaticReport.enabled
+        ? "pending"
+        : "disabled";
+      task.automaticReport.targets = [];
+      task.automaticReport.error = undefined;
+    }
     task.operationAttempts = [
       ...(task.operationAttempts || []),
       {
@@ -603,6 +645,11 @@ export class BackupEngine extends EventEmitter {
         }
       }
       await this.verifyRecords(task, controller.signal);
+      await this.verifyDirectoryScope(
+        task,
+        task.inventoryScope?.includedDirectoryPaths || [],
+        controller.signal,
+      );
       await refreshStorageEvidence(task.destinations);
       controller.signal.throwIfAborted();
       if (task.destinations.some((d) => !d.verified))
@@ -664,12 +711,17 @@ export class BackupEngine extends EventEmitter {
     task.lastCheckpointAt = now;
     const healthy = task.destinations.filter(
       (destination) => destination.available !== false,
-    );
-    for (const destination of task.destinations)
-      destination.copyProgress = Math.min(
-        100,
-        ((destination.copiedBytes || 0) / Math.max(1, task.totalBytes)) * 100,
+      ),
+      completedEmptyScope = Boolean(
+        task.inventoryPolicy && task.totalFiles === 0 && task.copyProgress === 100,
       );
+    for (const destination of task.destinations)
+      destination.copyProgress = completedEmptyScope
+        ? 100
+        : Math.min(
+            100,
+            ((destination.copiedBytes || 0) / Math.max(1, task.totalBytes)) * 100,
+          );
     if (task.totalBytes && healthy.length)
       task.copyProgress = Math.min(
         ...healthy.map((destination) => destination.copyProgress || 0),
@@ -1040,7 +1092,9 @@ export class BackupEngine extends EventEmitter {
         task.fileRecords.length === task.totalFiles &&
         task.fileRecords.every((r) => r.destinations[index]?.verified);
       if (d.verified) d.copiedBytes = task.totalBytes;
+      if (task.totalFiles === 0 && d.verified) d.verifyProgress = 100;
     }
+    if (task.totalFiles === 0) task.verifyProgress = 100;
   }
   private async generateTaskThumbnails(task: BackupTask, signal: AbortSignal) {
     if (!task.generateThumbnails || !this.thumbnailDir) return;
@@ -1064,6 +1118,37 @@ export class BackupEngine extends EventEmitter {
     task.thumbnailError = failures
       ? `${failures} 个媒体文件未能生成缩略图，不影响备份与校验结果`
       : undefined;
+  }
+  private async verifyDirectoryScope(
+    task: BackupTask,
+    relativePaths: string[],
+    signal: AbortSignal,
+    selectedDestinationIds?: Set<string>,
+  ) {
+    for (const destination of task.destinations) {
+      if (
+        (selectedDestinationIds && !selectedDestinationIds.has(destination.id)) ||
+        destination.available === false ||
+        !destination.resolvedPath
+      )
+        continue;
+      for (const relativePath of relativePaths) {
+        signal.throwIfAborted();
+        try {
+          const target = await safeChild(destination.resolvedPath, relativePath),
+            stat = await fs.lstat(target);
+          if (!stat.isDirectory() || stat.isSymbolicLink())
+            throw new Error("目标不是实际目录");
+        } catch (error) {
+          destination.verified = false;
+          destination.error = `${relativePath}: 目录结构校验失败：${
+            error instanceof Error ? error.message : String(error)
+          }`;
+          task.verifyLog.push(`✗ ${destination.label} · ${destination.error}`);
+          break;
+        }
+      }
+    }
   }
   private async run(id: string, signal: AbortSignal) {
     const task = this.tasks.get(id)!;
@@ -1259,11 +1344,31 @@ export class BackupEngine extends EventEmitter {
       task.sourceVolumeId = sourceIdentity.id;
       task.sourceVolumeUuid = sourceIdentity.uuid;
       task.sourceVolumeName = sourceIdentity.name;
-      const inventory = await scan(src, task.includeHidden, signal);
-      if (!inventory.files.length) throw new Error("素材源没有可备份的文件");
+      const inventory = await scan(
+        src,
+        task.inventoryPolicy || task.includeHidden,
+        signal,
+      );
+      // complete-v2 inventories include directory structure as first-class
+      // scope, so an empty root (or a tree made only of empty directories) is
+      // still a valid, verifiable backup. Historical tasks keep their original
+      // file-only behavior.
+      if (!inventory.files.length && !task.inventoryPolicy)
+        throw new Error("素材源没有可备份的文件");
+      if (task.inventoryPolicy && inventory.scope) {
+        if (
+          task.inventoryScope &&
+          task.inventoryScope.fingerprint !== inventory.scope.fingerprint
+        )
+          throw new Error(
+            "素材源范围与任务首次扫描时冻结的快照不一致，已停止重试；请保留原记录并新建任务",
+          );
+        task.inventoryScope ||= structuredClone(inventory.scope);
+      }
       task.totalFiles = inventory.files.length;
       task.totalBytes = inventory.totalBytes;
       task.skippedFiles = inventory.skipped;
+      task.skippedBytes = inventory.skippedBytes;
       task.verifyTotalFiles = task.totalFiles * task.destinations.length;
       task.mediaBreakdown = mediaBreakdownFromFiles(inventory.files);
       const volumeNeeds = new Map<
@@ -1594,29 +1699,49 @@ export class BackupEngine extends EventEmitter {
           );
         task.fileRecords.push(record);
         const after = await fs.stat(file.absolutePath);
-        if (after.size !== file.size || after.mtimeMs !== file.mtimeMs)
+        if (
+          after.size !== file.size ||
+          after.mtimeMs !== file.mtimeMs ||
+          after.ctimeMs !== file.ctimeMs
+        )
           throw new Error(`备份期间素材发生变化：${file.relativePath}`);
         this.emitProgress(task, task.completedFiles === 1);
+      }
+      if (!inventory.files.length) {
+        task.copyProgress = 100;
+        for (const destination of task.destinations)
+          if (
+            (!retryTargetIds || retryTargetIds.has(destination.id)) &&
+            destination.available !== false
+          )
+            destination.copyProgress = 100;
       }
       await this.waitIfPaused(id, signal);
       task.transferPhase = "publishing";
       this.emitProgress(task, true);
-      const finalInventory = await scan(src, task.includeHidden, signal),
+      const finalInventory = await scan(
+          src,
+          task.inventoryPolicy || task.includeHidden,
+          signal,
+        ),
         initialInventory = new Map(
           inventory.files.map((file) => [
             file.relativePath,
-            `${file.size}:${file.mtimeMs}`,
+            `${file.size}:${file.mtimeMs}:${file.ctimeMs}`,
           ]),
         ),
         finalInventoryMap = new Map(
           finalInventory.files.map((file) => [
             file.relativePath,
-            `${file.size}:${file.mtimeMs}`,
+            `${file.size}:${file.mtimeMs}:${file.ctimeMs}`,
           ]),
         ),
         initialDirectories = new Set(inventory.directories),
         finalDirectories = new Set(finalInventory.directories);
       if (
+        (task.inventoryPolicy &&
+          task.inventoryScope?.fingerprint !==
+            finalInventory.scope?.fingerprint) ||
         initialInventory.size !== finalInventoryMap.size ||
         initialDirectories.size !== finalDirectories.size ||
         [...initialDirectories].some(
@@ -1681,6 +1806,12 @@ export class BackupEngine extends EventEmitter {
           d.performance = summarizeSpeeds(d.copySpeedSamples || []);
       }
       await this.verifyRecords(task, signal, retryTargetIds);
+      await this.verifyDirectoryScope(
+        task,
+        inventory.directories,
+        signal,
+        retryTargetIds,
+      );
       await refreshStorageEvidence(task.destinations);
       signal.throwIfAborted();
       if (task.destinations.some((d) => !d.verified))

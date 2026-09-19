@@ -187,8 +187,8 @@ describe("Real filesystem backup integrity", () => {
       emptyBefore = await fs.stat(path.join(source, "empty"));
     const { task } = await run();
     expect(task.status).toBe("completed");
-    expect(task.totalFiles).toBe(2);
-    expect(task.fileRecords).toHaveLength(2);
+    expect(task.totalFiles).toBe(3);
+    expect(task.fileRecords).toHaveLength(3);
     expect(task.destinations.every((d) => d.verified)).toBe(true);
     for (const rec of task.fileRecords)
       for (const dest of rec.destinations) {
@@ -199,12 +199,21 @@ describe("Real filesystem backup integrity", () => {
     expect(copiedEmpty.isDirectory()).toBe(true);
     expect(copiedEmpty.mode & 0o777).toBe(emptyBefore.mode & 0o777);
     expect(Math.abs(copiedEmpty.mtimeMs - emptyBefore.mtimeMs)).toBeLessThan(2);
+    expect(await fs.readFile(path.join(d1, ".DS_Store"), "utf8")).toBe(
+      "system",
+    );
+    expect(task.inventoryScope).toMatchObject({
+      includedFiles: 3,
+      excludedFiles: 0,
+      excludedDirectories: 0,
+      excludedBytes: 0,
+    });
     expect((await fs.stat(path.join(source, "DCIM", "片段.bin"))).mtimeMs).toBe(
       before.mtimeMs,
     );
     expect(task.transferredBytes).toBe(task.totalBytes);
     expect(task.destinations.every((d) => d.copiedBytes === task.totalBytes)).toBe(true);
-    expect(task.verifyCompletedFiles).toBe(4);
+    expect(task.verifyCompletedFiles).toBe(6);
     const copied = await fs.stat(path.join(d1, "DCIM", "片段.bin"));
     expect(Math.abs(copied.mtimeMs - before.mtimeMs)).toBeLessThan(2);
   });
@@ -313,6 +322,113 @@ describe("Real filesystem backup integrity", () => {
     await fs.symlink(path.join(source, "DCIM"), path.join(source, "linked"));
     await expect(scan(source)).rejects.toThrow("符号链接");
   });
+  it("freezes a complete new-task scope including AppleDouble, hidden metadata, reports and manifests", async () => {
+    await fs.writeFile(path.join(source, "._片段.bin"), "apple-double");
+    await fs.writeFile(path.join(source, ".hidden-note"), "hidden");
+    await fs.mkdir(path.join(source, ".metadata"));
+    await fs.writeFile(
+      path.join(source, ".metadata", "existing.mhl"),
+      "manifest",
+    );
+    await fs.writeFile(path.join(source, "旧校验报告.pdf"), "pdf");
+    const { task } = await run();
+    expect(task.status).toBe("completed");
+    expect(task.inventoryPolicy).toMatchObject({
+      version: "complete-v2",
+      mode: "complete",
+      includeAppleDouble: true,
+      includeSystemMetadata: true,
+      includeEmptyDirectories: true,
+    });
+    expect(task.inventoryScope?.exclusions).toEqual([]);
+    for (const relativePath of [
+      ".DS_Store",
+      "._片段.bin",
+      ".hidden-note",
+      ".metadata/existing.mhl",
+      "旧校验报告.pdf",
+    ])
+      expect(await fs.readFile(path.join(d1, relativePath))).toEqual(
+        await fs.readFile(path.join(source, relativePath)),
+      );
+  });
+  it("records every filtered hidden path, byte count and reason", async () => {
+    await fs.mkdir(path.join(source, ".hidden-dir"));
+    await fs.writeFile(path.join(source, ".hidden-dir", "clip.mov"), "12345");
+    await fs.writeFile(path.join(source, "._sidecar"), "123");
+    const { task } = await run(config({ includeHidden: false }));
+    expect(task.status).toBe("completed");
+    expect(task.inventoryPolicy).toMatchObject({
+      mode: "filtered",
+      includeHidden: false,
+      includeAppleDouble: false,
+      includeSystemMetadata: false,
+    });
+    expect(task.inventoryScope?.exclusions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          relativePath: ".DS_Store",
+          kind: "file",
+          bytes: 6,
+          reason: "hidden-by-user-filter",
+        }),
+        expect.objectContaining({
+          relativePath: ".hidden-dir",
+          kind: "directory",
+          bytes: 0,
+          reason: "hidden-by-user-filter",
+        }),
+        expect.objectContaining({
+          relativePath: path.join(".hidden-dir", "clip.mov"),
+          kind: "file",
+          bytes: 5,
+          reason: "hidden-by-user-filter",
+        }),
+        expect.objectContaining({
+          relativePath: "._sidecar",
+          kind: "file",
+          bytes: 3,
+          reason: "hidden-by-user-filter",
+        }),
+      ]),
+    );
+    expect(task.skippedBytes).toBe(14);
+    await expect(fs.access(path.join(d1, ".hidden-dir"))).rejects.toThrow();
+  });
+  it("keeps the historical scanner for loaded tasks without a policy snapshot", async () => {
+    const task = new BackupEngine().createTask(config());
+    delete task.inventoryPolicy;
+    delete task.inventoryScope;
+    delete task.automaticReport;
+    const engine = new BackupEngine();
+    engine.loadTask(structuredClone(task));
+    const done = wait(engine, task.id);
+    engine.startTask(task.id);
+    const completed = await done;
+    expect(completed.status).toBe("completed");
+    expect(completed.totalFiles).toBe(2);
+    expect(completed.inventoryPolicy).toBeUndefined();
+    expect(completed.inventoryScope).toBeUndefined();
+    await expect(fs.access(path.join(d1, ".DS_Store"))).rejects.toThrow();
+  });
+  it("refuses a retry when the source no longer matches the frozen scope", async () => {
+    const blocker = path.join(root, "blocked-destination");
+    await fs.writeFile(blocker, "not a directory");
+    const engine = new BackupEngine(),
+      task = engine.createTask(
+        config({ destinationPaths: [path.join(blocker, "child"), d2] }),
+      );
+    const first = wait(engine, task.id);
+    engine.startTask(task.id);
+    expect((await first).status).toBe("failed");
+    expect(task.inventoryScope?.fingerprint).toMatch(/^[a-f0-9]{64}$/);
+    await fs.writeFile(path.join(source, "late.mov"), "changed scope");
+    const retry = wait(engine, task.id);
+    engine.retryFailedDestinations(task.id);
+    const result = await retry;
+    expect(result.status).toBe("failed");
+    expect(result.errorMessage).toContain("冻结的快照不一致");
+  });
   it("cancel never reports success and retry re-verifies complete files", async () => {
     await fs.writeFile(
       path.join(source, "large.bin"),
@@ -384,12 +500,80 @@ describe("Real filesystem backup integrity", () => {
     const second = new BackupEngine().createTask(cfg);
     expect(second.namingTemplate).toBe(task.namingTemplate);
   });
-  it("does not mark empty source directories as verified backups", async () => {
-    const empty = path.join(root, "nothing");
-    await fs.mkdir(empty);
-    const { task } = await run(config({ sourcePath: empty }));
-    expect(task.status).toBe("failed");
-    expect(task.errorMessage).toContain("没有可备份");
+  it("copies and independently verifies a complete-v2 directory-only scope", async () => {
+    const empty = path.join(root, "directory-only"),
+      target = path.join(root, "directory-target");
+    await fs.mkdir(path.join(empty, "one", "two"), { recursive: true });
+    await fs.mkdir(target);
+    const { task } = await run(
+      config({
+        sourcePath: empty,
+        destinationPaths: [target],
+        mirrorLayout: undefined,
+      }),
+    );
+    expect(task.status).toBe("completed");
+    expect(task.totalFiles).toBe(0);
+    expect(task.inventoryScope).toMatchObject({
+      includedFiles: 0,
+      includedDirectories: 2,
+    });
+    expect(task.copyProgress).toBe(100);
+    expect(task.verifyProgress).toBe(100);
+    expect(task.destinations[0]).toMatchObject({
+      verified: true,
+      copyProgress: 100,
+      verifyProgress: 100,
+    });
+    expect(
+      (
+        await fs.stat(
+          path.join(target, path.basename(empty), "one", "two"),
+        )
+      ).isDirectory(),
+    ).toBe(true);
+  });
+  it("accepts a completely empty complete-v2 root but preserves legacy rejection", async () => {
+    const empty = path.join(root, "nothing"),
+      currentTarget = path.join(root, "empty-target"),
+      legacyTarget = path.join(root, "legacy-empty-target");
+    await Promise.all(
+      [empty, currentTarget, legacyTarget].map((directory) =>
+        fs.mkdir(directory),
+      ),
+    );
+    const current = await run(
+      config({
+        sourcePath: empty,
+        destinationPaths: [currentTarget],
+        mirrorLayout: undefined,
+      }),
+    );
+    expect(current.task.status).toBe("completed");
+    expect(current.task.inventoryScope).toMatchObject({
+      includedFiles: 0,
+      includedDirectories: 0,
+    });
+    expect(current.task.destinations[0].verified).toBe(true);
+    expect(
+      (await fs.stat(path.join(currentTarget, path.basename(empty)))).isDirectory(),
+    ).toBe(true);
+
+    const legacyEngine = new BackupEngine(),
+      legacy = legacyEngine.createTask(
+        config({
+          sourcePath: empty,
+          destinationPaths: [legacyTarget],
+          mirrorLayout: undefined,
+        }),
+      );
+    delete legacy.inventoryPolicy;
+    delete legacy.inventoryScope;
+    delete legacy.automaticReport;
+    const settled = wait(legacyEngine, legacy.id);
+    legacyEngine.startTask(legacy.id);
+    expect((await settled).status).toBe("failed");
+    expect(legacy.errorMessage).toContain("没有可备份");
   });
   it("never accepts unsupported algorithms or zero destinations", () => {
     expect(() =>

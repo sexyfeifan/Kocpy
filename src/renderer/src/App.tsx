@@ -891,6 +891,13 @@ export function App() {
       const result = await api.exportReport(id, format);
       if (result) notify(`报告已保存：${result}`);
     });
+  const retryAutomaticReport = (id: string) =>
+    act(async () => {
+      const result = await api.retryAutomaticReport(id);
+      await refresh();
+      if (result?.status === "completed") notify("自动 PDF 报告已补齐");
+      else throw new Error(result?.error || "自动 PDF 报告仍未保存完成");
+    });
   const taskRows = (rows: BackupTask[], compact = false) => (
     <div className="task-list">
       {rows.map((t) => {
@@ -2875,6 +2882,15 @@ export function App() {
                                 <span>
                                   {date(t.completedAt)} · {t.totalFiles} 个文件
                                   · {bytes(t.totalBytes)}
+                                  {t.automaticReport?.enabled
+                                    ? ` · 自动 PDF ${
+                                        t.automaticReport.status === "completed"
+                                          ? "已保存"
+                                          : t.automaticReport.status === "failed"
+                                            ? "保存失败"
+                                            : "待生成"
+                                      }`
+                                    : ""}
                                 </span>
                               </div>
                               <TaskBadge task={t} />
@@ -2885,6 +2901,17 @@ export function App() {
                                 <Download size={14} />
                                 PDF 报告
                               </Button>
+                              {t.automaticReport?.status === "failed" && (
+                                <Button
+                                  kind="subtle"
+                                  onClick={() =>
+                                    void retryAutomaticReport(t.id)
+                                  }
+                                >
+                                  <RefreshCw size={14} />
+                                  重试自动报告
+                                </Button>
+                              )}
                               <Button
                                 kind="icon"
                                 title="导出 MHL 素材哈希清单"
@@ -3692,6 +3719,17 @@ export function App() {
                       <Download size={15} />
                       导出报告
                     </Button>
+                    {selected.automaticReport?.status === "failed" && (
+                      <Button
+                        kind="subtle"
+                        onClick={() =>
+                          void retryAutomaticReport(selected.id)
+                        }
+                      >
+                        <RefreshCw size={14} />
+                        重试自动报告
+                      </Button>
+                    )}
                   </>
                 )}
               </div>

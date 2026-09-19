@@ -84,6 +84,112 @@ function project(id: string): ProjectConfig {
 }
 
 describe("workspace authority and reconciliation", () => {
+  it("round-trips new scope/report snapshots without upgrading legacy tasks", async () => {
+    const { root, storage, catalog } = await fixture(),
+      workspace = new WorkspaceRepository(storage, catalog);
+    await workspace.initialize();
+    const current = task("complete-v2");
+    current.inventoryPolicy = {
+      version: "complete-v2",
+      mode: "complete",
+      createdAt: 1,
+      includeHidden: true,
+      includeAppleDouble: true,
+      includeSystemMetadata: true,
+      includeEmptyDirectories: true,
+      symlinkPolicy: "fail",
+      specialFilePolicy: "fail",
+    };
+    current.inventoryScope = {
+      policy: current.inventoryPolicy,
+      capturedAt: 2,
+      sourcePath: current.sourcePath,
+      fingerprint: "a".repeat(64),
+      includedFiles: 0,
+      includedBytes: 0,
+      includedDirectories: 0,
+      includedDirectoryPaths: [],
+      excludedFiles: 0,
+      excludedDirectories: 0,
+      excludedBytes: 0,
+      exclusions: [],
+    };
+    current.reportContext = {
+      capturedAt: 1,
+      projectId: "project-1",
+      projectName: "项目一",
+      projectNameSource: "project-selection",
+      shootingDate: "2026-09-19",
+      shootingDateSource: "task-input",
+    };
+    current.automaticReport = {
+      schema: 1,
+      enabled: false,
+      requestedAt: 1,
+      operationAttemptId: current.id,
+      status: "disabled",
+      attempts: 0,
+      targets: [],
+    };
+    current.operationAttemptId = current.id;
+    const legacy = task("legacy");
+    await workspace.commitTasks([current, legacy], true);
+    const reopened = await new WorkspaceRepository(
+      new Storage(root),
+      new CatalogDatabase(root),
+    ).initialize();
+    const saved = reopened.state.tasks.find((item) => item.id === current.id)!;
+    expect(saved.inventoryScope).toEqual(current.inventoryScope);
+    expect(saved.reportContext).toEqual(current.reportContext);
+    expect(saved.automaticReport).toEqual(current.automaticReport);
+    const savedLegacy = reopened.state.tasks.find(
+      (item) => item.id === legacy.id,
+    )!;
+    expect(savedLegacy.inventoryPolicy).toBeUndefined();
+    expect(savedLegacy.inventoryScope).toBeUndefined();
+    expect(savedLegacy.automaticReport).toBeUndefined();
+  });
+
+  it("rejects an automatic report path outside its recorded destination", async () => {
+    const { storage, catalog } = await fixture(),
+      workspace = new WorkspaceRepository(storage, catalog);
+    await workspace.initialize();
+    const value = task("unsafe-report");
+    value.destinations = [
+      {
+        id: "destination-1",
+        path: "/Volumes/BACKUP",
+        resolvedPath: "/Volumes/BACKUP/A001",
+        label: "BACKUP",
+        verified: true,
+        bytesWritten: 0,
+      },
+    ];
+    value.automaticReport = {
+      schema: 1,
+      enabled: true,
+      requestedAt: 1,
+      operationAttemptId: value.id,
+      status: "failed",
+      attempts: 1,
+      targets: [
+        {
+          destinationId: "destination-1",
+          destinationPath: "/Volumes/BACKUP/A001",
+          reportDirectory: "/Volumes/BACKUP/A001/Kocpy报告",
+          outputPath: "/tmp/escape.pdf",
+          status: "failed",
+          attempts: 1,
+          error: "injected",
+        },
+      ],
+    };
+    value.operationAttemptId = value.id;
+    await expect(workspace.commitTasks([value])).rejects.toThrow(
+      "自动报告目标无效",
+    );
+  });
+
   it("upgrades schema 1 once and imports legacy archive evidence into the authority", async () => {
     const { root, storage, catalog } = await fixture(),
       legacy = sealWorkspaceState({

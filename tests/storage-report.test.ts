@@ -5,6 +5,7 @@ import os from "node:os";
 import { Storage } from "../src/main/storage";
 import { BackupEngine } from "../src/main/backup/BackupEngine";
 import {
+  generateDailyReport,
   generateProjectReport,
   generateReport,
 } from "../src/main/backup/ReportGenerator";
@@ -71,6 +72,24 @@ describe("Persistence and reports", () => {
     expect(html).not.toContain("<script>");
     expect(html).toContain("备份失败");
   });
+  it("renders a byte-stable automatic report context from a frozen timestamp", async () => {
+    const t = new BackupEngine().createTask({
+      name: "stable",
+      namingTemplate: "stable",
+      sourcePath: "/tmp/source",
+      destinationPaths: ["/tmp/dest"],
+      devices: [],
+      hashAlgorithm: "sha256",
+      shootingDate: "2026-09-19",
+    });
+    const generatedAt = Date.parse("2026-09-19T03:04:05.000Z"),
+      first = await generateReport(t, { generatedAt }),
+      second = await generateReport(t, { generatedAt });
+    expect(first).toEqual(second);
+    expect(first.toString()).toContain(
+      new Date(generatedAt).toLocaleString("zh-CN"),
+    );
+  });
   it("embeds the matching media thumbnail in the PDF report HTML", async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "kocpy-thumb-"));
     const thumbnail = path.join(dir, "clip.jpg");
@@ -105,6 +124,109 @@ describe("Persistence and reports", () => {
     } finally {
       await fs.rm(dir, { recursive: true, force: true });
     }
+  });
+  it("renders the frozen project/date context and exact filtered scope", async () => {
+    const t = new BackupEngine().createTask({
+      name: "A001",
+      namingTemplate: "A001",
+      sourcePath: "/tmp/source",
+      destinationPaths: ["/tmp/dest"],
+      devices: ["A机"],
+      hashAlgorithm: "sha256",
+      shootingDate: "2026-09-19",
+      projectId: "project-1",
+      projectName: "品牌短片",
+      includeHidden: false,
+    });
+    t.inventoryScope = {
+      policy: t.inventoryPolicy!,
+      capturedAt: 1,
+      sourcePath: "/tmp/source",
+      fingerprint: "a".repeat(64),
+      includedFiles: 1,
+      includedBytes: 10,
+      includedDirectories: 0,
+      includedDirectoryPaths: [],
+      excludedFiles: 1,
+      excludedDirectories: 0,
+      excludedBytes: 7,
+      exclusions: [
+        {
+          relativePath: ".secret<&>.json",
+          kind: "file",
+          bytes: 7,
+          modifiedAt: 1,
+          reason: "hidden-by-user-filter",
+        },
+      ],
+    };
+    const html = (await generateReport(t)).toString();
+    expect(html).toContain("品牌短片");
+    expect(html).toContain("project-1");
+    expect(html).toContain("2026-09-19");
+    expect(html).toContain("明确过滤范围 · complete-v2");
+    expect(html).toContain(".secret&lt;&amp;&gt;.json");
+    expect(html).toContain("用户选择过滤隐藏条目");
+  });
+  it("labels legacy scope honestly while resolving its current project context", async () => {
+    const t = new BackupEngine().createTask({
+      name: "legacy",
+      namingTemplate: "legacy",
+      sourcePath: "/tmp/source",
+      destinationPaths: ["/tmp/dest"],
+      devices: [],
+      hashAlgorithm: "sha256",
+      shootingDate: "2026-09-18",
+      projectId: "legacy-project",
+    });
+    delete t.inventoryPolicy;
+    delete t.inventoryScope;
+    delete t.reportContext;
+    const html = (
+      await generateReport(t, {
+        project: { id: "legacy-project", name: "旧项目" },
+      })
+    ).toString();
+    expect(html).toContain("旧项目");
+    expect(html).toContain("2026-09-18");
+    expect(html).toContain("历史扫描范围 · 不追溯改标完整");
+    expect(html).toContain("legacy-project-lookup");
+  });
+  it("distinguishes projects in an all-project daily report", async () => {
+    const make = (id: string, projectName: string) => {
+      const task = new BackupEngine().createTask({
+        name: "A001",
+        namingTemplate: "A001",
+        sourcePath: `/tmp/${id}-source`,
+        destinationPaths: [`/tmp/${id}-dest`],
+        devices: ["A机"],
+        hashAlgorithm: "sha256",
+        shootingDate: "2026-09-19",
+        projectId: id,
+        projectName,
+      });
+      task.totalFiles = 1;
+      task.totalBytes = 1;
+      task.fileRecords = [
+        {
+          name: "clip.mov",
+          relativePath: "clip.mov",
+          size: 1,
+          srcChecksum: "abc",
+          destinations: [],
+        },
+      ];
+      return task;
+    };
+    const html = (
+      await generateDailyReport(
+        [make("one", "项目一"), make("two", "项目二")],
+        "2026-09-19",
+      )
+    ).toString();
+    expect(html).toContain("<th>项目</th><th>任务</th>");
+    expect(html).toContain("项目一");
+    expect(html).toContain("项目二");
   });
   it("excludes Time Machine snapshot and localized backup volume names", () => {
     expect(isTimeMachineVolume("com.apple.TimeMachine.localsnapshots")).toBe(
@@ -149,18 +271,77 @@ describe("Persistence and reports", () => {
       },
     ];
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "ascmhl-test-")),
-      manifest = path.join(dir, "0001_TEST.mhl");
+      manifest = path.join(dir, "0001_TEST.mhl"),
+      ascMhl = generateAscMhl(t);
     try {
-      await fs.writeFile(manifest, generateAscMhl(t));
+      await fs.writeFile(manifest, ascMhl);
       execFileSync("/usr/bin/xmllint", [
         "--noout",
         "--schema",
         path.resolve("tests/ASCMHL.xsd"),
         manifest,
       ]);
+      expect(ascMhl).not.toContain("<ignore>");
+      expect(ascMhl).toContain(
+        "<kocpy_inventory_policy>complete-v2</kocpy_inventory_policy>",
+      );
     } finally {
       await fs.rm(dir, { recursive: true, force: true });
     }
+  });
+  it("describes only the exact frozen exclusions in filtered ASC MHL", () => {
+    const t = new BackupEngine().createTask({
+      name: "filtered",
+      namingTemplate: "filtered",
+      sourcePath: "/tmp/source",
+      destinationPaths: ["/tmp/dest"],
+      devices: [],
+      hashAlgorithm: "sha256",
+      shootingDate: "",
+      includeHidden: false,
+    });
+    t.fileRecords = [
+      {
+        name: "clip.mov",
+        relativePath: "clip.mov",
+        size: 1,
+        srcChecksum: "sha",
+        ascMhlMd5: "d41d8cd98f00b204e9800998ecf8427e",
+        destinations: [],
+      },
+    ];
+    t.inventoryScope = {
+      policy: t.inventoryPolicy!,
+      capturedAt: 1,
+      sourcePath: "/tmp/source",
+      fingerprint: "a".repeat(64),
+      includedFiles: 1,
+      includedBytes: 1,
+      includedDirectories: 0,
+      includedDirectoryPaths: [],
+      excludedFiles: 1,
+      excludedDirectories: 0,
+      excludedBytes: 2,
+      exclusions: [
+        {
+          relativePath: ".private<&>.json",
+          kind: "file",
+          bytes: 2,
+          modifiedAt: 1,
+          reason: "hidden-by-user-filter",
+        },
+      ],
+    };
+    const result = generateAscMhl(t);
+    expect(result).toContain(
+      "<ignore><pattern>.private&lt;&amp;&gt;.json</pattern></ignore>",
+    );
+    expect(result).not.toContain("<pattern>.DS_Store</pattern>");
+    delete t.inventoryPolicy;
+    delete t.inventoryScope;
+    expect(generateAscMhl(t)).toContain(
+      "<ignore><pattern>.DS_Store</pattern><pattern>._*</pattern></ignore>",
+    );
   });
   it("exports an escaped MHL inventory from recorded source hashes", () => {
     const t = new BackupEngine().createTask({

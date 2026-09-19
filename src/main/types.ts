@@ -291,6 +291,85 @@ export interface DailyDeliveryRun {
   error?: string;
 }
 
+export type InventoryPolicyVersion = "complete-v2";
+export interface InventoryPolicySnapshot {
+  /** Frozen when the task is created; tasks without this field keep legacy-v1 behavior. */
+  version: InventoryPolicyVersion;
+  mode: "complete" | "filtered";
+  createdAt: number;
+  includeHidden: boolean;
+  includeAppleDouble: boolean;
+  includeSystemMetadata: boolean;
+  includeEmptyDirectories: true;
+  symlinkPolicy: "fail";
+  specialFilePolicy: "fail";
+}
+
+export interface InventoryExcludedEntry {
+  relativePath: string;
+  kind: "file" | "directory";
+  bytes: number;
+  modifiedAt: number;
+  reason: "hidden-by-user-filter";
+}
+
+export interface InventoryScopeSnapshot {
+  policy: InventoryPolicySnapshot;
+  capturedAt: number;
+  sourcePath: string;
+  /** SHA-256 over included paths/size/timestamps, directories and exclusions. */
+  fingerprint: string;
+  includedFiles: number;
+  includedBytes: number;
+  includedDirectories: number;
+  includedDirectoryPaths: string[];
+  excludedFiles: number;
+  excludedDirectories: number;
+  excludedBytes: number;
+  exclusions: InventoryExcludedEntry[];
+}
+
+export interface ReportContextSnapshot {
+  capturedAt: number;
+  projectId?: string;
+  projectName?: string;
+  projectNameSource:
+    | "project-selection"
+    | "task-input"
+    | "legacy-project-lookup"
+    | "unassigned";
+  shootingDate?: string;
+  shootingDateSource: "task-input" | "legacy-task-field" | "unrecorded";
+}
+
+export interface AutomaticReportTarget {
+  destinationId: string;
+  destinationPath: string;
+  reportDirectory: string;
+  outputPath: string;
+  status: "pending" | "publishing" | "completed" | "failed";
+  attempts: number;
+  expectedSha256?: string;
+  bytes?: number;
+  completedAt?: number;
+  error?: string;
+}
+
+export interface AutomaticReportRecord {
+  schema: 1;
+  enabled: boolean;
+  requestedAt: number;
+  /** Frozen before the first render so retries cannot change report content. */
+  generatedAt?: number;
+  operationAttemptId: string;
+  status: "disabled" | "pending" | "running" | "completed" | "failed";
+  attempts: number;
+  targets: AutomaticReportTarget[];
+  lastAttemptAt?: number;
+  completedAt?: number;
+  error?: string;
+}
+
 export interface ExternalManifestComparison {
   path: string;
   algorithm?: HashAlgorithm;
@@ -342,6 +421,14 @@ export interface BackupTask {
   workstationSources?: WorkstationSourceEvidence[];
   externalManifest?: ExternalManifestComparison;
   projectId?: string;
+  /** Immutable display context used by reports even if a project is renamed later. */
+  reportContext?: ReportContextSnapshot;
+  /** New tasks freeze complete-v2; absence deliberately means the historical scanner. */
+  inventoryPolicy?: InventoryPolicySnapshot;
+  /** Exact initial source scope, including every intentional filtered exclusion. */
+  inventoryScope?: InventoryScopeSnapshot;
+  /** Separate from backup trust: report publication can fail while data stays verified. */
+  automaticReport?: AutomaticReportRecord;
   /** Stable media-unit identity. Attempts and retries must not inflate card counts. */
   logicalVolumeId?: string;
   /** Identity of this concrete transfer/import attempt. */
@@ -463,6 +550,8 @@ export interface TaskConfig {
   priority?: boolean;
   fx3Rename?: boolean;
   includeHidden?: boolean;
+  /** Defaults to true for newly created tasks. */
+  automaticPdf?: boolean;
   incremental?: boolean;
   volumeNumber?: number;
 }

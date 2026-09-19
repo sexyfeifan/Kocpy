@@ -1,5 +1,11 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { createHash } from "node:crypto";
+import type {
+  InventoryExcludedEntry,
+  InventoryPolicySnapshot,
+  InventoryScopeSnapshot,
+} from "../types";
 export const inside = (child: string, parent: string) =>
   child === parent || child.startsWith(parent + path.sep);
 export function segment(value: string): string {
@@ -56,73 +62,195 @@ export interface SourceFile {
   absolutePath: string;
   size: number;
   mtimeMs: number;
+  ctimeMs: number;
   atimeMs: number;
   mode: number;
 }
 export interface SourceDirectory {
   relativePath: string;
   mtimeMs: number;
+  ctimeMs: number;
   atimeMs: number;
   mode: number;
 }
+
+export function completeInventoryPolicy(
+  includeHidden = true,
+  createdAt = Date.now(),
+): InventoryPolicySnapshot {
+  return {
+    version: "complete-v2",
+    mode: includeHidden ? "complete" : "filtered",
+    createdAt,
+    includeHidden,
+    includeAppleDouble: includeHidden,
+    includeSystemMetadata: includeHidden,
+    includeEmptyDirectories: true,
+    symlinkPolicy: "fail",
+    specialFilePolicy: "fail",
+  };
+}
+
+const legacyExcluded = (name: string, includeHidden: boolean) =>
+  [".DS_Store", ".Spotlight-V100", ".Trashes", ".fseventsd"].includes(name) ||
+  name.startsWith("._") ||
+  (!includeHidden && name.startsWith("."));
+
+const readableError = (error: unknown) =>
+  error instanceof Error ? error.message : String(error);
+
 export async function scan(
   source: string,
-  includeHidden = true,
+  policyOrIncludeHidden: InventoryPolicySnapshot | boolean = true,
   signal?: AbortSignal,
 ) {
   const files: SourceFile[] = [];
   const directories: string[] = [];
   const directoryMetadata: SourceDirectory[] = [];
+  const exclusions: InventoryExcludedEntry[] = [];
+  const policy =
+    typeof policyOrIncludeHidden === "boolean"
+      ? undefined
+      : structuredClone(policyOrIncludeHidden);
+  const includeHidden =
+    typeof policyOrIncludeHidden === "boolean"
+      ? policyOrIncludeHidden
+      : policyOrIncludeHidden.includeHidden;
+  const sourceStat = await fs.lstat(source).catch((error) => {
+    throw new Error(`无法读取素材源：${readableError(error)}`);
+  });
+  if (!sourceStat.isDirectory() || sourceStat.isSymbolicLink())
+    throw new Error("素材源必须是实际目录");
   let skipped = 0;
-  async function walk(dir: string) {
+  async function walk(
+    dir: string,
+    inheritedExclusion?: InventoryExcludedEntry["reason"],
+  ) {
     signal?.throwIfAborted();
-    const entries = await fs.readdir(dir, { withFileTypes: true });
+    let entries: import("node:fs").Dirent[];
+    try {
+      entries = (await fs.readdir(dir, { withFileTypes: true })).sort(
+        (left, right) => left.name.localeCompare(right.name),
+      );
+    } catch (error) {
+      const relativePath = path.relative(source, dir) || ".";
+      throw new Error(
+        `无法读取素材目录：${relativePath}：${readableError(error)}`,
+      );
+    }
     for (const entry of entries) {
       signal?.throwIfAborted();
-      if (
-        [".DS_Store", ".Spotlight-V100", ".Trashes", ".fseventsd"].includes(
-          entry.name,
-        ) ||
-        entry.name.startsWith("._") ||
-        (!includeHidden && entry.name.startsWith("."))
-      ) {
+      if (!policy && legacyExcluded(entry.name, includeHidden)) {
         skipped++;
         continue;
       }
       const abs = path.join(dir, entry.name),
         rel = path.relative(source, abs);
-      if (entry.isSymbolicLink())
+      let st: Awaited<ReturnType<typeof fs.lstat>>;
+      try {
+        st = await fs.lstat(abs);
+      } catch (error) {
+        throw new Error(`无法读取素材条目：${rel}：${readableError(error)}`);
+      }
+      if (st.isSymbolicLink())
         throw new Error(`不跟随素材中的符号链接，请移除或选择实际目录：${rel}`);
-      if (entry.isDirectory()) {
+      if (!st.isDirectory() && !st.isFile())
+        throw new Error(`不支持的特殊文件：${rel}`);
+      const exclusion =
+        inheritedExclusion ||
+        (policy?.mode === "filtered" && entry.name.startsWith(".")
+          ? "hidden-by-user-filter"
+          : undefined);
+      if (exclusion) {
+        exclusions.push({
+          relativePath: rel,
+          kind: st.isDirectory() ? "directory" : "file",
+          bytes: st.isFile() ? st.size : 0,
+          modifiedAt: st.mtimeMs,
+          reason: exclusion,
+        });
+        skipped++;
+        if (st.isDirectory()) await walk(abs, exclusion);
+        continue;
+      }
+      if (st.isDirectory()) {
         directories.push(rel);
-        const st = await fs.stat(abs);
         directoryMetadata.push({
           relativePath: rel,
           mtimeMs: st.mtimeMs,
+          ctimeMs: st.ctimeMs,
           atimeMs: st.atimeMs,
           mode: st.mode,
         });
         await walk(abs);
-      } else if (entry.isFile()) {
-        const st = await fs.stat(abs);
+      } else if (st.isFile()) {
         files.push({
           name: entry.name,
           relativePath: rel,
           absolutePath: abs,
           size: st.size,
           mtimeMs: st.mtimeMs,
+          ctimeMs: st.ctimeMs,
           atimeMs: st.atimeMs,
           mode: st.mode,
         });
-      } else throw new Error(`不支持的特殊文件：${rel}`);
+      }
     }
   }
   await walk(source);
+  const totalBytes = files.reduce((n, f) => n + f.size, 0);
+  const fingerprint = createHash("sha256")
+    .update(
+      JSON.stringify({
+        root: [sourceStat.mtimeMs, sourceStat.ctimeMs, sourceStat.mode],
+        files: files.map((file) => [
+          file.relativePath,
+          file.size,
+          file.mtimeMs,
+          file.ctimeMs,
+        ]),
+        directories: directoryMetadata.map((directory) => [
+          directory.relativePath,
+          directory.mtimeMs,
+          directory.ctimeMs,
+          directory.mode,
+        ]),
+        exclusions: exclusions.map((item) => [
+          item.relativePath,
+          item.kind,
+          item.bytes,
+          item.modifiedAt,
+          item.reason,
+        ]),
+      }),
+    )
+    .digest("hex");
+  const scope: InventoryScopeSnapshot | undefined = policy
+    ? {
+        policy,
+        capturedAt: Date.now(),
+        sourcePath: source,
+        fingerprint,
+        includedFiles: files.length,
+        includedBytes: totalBytes,
+        includedDirectories: directories.length,
+        includedDirectoryPaths: [...directories],
+        excludedFiles: exclusions.filter((item) => item.kind === "file").length,
+        excludedDirectories: exclusions.filter(
+          (item) => item.kind === "directory",
+        ).length,
+        excludedBytes: exclusions.reduce((sum, item) => sum + item.bytes, 0),
+        exclusions,
+      }
+    : undefined;
   return {
     files,
     directories,
     directoryMetadata,
     skipped,
-    totalBytes: files.reduce((n, f) => n + f.size, 0),
+    skippedBytes: exclusions.reduce((sum, item) => sum + item.bytes, 0),
+    exclusions,
+    scope,
+    totalBytes,
   };
 }

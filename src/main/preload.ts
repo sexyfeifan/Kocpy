@@ -128,6 +128,7 @@ contextBridge.exposeInMainWorld("api", {
   saveProject: call("projects:save"),
   claimProjectVolume: call("projects:claim-volume"),
   exportReport: call("report:export"),
+  retryAutomaticReport: call("report:auto-retry"),
   exportDailyReport: call("report:daily"),
   exportProjectReport: call("report:project"),
   exportResolveCsv: call("report:resolve-csv"),

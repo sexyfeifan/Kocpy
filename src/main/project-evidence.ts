@@ -216,6 +216,16 @@ export function attachTaskEvidence(task: BackupTask, project?: ProjectConfig): B
   task.operationAttemptId ||= task.id;
   if (project?.activeRuleSnapshotId)
     task.projectRuleSnapshotId ||= project.activeRuleSnapshotId;
+  if (project) {
+    task.reportContext = {
+      capturedAt: task.reportContext?.capturedAt || task.createdAt || Date.now(),
+      projectId: project.id,
+      projectName: project.name,
+      projectNameSource: "project-selection",
+      shootingDate: task.shootingDate || undefined,
+      shootingDateSource: task.shootingDate ? "task-input" : "unrecorded",
+    };
+  }
   return task;
 }
 

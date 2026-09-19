@@ -30,6 +30,7 @@ import { promises as fs } from "node:fs";
 import { BackupEngine, hashFile } from "./backup/BackupEngine";
 import {
   scan,
+  completeInventoryPolicy,
   validatePaths,
   segment,
   inside,
@@ -97,6 +98,11 @@ import {
   sha256Bytes,
   skipCompletionAction,
 } from "./completion-automation";
+import {
+  automaticReportEligible,
+  runAutomaticReport,
+  verifiedAutomaticReportPaths,
+} from "./automatic-report";
 import {
   archiveResultDigest,
   archiveTaskBaselineDigest,
@@ -720,11 +726,16 @@ const sourceInventoryMatches = async (task: BackupTask) => {
     identity.id !== task.sourceVolumeId
   )
     return false;
-  const current = await scan(task.sourcePath, task.includeHidden),
+  const current = await scan(
+      task.sourcePath,
+      task.inventoryPolicy || task.includeHidden,
+    ),
     expected = new Map(
       task.fileRecords.map((file) => [file.relativePath, file.size]),
     );
   return (
+    (!task.inventoryScope ||
+      current.scope?.fingerprint === task.inventoryScope.fingerprint) &&
     current.files.length === expected.size &&
     current.files.every((file) => expected.get(file.relativePath) === file.size)
   );
@@ -1132,6 +1143,66 @@ async function renderArchiveTransferReports(
   await syncFileAndParent(pngPath);
   return { pdfPath, pngPath };
 }
+
+const automaticReportRuns = new Map<string, Promise<unknown>>();
+function enqueueAutomaticReport(task: BackupTask) {
+  const existing = automaticReportRuns.get(task.id);
+  if (existing) return existing;
+  if (!automaticReportEligible(task))
+    return Promise.resolve(task.automaticReport);
+  const operation = (async () => {
+    const project = task.projectId
+      ? (await readProjects()).find((item) => item.id === task.projectId)
+      : undefined;
+    const result = await runAutomaticReport(task, {
+      render: async () =>
+        htmlToPdf(
+          await generateReport(task, {
+            includeThumbnails: false,
+            project,
+            generatedAt: task.automaticReport?.generatedAt,
+          }),
+          { top: 0.4, bottom: 0.4, left: 0.3, right: 0.3 },
+        ),
+      persist: () => persist(true),
+      authorizeTarget: async (destination, target) => {
+        if (!destination.verified || !destination.resolvedPath)
+          throw new Error("目的地不再具有已校验状态");
+        const root = await canonical(destination.resolvedPath),
+          identity = await volumeIdentity(root);
+        assertVolumeIdentity(
+          destination.volumeUuid,
+          destination.volumeId,
+          identity,
+          `${destination.label} `,
+        );
+        const authorized = await safeChild(
+          root,
+          path.relative(root, target.outputPath),
+        );
+        if (path.resolve(authorized) !== path.resolve(target.outputPath))
+          throw new Error("自动报告路径越出实际备份目录");
+      },
+      existingSha256: async (outputPath) => {
+        const stat = await fs.lstat(outputPath).catch((error) => {
+          if ((error as NodeJS.ErrnoException).code === "ENOENT")
+            return undefined;
+          throw error;
+        });
+        if (!stat) return undefined;
+        if (!stat.isFile() || stat.isSymbolicLink())
+          throw new Error(`报告目标不是实际文件：${outputPath}`);
+        return hashFile(outputPath, "sha256");
+      },
+      publish: publishNewArtifact,
+    });
+    if (main && !main.isDestroyed())
+      main.webContents.send("workspace:changed");
+    return result;
+  })().finally(() => automaticReportRuns.delete(task.id));
+  automaticReportRuns.set(task.id, operation);
+  return operation;
+}
 const completionActionLabel: Record<CompletionActionKind, string> = {
   report: "生成校验报告",
   delivery: "生成交付清单",
@@ -1194,7 +1265,10 @@ async function executeCompletionAction(
         value =
           action === "report"
             ? await htmlToPdf(
-                await generateReport(task, { includeThumbnails: true }),
+                await generateReport(task, {
+                  includeThumbnails: true,
+                  project,
+                }),
               )
             : Buffer.from(
                 JSON.stringify(
@@ -2451,7 +2525,11 @@ app.whenReady().then(async () => {
       }, 60000);
     });
     const r = await Promise.race([
-      scan(source, includeHidden, controller.signal),
+      scan(
+        source,
+        completeInventoryPolicy(includeHidden),
+        controller.signal,
+      ),
       timeout,
     ]).finally(() => clearTimeout(timer));
     const breakdown = Object.fromEntries(
@@ -2478,8 +2556,16 @@ app.whenReady().then(async () => {
     }
     return {
       totalFiles: r.files.length,
+      totalDirectories: r.directories.length,
       totalBytes: r.totalBytes,
       skipped: r.skipped,
+      skippedBytes: r.skippedBytes,
+      exclusions: r.exclusions.map((item) => ({
+        relativePath: item.relativePath,
+        kind: item.kind,
+        bytes: item.bytes,
+        reason: item.reason,
+      })),
       sample: r.files.slice(0, 6).map((f) => f.relativePath),
       breakdown,
       suggestion: sourceSuggestion(engine.getAllTasks(), {
@@ -2996,16 +3082,23 @@ app.whenReady().then(async () => {
     async (projectId: string, root: string, operator: string) => {
       if (!path.isAbsolute(root)) throw new Error("请选择有效的归档根目录");
       if (!operator?.trim()) throw new Error("请填写扫描操作人");
-      const expected = new Set(
-        engine
+      const projectTasks = engine
           .getAllTasks()
-          .filter((task) => task.projectId === projectId)
-          .flatMap((task) =>
+          .filter((task) => task.projectId === projectId),
+        expected = new Set(
+          projectTasks.flatMap((task) =>
             task.fileRecords.flatMap((file) =>
               file.destinations.map((copy) => path.resolve(copy.path)),
             ),
           ),
-      );
+        );
+      for (const task of projectTasks)
+        for (const reportPath of await verifiedAutomaticReportPaths(
+          task,
+          (outputPath) =>
+            hashFile(outputPath, "sha256").catch(() => undefined),
+        ))
+          expected.add(reportPath);
       const additions: Array<
         Omit<ArchiveChangeRecord, "previousDigest" | "digest">
       > = [];
@@ -6399,6 +6492,18 @@ app.whenReady().then(async () => {
     },
   );
   handle(
+    "report:auto-retry",
+    async (id: string) => {
+      const task = engine.getTask(id);
+      if (!task) throw new Error("任务不存在");
+      if (!task.automaticReport?.enabled)
+        throw new Error("本任务未启用自动 PDF 报告");
+      if (task.status !== "completed")
+        throw new Error("素材完成独立回读校验后才能重试报告");
+      return enqueueAutomaticReport(task);
+    },
+  );
+  handle(
     "report:export",
     async (id: string, format: "pdf" | "json" | "mhl" | "ascmhl") => {
       const task = engine.getTask(id);
@@ -6448,6 +6553,9 @@ app.whenReady().then(async () => {
         await fs.writeFile(r.filePath, generateAscMhl(task, destinationIndex));
         await persist();
       } else {
+        const project = task.projectId
+          ? (await readProjects()).find((item) => item.id === task.projectId)
+          : undefined;
         for (const record of task.fileRecords) {
           if (record.thumbnailPath || !isThumbnailMedia(record.name)) continue;
           const readable = record.destinations.find(
@@ -6466,7 +6574,10 @@ app.whenReady().then(async () => {
         await fs.writeFile(
           r.filePath,
           await htmlToPdf(
-            await generateReport(task, { includeThumbnails: true }),
+            await generateReport(task, {
+              includeThumbnails: true,
+              project,
+            }),
             { top: 0.4, bottom: 0.4, left: 0.3, right: 0.3 },
           ),
         );
@@ -6800,6 +6911,8 @@ app.whenReady().then(async () => {
         .then(async () => {
           if (main && !main.isDestroyed())
             main.webContents.send("workspace:changed");
+          if (task.status === "completed")
+            await enqueueAutomaticReport(task);
           if (!engine.hasActive() && backupStartPending === 0) {
             const resumed = resumeBackupPausedProxyJobs(proxyJobs);
             if (resumed) {
@@ -6886,6 +6999,12 @@ app.whenReady().then(async () => {
     ]),
   );
   createWindow();
+  for (const task of engine.getAllTasks())
+    if (
+      automaticReportEligible(task) &&
+      task.automaticReport?.status !== "completed"
+    )
+      void enqueueAutomaticReport(task).catch(() => undefined);
   powerMonitor.on("suspend", () => {
     for (const task of engine
       .getAllTasks()
