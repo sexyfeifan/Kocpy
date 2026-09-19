@@ -72,6 +72,27 @@ export function normalizeProject(project: ProjectConfig): ProjectConfig {
         typeof item.operator === "string" &&
         typeof item.at === "number",
     ),
+    // Missing means this project predates lazy directory creation. Preserve
+    // the behaviour users already relied on instead of silently changing it.
+    directoryCreationMode: project.directoryCreationMode || "precreate",
+    managedProjectDirectories: (project.managedProjectDirectories || []).filter(
+      (record) =>
+        record &&
+        typeof record.id === "string" &&
+        typeof record.destinationRoot === "string" &&
+        typeof record.destinationRealPath === "string" &&
+        typeof record.relativePath === "string" &&
+        typeof record.volumeId === "string" &&
+        typeof record.createdAt === "number",
+    ),
+    directoryCleanupAudits: (project.directoryCleanupAudits || []).filter(
+      (audit) =>
+        audit &&
+        typeof audit.id === "string" &&
+        typeof audit.operator === "string" &&
+        typeof audit.completedAt === "number" &&
+        Array.isArray(audit.targets),
+    ),
     requiredCopies: Math.max(1, Math.min(4, project.requiredCopies || 2)),
   };
 }

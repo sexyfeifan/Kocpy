@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { BackupEngine } from "../src/main/backup/BackupEngine";
-import { projectCellStatus, projectCloseoutSummary, projectDeviceCells } from "../src/main/project-closeout";
+import { projectCellStatus, projectCloseoutSummary, projectDaySummary, projectDeviceCells } from "../src/main/project-closeout";
 import type { ProjectConfig } from "../src/main/types";
 import { projectDates, updateSchedule } from "../src/common/shooting-dates";
 
@@ -100,5 +100,27 @@ describe("closeout cannot hide recorded unsafe material", () => {
         (cell) => cell.scheduleKey,
       ),
     ).toEqual(["FX3"]);
+  });
+  it("expands the current or risky day while allowing a safe past day to collapse", () => {
+    const { project, task } = fixture();
+    project.expectedDevicesByDate = {};
+    task.status = "completed";
+    task.destinations[0].verified = true;
+    expect(projectDaySummary(project, [task], date, "2026-08-26")).toMatchObject({
+      volumes: 1,
+      compliantVolumes: 1,
+      forceExpanded: false,
+      risk: 0,
+    });
+    task.status = "failed";
+    expect(projectDaySummary(project, [task], date, "2026-08-26")).toMatchObject({
+      forceExpanded: true,
+      attention: 1,
+    });
+    expect(projectDaySummary(project, [], date, date)).toMatchObject({
+      current: true,
+      forceExpanded: true,
+      unconfirmed: 1,
+    });
   });
 });

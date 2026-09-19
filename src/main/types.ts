@@ -590,6 +590,16 @@ export interface ProjectConfig {
     ruleSnapshotId?: string;
     at: number;
   }>;
+  /**
+   * New projects plan their date/device layout logically and create the real
+   * path when the first card is backed up. Projects saved by older versions
+   * omit this field and retain the historical pre-create behaviour.
+   */
+  directoryCreationMode?: "lazy" | "precreate";
+  /** Exact leaf directories created by Kocpy's explicit pre-create action. */
+  managedProjectDirectories?: ProjectManagedDirectoryRecord[];
+  /** Append-only evidence for every requested empty-directory cleanup. */
+  directoryCleanupAudits?: ProjectDirectoryCleanupAudit[];
   requiredCopies?: number;
   namingRule?: string;
   completionActions?: Array<"report" | "delivery" | "proxy" | "eject">;
@@ -647,6 +657,65 @@ export interface ProjectConfig {
   /** Append-only project-level record of takeover and refresh operations. */
   takeoverEvents?: ExistingAuditEvent[];
   nasPresetId?: string;
+}
+
+export interface ProjectManagedDirectoryRecord {
+  id: string;
+  /** Local authority boundary: imported/missing identities never authorize deletion. */
+  workstationId?: string;
+  destinationRoot: string;
+  destinationRealPath: string;
+  relativePath: string;
+  volumeId: string;
+  volumeUuid?: string;
+  createdAt: number;
+  reason: "explicit-precreate" | "repair";
+  removedAt?: number;
+  cleanupAuditId?: string;
+}
+
+export interface ProjectDirectoryCleanupAuditTarget {
+  destinationRoot: string;
+  relativePath: string;
+  path: string;
+  result: "removed" | "skipped";
+  reason: string;
+  checkedAt: number;
+}
+
+export interface ProjectDirectoryCleanupAudit {
+  id: string;
+  previewId: string;
+  projectId: string;
+  date: string;
+  scheduleKey?: string;
+  operator: string;
+  requestedAt: number;
+  completedAt: number;
+  targets: ProjectDirectoryCleanupAuditTarget[];
+}
+
+export interface ProjectDirectoryCleanupPreviewTarget {
+  destinationRoot: string;
+  relativePath: string;
+  path: string;
+  status: "eligible" | "kept";
+  reason: string;
+  proofId?: string;
+}
+
+export interface ProjectDirectoryCleanupPreview {
+  id: string;
+  projectId: string;
+  date: string;
+  scheduleKey?: string;
+  createdAt: number;
+  targets: ProjectDirectoryCleanupPreviewTarget[];
+}
+
+export interface ProjectDirectoryCleanupResult {
+  projects: ProjectConfig[];
+  audit: ProjectDirectoryCleanupAudit;
 }
 
 export interface ProjectRuleDefinition {

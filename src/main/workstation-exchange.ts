@@ -291,9 +291,18 @@ export function createWorkspacePackage(input: {
     )
   )
     throw new Error("仍有未结束的备份任务，不能导出工作站配置包");
-  const exportedAt = Date.now(),
+  // Directory deletion authority is local-only. Keep suppression/audit facts
+  // portable, but strip the workstation authority token from every exported
+  // managed-directory proof so an imported package is always keep-only.
+  const portableProjects = input.workspace.projects.map((project) => ({
+      ...project,
+      managedProjectDirectories: project.managedProjectDirectories?.map(
+        ({ workstationId: _localAuthority, ...record }) => record,
+      ),
+    })),
+    exportedAt = Date.now(),
     exchangeBody = {
-      projects: input.workspace.projects,
+      projects: portableProjects,
       tasks: input.workspace.tasks,
       templates: input.templates,
       healthRecords: input.workspace.archiveEvidence?.healthRecords || [],
@@ -320,7 +329,7 @@ export function createWorkspacePackage(input: {
         taskTombstones: input.workspace.taskTombstones,
         projectTombstones: input.workspace.projectTombstones,
       },
-      projects: input.workspace.projects,
+      projects: portableProjects,
       tasks: input.workspace.tasks,
       templates: input.templates,
       healthRecords: input.workspace.archiveEvidence?.healthRecords || [],

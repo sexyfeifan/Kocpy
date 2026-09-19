@@ -2906,6 +2906,12 @@ small {
   color: var(--muted);
   margin-top: 6px;
 }
+.project-directory-mode label {
+  margin-bottom: 8px;
+}
+.project-directory-mode small {
+  line-height: 1.65;
+}
 .locked-option {
   display: flex;
   gap: 10px;
@@ -3334,6 +3340,146 @@ small {
 .project-matrix-row strong {
   color: var(--text);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.project-day-groups {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+}
+.project-day-group {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel);
+}
+.project-day-group.risk {
+  border-color: color-mix(in srgb, var(--warning) 48%, var(--border));
+}
+.project-day-group.current {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+.project-day-header {
+  width: 100%;
+  min-height: 64px;
+  display: grid;
+  grid-template-columns: minmax(155px, 0.75fr) minmax(330px, 1.6fr) auto;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 14px;
+  border: 0;
+  background: var(--panel2);
+  color: var(--sub);
+  text-align: left;
+  cursor: pointer;
+}
+.project-day-header[aria-disabled="true"] {
+  cursor: default;
+}
+.project-day-title,
+.project-day-risk-summary,
+.project-day-summary-metrics {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+.project-day-title {
+  gap: 8px;
+  color: var(--text);
+}
+.project-day-title strong {
+  font-size: 13px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.project-day-title em {
+  padding: 3px 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent);
+  font-size: 11px;
+  font-style: normal;
+}
+.project-day-summary-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(72px, 1fr));
+  gap: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.project-day-summary-metrics span {
+  white-space: nowrap;
+}
+.project-day-summary-metrics b {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.project-day-risk-summary {
+  justify-content: flex-end;
+  gap: 9px;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.project-day-risk-summary small {
+  color: var(--muted);
+  font-size: 11px;
+}
+.project-day-body {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+}
+.project-day-matrix {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+}
+.project-day-matrix-head,
+.project-day-matrix-row {
+  min-width: 700px;
+  display: grid;
+  grid-template-columns: minmax(160px, 1.2fr) 80px 80px 110px minmax(230px, 1.5fr);
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  padding: 9px 12px;
+  font-size: 12px;
+}
+.project-day-matrix-head {
+  min-height: 38px;
+  background: color-mix(in srgb, var(--panel2) 88%, transparent);
+  color: var(--muted);
+  font-size: 11px;
+}
+.project-day-matrix-row {
+  border-top: 1px solid var(--line);
+  color: var(--sub);
+}
+.project-day-matrix-row > button {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.project-day-matrix-row strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--text);
+}
+.project-day-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 9px 14px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.project-day-rolls {
+  margin-top: 0;
+}
+.undated-project-rolls {
+  border-color: color-mix(in srgb, var(--warning) 48%, var(--border));
 }
 .project-task-breakdown {
   --task-columns: minmax(155px, 1.15fr) minmax(180px, 1.35fr)
@@ -4581,7 +4727,9 @@ small {
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 14px;
-  width: 400px;
+  width: min(620px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  overflow: auto;
   padding: 29px;
   box-shadow: var(--shadow);
 }
@@ -4596,6 +4744,8 @@ small {
   color: var(--sub);
   line-height: 1.9;
   font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 .confirm-acknowledgement {
   display: flex;
@@ -5054,6 +5204,18 @@ small {
   .project-matrix-head,
   .project-matrix-row {
     min-width: 760px;
+  }
+  .project-day-header {
+    grid-template-columns: 1fr auto;
+    align-items: start;
+  }
+  .project-day-summary-metrics {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+  .project-day-risk-summary {
+    grid-column: 2;
+    grid-row: 1;
   }
   .project-task-breakdown-head,
   .project-task-breakdown-row,

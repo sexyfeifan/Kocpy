@@ -169,6 +169,32 @@ describe("project backup workflow", () => {
     }
   });
 
+  it("keeps a lazy project as a logical plan until a backup creates its path", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "kocpy-project-lazy-"));
+    const destination = path.join(root, "MASTER");
+    await fs.mkdir(destination);
+    const project = {
+      id: "lazy",
+      name: "Lazy",
+      devices: ["FX3"],
+      volumePrefix: "FX3_",
+      shootingDateStart: "2026-08-27",
+      shootingDateEnd: "2026-08-28",
+      projectFolderName: "20260827_Lazy",
+      destinationPaths: [destination],
+      directoryCreationMode: "lazy" as const,
+    };
+    try {
+      expect((await inspectProjectStructure(project)).expectedCount).toBe(0);
+      expect(await createProjectStructure(project)).toEqual([]);
+      await expect(
+        fs.lstat(path.join(destination, "20260827_Lazy")),
+      ).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("creates and inspects the complete date, device and camera-position structure", async () => {
     const root = await fs.mkdtemp(
       path.join(os.tmpdir(), "kocpy-project-full-"),

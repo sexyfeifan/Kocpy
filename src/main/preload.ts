@@ -88,6 +88,12 @@ contextBridge.exposeInMainWorld("api", {
   testNasPreset: call("nas:test"),
   addProjectHandoff: call("projects:add-handoff"),
   updateProjectDailyPlan: call("projects:daily-plan"),
+  previewProjectDirectoryCleanup: call(
+    "projects:preview-directory-cleanup",
+  ),
+  cleanupProjectEmptyDirectories: call(
+    "projects:cleanup-empty-directories",
+  ),
   exportWorkspace: call("workspace:export"),
   getWorkstationIdentity: call("workspace:identity"),
   getWorkstationImportAudits: call("workspace:import-audits"),

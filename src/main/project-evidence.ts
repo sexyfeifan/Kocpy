@@ -163,6 +163,12 @@ export function appendProjectRuleSnapshot(
     result.unusedDevicesByDate = clone(previous.unusedDevicesByDate || {});
     result.expectedDevicesByDate = clone(previous.expectedDevicesByDate || {});
     result.dailyPlanDecisions = clone(previous.dailyPlanDecisions || []);
+    result.managedProjectDirectories = clone(
+      previous.managedProjectDirectories || [],
+    );
+    result.directoryCleanupAudits = clone(
+      previous.directoryCleanupAudits || [],
+    );
     result.templateApplications = clone(previous.templateApplications || []);
     result.handoffNotes = clone(previous.handoffNotes || []);
     result.checklistRuns = clone(previous.checklistRuns || []);
@@ -173,6 +179,8 @@ export function appendProjectRuleSnapshot(
     result.unusedDevicesByDate = {};
     result.expectedDevicesByDate = {};
     result.dailyPlanDecisions = [];
+    result.managedProjectDirectories = [];
+    result.directoryCleanupAudits = [];
     result.templateApplications = [];
     result.handoffNotes = [];
     result.checklistRuns = [];

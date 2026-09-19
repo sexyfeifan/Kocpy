@@ -98,6 +98,13 @@ export function ProjectEditor({
     ),
     [customDevice, setCustomDevice] = useState(""),
     [dests, setDests] = useState(initial.destinationPaths || []),
+    [directoryCreationMode, setDirectoryCreationMode] = useState<
+      "lazy" | "precreate"
+    >(
+      initial.id
+        ? initial.directoryCreationMode || "precreate"
+        : "lazy",
+    ),
     [busy, setBusy] = useState(false),
     [ruleOperator, setRuleOperator] = useState(""),
     [error, setError] = useState(""),
@@ -219,6 +226,7 @@ export function ProjectEditor({
       shootingDateStart: start,
       shootingDateEnd: end,
       destinationPaths: dests,
+      directoryCreationMode,
       requiredCopies,
       productionType,
       expectedVolumes: expectedVolumes || undefined,
@@ -332,7 +340,8 @@ export function ProjectEditor({
     setReview(null);
     const project = buildProject();
     if (!project) return;
-    if (!initial.id) return commit(project, true);
+    if (!initial.id)
+      return commit(project, directoryCreationMode === "precreate");
     setBusy(true);
     try {
       const inspection = await api.inspectProjectSave(project),
@@ -661,6 +670,23 @@ export function ProjectEditor({
               ))}
             </select>
           </label>
+          <div className="option-checks project-directory-mode">
+            <label>
+              <input
+                type="checkbox"
+                checked={directoryCreationMode === "precreate"}
+                onChange={(event) =>
+                  setDirectoryCreationMode(
+                    event.target.checked ? "precreate" : "lazy",
+                  )
+                }
+              />
+              <span>保存时预建全部日期、设备与机位目录</span>
+            </label>
+            <small>
+              默认按需创建：项目先保存逻辑计划，首次备份到某个日期和设备时才建立实际目录。旧项目继续保留原有预建策略。
+            </small>
+          </div>
           <div className="option-checks">
             <label>
               <input
@@ -759,8 +785,9 @@ export function ProjectEditor({
           <div className="notice">
             <Info size={16} />
             <span>
-              新项目保存后会按整个拍摄日期范围、设备及自定义
-              机位创建完整目录结构。
+              {directoryCreationMode === "precreate"
+                ? "保存后会按整个拍摄日期范围、设备及自定义机位预建完整目录结构。"
+                : "保存项目只建立日期与设备计划；实际目录会在首次备份时按需创建。"}
               <br />
               备份路径示例：
               <span className="mono">

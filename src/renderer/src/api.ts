@@ -16,6 +16,8 @@ import type {
   NasPreset,
   ProjectConfig,
   ProjectCoverage,
+  ProjectDirectoryCleanupPreview,
+  ProjectDirectoryCleanupResult,
   ProjectDeletionPreview,
   ProjectSaveInspection,
   ProjectStructureReport,
@@ -51,6 +53,8 @@ export type {
   NasPreset,
   ProjectConfig,
   ProjectCoverage,
+  ProjectDirectoryCleanupPreview,
+  ProjectDirectoryCleanupResult,
   ProjectDeletionPreview,
   ProjectSaveInspection,
   ProjectStructureReport,
@@ -383,6 +387,15 @@ export interface API {
       note?: string;
     },
   ): Promise<ProjectConfig[]>;
+  previewProjectDirectoryCleanup(
+    projectId: string,
+    input: { date: string; scheduleKey?: string },
+  ): Promise<ProjectDirectoryCleanupPreview>;
+  cleanupProjectEmptyDirectories(
+    projectId: string,
+    previewId: string,
+    operator: string,
+  ): Promise<ProjectDirectoryCleanupResult>;
   exportWorkspace(): Promise<string | null>;
   getWorkstationIdentity(): Promise<WorkstationIdentity>;
   getWorkstationImportAudits(): Promise<WorkstationImportAuditRecord[]>;

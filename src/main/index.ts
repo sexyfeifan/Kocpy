@@ -116,8 +116,14 @@ import {
   formatVolumeTimestamp,
   inspectProjectStructure,
   makeProjectFolderName,
+  projectUsesPrecreatedDirectories,
   repairProjectStructure,
 } from "./project-path";
+import {
+  executeProjectDirectoryCleanup,
+  previewProjectDirectoryCleanup,
+  type ProjectDirectoryCleanupInput,
+} from "./project-directory-cleanup";
 import {
   manifestRequirementMet,
   projectCloseoutSummary,
@@ -343,6 +349,10 @@ const prepareProject = (value: ProjectConfig): ProjectConfig => {
     ...value,
     devices: [...(value.devices || [])],
     destinationPaths: [...(value.destinationPaths || [])],
+    managedProjectDirectories: [
+      ...(value.managedProjectDirectories || []),
+    ],
+    directoryCleanupAudits: [...(value.directoryCleanupAudits || [])],
   };
   project.name = segment(project.name);
   if (!project.shootingDateStart) throw new Error("请设置项目开始日期");
@@ -400,6 +410,11 @@ const prepareProject = (value: ProjectConfig): ProjectConfig => {
     1,
     Math.min(4, project.requiredCopies || 2),
   );
+  if (
+    project.directoryCreationMode &&
+    !["lazy", "precreate"].includes(project.directoryCreationMode)
+  )
+    throw new Error("项目目录创建策略无效");
   return normalizeProject(project);
 };
 let main: BrowserWindow | null = null,
@@ -431,6 +446,10 @@ const workstationImportPreviews = new Map<
     value: ValidatedWorkspacePackage;
     preview: WorkspaceImportPreview;
   }
+>();
+const projectDirectoryCleanupPreviews = new Map<
+  string,
+  Awaited<ReturnType<typeof previewProjectDirectoryCleanup>>
 >();
 const operations = new OperationRegistry((records) =>
   store.write("operation-history.json", records),
@@ -719,6 +738,7 @@ const maintenanceNames: Record<string, string> = {
   "mixed-day:deliver": "生成当日素材交付",
   "mixed-day:retry-report": "重试当日交付报告",
   "volumes:eject-completed": "安全推出设备",
+  "projects:cleanup-empty-directories": "整理项目空目录",
 };
 const guardedCommands = new Set([
   "tasks:create",
@@ -735,7 +755,7 @@ const guardedCommands = new Set([
   "completion:skip",
 ]);
 const changeChannels =
-  /^(tasks:(create|delete|reverify|retry-failed)|completion:(run|skip)|mixed-day:(save|deliver|retry-report)|projects:(save|delete$|claim-volume|sign-checklist|add-handoff|daily-plan)|existing:(import|reanalyze|establish|repair|reverify|accept|revise)|archive:(verify|repair|move|audit)|workspace:(import|cold-archive|restore-cold)|templates:(apply|save|delete|import|hide)|catalog:rebuild|library:relink)/;
+  /^(tasks:(create|delete|reverify|retry-failed)|completion:(run|skip)|mixed-day:(save|deliver|retry-report)|projects:(save|delete$|claim-volume|sign-checklist|add-handoff|daily-plan|cleanup-empty-directories)|existing:(import|reanalyze|establish|repair|reverify|accept|revise)|archive:(verify|repair|move|audit)|workspace:(import|cold-archive|restore-cold)|templates:(apply|save|delete|import|hide)|catalog:rebuild|library:relink)/;
 const serialCreates = new Map<string, Promise<unknown>>();
 let commandInFlight = 0;
 async function confirmOperation(message: string, detail: string) {
@@ -5032,6 +5052,51 @@ app.whenReady().then(async () => {
     },
   );
   handle(
+    "projects:preview-directory-cleanup",
+    async (projectId: string, input: ProjectDirectoryCleanupInput) => {
+      const projects = (await readProjects()).map(normalizeProject),
+        project = projects.find((item) => item.id === projectId);
+      if (!project) throw new Error("项目不存在");
+      const workstation = await loadOrCreateWorkstationIdentity(store);
+      const preview = await previewProjectDirectoryCleanup(
+        project,
+        engine.getAllTasks().filter((task) => task.projectId === projectId),
+        input,
+        { workstationId: workstation.id },
+      );
+      projectDirectoryCleanupPreviews.set(preview.id, preview);
+      while (projectDirectoryCleanupPreviews.size > 50) {
+        const oldest = projectDirectoryCleanupPreviews.keys().next().value;
+        if (!oldest) break;
+        projectDirectoryCleanupPreviews.delete(oldest);
+      }
+      return preview;
+    },
+  );
+  handle(
+    "projects:cleanup-empty-directories",
+    async (projectId: string, previewId: string, operator: string) => {
+      const preview = projectDirectoryCleanupPreviews.get(previewId);
+      if (!preview || preview.projectId !== projectId)
+        throw new Error("空目录整理预览不存在或已经失效，请重新检查");
+      const projects = (await readProjects()).map(normalizeProject),
+        index = projects.findIndex((item) => item.id === projectId);
+      if (index < 0) throw new Error("项目不存在");
+      const workstation = await loadOrCreateWorkstationIdentity(store);
+      const result = await executeProjectDirectoryCleanup(
+        projects[index],
+        engine.getAllTasks().filter((task) => task.projectId === projectId),
+        preview,
+        operator,
+        { workstationId: workstation.id },
+      );
+      projects[index] = normalizeProject(result.project);
+      await writeProjects(projects);
+      projectDirectoryCleanupPreviews.delete(previewId);
+      return { projects, audit: result.audit };
+    },
+  );
+  handle(
     "projects:add-handoff",
     async (
       projectId: string,
@@ -5690,15 +5755,24 @@ app.whenReady().then(async () => {
     };
   });
   handle("projects:repair-saved-structure", async (projectId: string) => {
-    const project = (await readProjects())
-      .map(normalizeProject)
-      .find((item) => item.id === projectId);
-    if (!project) throw new Error("项目不存在或已经删除");
-    return repairProjectStructure(project);
+    const projects = (await readProjects()).map(normalizeProject),
+      index = projects.findIndex((item) => item.id === projectId);
+    if (index < 0) throw new Error("项目不存在或已经删除");
+    const workstation = await loadOrCreateWorkstationIdentity(store),
+      report = await repairProjectStructure(
+        projects[index],
+        workstation.id,
+      );
+    await writeProjects(projects);
+    return report;
   });
   handle(
     "projects:save",
-    async (value: ProjectConfig, createMissing = true, operator?: string) => {
+    async (
+      value: ProjectConfig,
+      createMissing: boolean | undefined,
+      operator?: string,
+    ) => {
       let project = prepareProject(value);
       if (
         (project.destinationPaths?.length || 0) < (project.requiredCopies || 2)
@@ -5715,7 +5789,16 @@ app.whenReady().then(async () => {
           `项目安全规则发生变化（${changes.map((item) => item.label).join("、")}），请核对变更并填写实际修改人`,
         );
       project = appendProjectRuleSnapshot(previous, project, { operator });
-      if (createMissing) await createProjectStructure(project);
+      const shouldCreate =
+        createMissing ?? projectUsesPrecreatedDirectories(project);
+      if (shouldCreate) {
+        const workstation = await loadOrCreateWorkstationIdentity(store);
+        await createProjectStructure(
+          project,
+          "explicit-precreate",
+          workstation.id,
+        );
+      }
       if (idx < 0) all.push(project);
       else all[idx] = project;
       await writeProjects(all);

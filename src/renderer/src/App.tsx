@@ -23,6 +23,7 @@ import {
   ArrowRight,
   ChevronRight,
   ChevronLeft,
+  ChevronDown,
   Check,
   CheckCheck,
   ShieldCheck,
@@ -108,9 +109,8 @@ import {
   projectTemplateDraft,
 } from "./TemplateEditor";
 import {
-  projectCellStatus,
   projectCloseoutSummary,
-  projectDeviceCells,
+  projectDaySummary,
   verifiedPhysicalCopyCount,
   taskMeetsCopyRequirement,
   manifestRequirementMet,
@@ -243,6 +243,339 @@ function TaskBadge({ task }: { task: BackupTask }) {
     </span>
   );
 }
+function ProjectVolumeRows({
+  volumes,
+  showDate = false,
+  onOpen,
+  onManifestIssue,
+  onBaseline,
+}: {
+  volumes: ReturnType<typeof groupLogicalVolumes>;
+  showDate?: boolean;
+  onOpen: (taskId: string) => void;
+  onManifestIssue: (task: BackupTask) => void;
+  onBaseline: (task: BackupTask) => void;
+}) {
+  return volumes
+    .slice()
+    .sort(
+      (a, b) =>
+        (a.representative.startedAt || 0) -
+        (b.representative.startedAt || 0),
+    )
+    .map((logicalVolume) => {
+      const task = logicalVolume.representative,
+        trust = taskTrustState(task);
+      return (
+        <div className="project-task-breakdown-row" key={logicalVolume.id}>
+          <span>
+            {showDate &&
+              `${task.shootingDate?.replace(/-/g, "") || "未标日期"} · `}
+            {task.devices.join("/") || "未标设备"}
+            {task.cameraPosition ? ` · ${task.cameraPosition}` : ""}
+          </span>
+          <button
+            className="project-roll-link"
+            onClick={() => onOpen(task.id)}
+            title="查看实时传输详情"
+          >
+            {task.name}
+            {logicalVolume.attempts.length > 1 && (
+              <small className="project-roll-attempts">
+                {logicalVolume.attempts.length} 次尝试
+              </small>
+            )}
+          </button>
+          <small>
+            {task.totalFiles} 个文件 · {bytes(task.totalBytes)}
+            {active(task) && (
+              <span className="project-live-transfer">
+                {task.status === "paused"
+                  ? "已暂停"
+                  : `${transferPhaseText(task)} · ${transferProgressLabel(task, task.status === "verifying" ? "verify" : "copy")} · ${transferTiming(task).speed ? `${bytes(transferTiming(task).speed)}/s` : "测速中"}`}
+              </span>
+            )}
+          </small>
+          <span className="task-state-actions">
+            {task.externalManifest?.status === "mismatch" ? (
+              <button
+                className={`badge manifest-badge ${trust.status}`}
+                title="查看差异并处理"
+                onClick={() => onManifestIssue(task)}
+              >
+                <i />
+                {trust.label}
+                <ChevronRight size={13} />
+              </button>
+            ) : task.externalManifest?.resolution?.type ===
+              "revised-missing" ? (
+              <button
+                className={`badge manifest-badge ${trust.status}`}
+                title="显示修订前的原始 MHL 审计副本"
+                onClick={() => void api.revealExistingManifestAudit(task.id)}
+              >
+                <i />
+                {trust.label}
+                <FolderOpen size={13} />
+              </button>
+            ) : (
+              <span
+                className={`badge ${trust.status}`}
+                title={task.errorMessage}
+              >
+                <i />
+                {trust.label}
+              </span>
+            )}
+            {task.provenance &&
+              task.provenance !== "kocpy-transfer" &&
+              task.status !== "completed" && (
+                <button onClick={() => onBaseline(task)}>建立首次基线</button>
+              )}
+          </span>
+        </div>
+      );
+    });
+}
+export function ProjectDayGroups({
+  project,
+  summaries,
+  expandedSafeDays,
+  onToggleSafeDay,
+  onUpdateSchedule,
+  onOpenTask,
+  onManifestIssue,
+  onBaseline,
+}: {
+  project: ProjectConfig;
+  summaries: ReturnType<typeof projectDaySummary>[];
+  expandedSafeDays: Record<string, boolean>;
+  onToggleSafeDay: (key: string, expanded: boolean) => void;
+  onUpdateSchedule: (
+    date: string,
+    scheduleKey?: string,
+    decision?: "unused" | "expected" | "clear",
+  ) => void;
+  onOpenTask: (taskId: string) => void;
+  onManifestIssue: (task: BackupTask) => void;
+  onBaseline: (task: BackupTask) => void;
+}) {
+  return (
+    <div className="project-day-groups">
+      {summaries.map((summary) => {
+        const key = `${project.id}:${summary.shootingDate}`,
+          expanded =
+            summary.forceExpanded || Boolean(expandedSafeDays[key]),
+          rest = Boolean(
+            project.restDays?.some(
+              (date) =>
+                shootingDateKey(date) === summary.shootingDate,
+            ),
+          );
+        return (
+          <section
+            className={`project-day-group ${summary.risk ? "risk" : "safe"} ${summary.current ? "current" : ""}`}
+            key={summary.shootingDate}
+          >
+            <button
+              type="button"
+              className="project-day-header"
+              aria-expanded={expanded}
+              aria-disabled={summary.forceExpanded}
+              title={
+                summary.forceExpanded
+                  ? "当前日期或有风险的日期保持展开"
+                  : expanded
+                    ? "折叠这个已安全日期"
+                    : "展开这个已安全日期"
+              }
+              onClick={() =>
+                !summary.forceExpanded && onToggleSafeDay(key, !expanded)
+              }
+            >
+              <span className="project-day-title">
+                <CalendarDays size={17} />
+                <strong>{summary.shootingDate.replace(/-/g, "")}</strong>
+                {summary.current && <em>今天</em>}
+              </span>
+              <span className="project-day-summary-metrics">
+                <span>
+                  <b>{summary.volumes}</b> 素材卷
+                </span>
+                <span>
+                  <b>{summary.files}</b> 文件
+                </span>
+                <span>
+                  <b>{bytes(summary.bytes)}</b> 素材
+                </span>
+                <span>
+                  <b>
+                    {summary.compliantVolumes}/{summary.volumes}
+                  </b>{" "}
+                  达标
+                </span>
+              </span>
+              <span className="project-day-risk-summary">
+                {summary.attention > 0 && (
+                  <b className="amber-text">风险 {summary.attention}</b>
+                )}
+                {summary.unconfirmed > 0 && (
+                  <b className="muted">待确认 {summary.unconfirmed}</b>
+                )}
+                {!summary.attention && !summary.unconfirmed && (
+                  <b className="green-text">
+                    完成 {summary.completeCells}/{summary.totalCells}
+                  </b>
+                )}
+                {summary.forceExpanded ? (
+                  <small>保持展开</small>
+                ) : expanded ? (
+                  <ChevronDown size={16} />
+                ) : (
+                  <ChevronRight size={16} />
+                )}
+              </span>
+            </button>
+            {expanded && (
+              <div className="project-day-body">
+                <div className="project-day-matrix">
+                  <div className="project-day-matrix-head">
+                    <span>设备 / 机位</span>
+                    <span>素材卷</span>
+                    <span>文件</span>
+                    <span>素材量</span>
+                    <span>当日状态</span>
+                  </div>
+                  {summary.cells.map((cell) => {
+                    const rows = cell.rows;
+                    return (
+                      <div
+                        className="project-day-matrix-row"
+                        key={cell.scheduleKey}
+                      >
+                        <strong>{cell.label}</strong>
+                        <span>{rows.length}</span>
+                        <span>
+                          {rows.reduce(
+                            (sum, task) => sum + task.totalFiles,
+                            0,
+                          )}
+                        </span>
+                        <span>
+                          {bytes(
+                            rows.reduce(
+                              (sum, task) => sum + task.totalBytes,
+                              0,
+                            ),
+                          )}
+                        </span>
+                        {cell.unconfirmed ? (
+                          <span className="matrix-decisions">
+                            <button
+                              className="muted"
+                              onClick={() =>
+                                onUpdateSchedule(
+                                  summary.shootingDate,
+                                  cell.scheduleKey,
+                                  "unused",
+                                )
+                              }
+                            >
+                              确认未使用
+                            </button>
+                            <button
+                              className="amber-text"
+                              onClick={() =>
+                                onUpdateSchedule(
+                                  summary.shootingDate,
+                                  cell.scheduleKey,
+                                  "expected",
+                                )
+                              }
+                            >
+                              应该有素材
+                            </button>
+                          </span>
+                        ) : (
+                          <button
+                            className={
+                              cell.exempt ||
+                              (rows.length && cell.safe === rows.length)
+                                ? "green-text"
+                                : "amber-text"
+                            }
+                            onClick={() =>
+                              !rows.length
+                                ? onUpdateSchedule(
+                                    summary.shootingDate,
+                                    cell.scheduleKey,
+                                    "clear",
+                                  )
+                                : onOpenTask(
+                                    (
+                                      rows.find(
+                                        (task) =>
+                                          !taskMeetsCopyRequirement(
+                                            task,
+                                            project.requiredCopies || 2,
+                                          ),
+                                      ) || rows[0]
+                                    ).id,
+                                  )
+                            }
+                            title={!rows.length ? "恢复为待确认" : cell.label}
+                          >
+                            {cell.label}
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="project-day-actions">
+                  <Button
+                    kind="subtle"
+                    onClick={() => onUpdateSchedule(summary.shootingDate)}
+                  >
+                    {rest ? (
+                      <Check size={13} />
+                    ) : (
+                      <CalendarDays size={13} />
+                    )}
+                    {rest ? "恢复为拍摄日" : "确认整日休息"}
+                  </Button>
+                  <span>
+                    确认未使用或整日休息后，会先逐路径预览可整理的空框架目录。
+                  </span>
+                </div>
+                {summary.logicalVolumes.length > 0 && (
+                  <div className="project-task-breakdown project-day-rolls">
+                    <div className="project-task-breakdown-title">
+                      <strong>当日素材卷明细</strong>
+                      <span>按唯一素材卷统计；实时传输与校验状态会继续更新</span>
+                    </div>
+                    <div className="project-task-breakdown-head">
+                      <span>设备 / 机位</span>
+                      <span>素材卷</span>
+                      <span>文件 · 素材量</span>
+                      <span>可信状态</span>
+                    </div>
+                    <ProjectVolumeRows
+                      volumes={summary.logicalVolumes}
+                      onOpen={onOpenTask}
+                      onManifestIssue={onManifestIssue}
+                      onBaseline={onBaseline}
+                    />
+                  </div>
+                )}
+              </div>
+            )}
+          </section>
+        );
+      })}
+    </div>
+  );
+}
 export function App() {
   useModalStack();
   const [workspaceRevision, setWorkspaceRevision] = useState(0);
@@ -259,6 +592,9 @@ export function App() {
   const [dailyPlanDate, setDailyPlanDate] = useState(today());
   const [temporaryDailyDevice, setTemporaryDailyDevice] = useState("");
   const [temporaryDailyPosition, setTemporaryDailyPosition] = useState("");
+  const [expandedSafeProjectDays, setExpandedSafeProjectDays] = useState<
+    Record<string, boolean>
+  >({});
   const [reportDate, setReportDate] = useState(today()),
     [reportProject, setReportProject] = useState("");
 
@@ -768,16 +1104,32 @@ export function App() {
   const projectDetailTasks = tasks.filter(
     (task) => task.projectId === projectDetailId,
   );
+  const projectDetailDates = projectDetail
+    ? projectDates(projectDetail, projectDetailTasks)
+    : [];
+  const projectDetailDaySummaries = projectDetail
+    ? projectDetailDates.map((shootingDate) =>
+        projectDaySummary(
+          projectDetail,
+          projectDetailTasks,
+          shootingDate,
+          today(),
+        ),
+      )
+    : [];
   const projectDetailCloseout = projectDetail
     ? projectCloseoutSummary(
         projectDetail,
         projectDetailTasks,
-        projectDates(projectDetail, projectDetailTasks),
+        projectDetailDates,
       )
     : null;
   const projectDetailLogicalVolumes = projectDetail
     ? groupLogicalVolumes(projectDetailTasks, projectDetail.requiredCopies || 2)
     : [];
+  const projectDetailUndatedVolumes = projectDetailLogicalVolumes.filter(
+    (volume) => !shootingDateKey(volume.representative.shootingDate),
+  );
   const activeProjectCloseouts = projects
     .filter((project) => project.status !== "archived")
     .map((project) => {
@@ -804,6 +1156,48 @@ export function App() {
             task.status !== "verifying"),
       ),
   );
+  const offerProjectDirectoryCleanup = async (
+    project: ProjectConfig,
+    dateValue: string,
+    scheduleKey?: string,
+  ) => {
+    const operator = dailyPlanOperator.trim(),
+      preview = await api.previewProjectDirectoryCleanup(project.id, {
+        date: dateValue,
+        scheduleKey,
+      }),
+      eligible = preview.targets.filter((target) => target.status === "eligible");
+    if (!eligible.length) return;
+    const targetLines = preview.targets
+      .map(
+        (target) =>
+          `${target.status === "eligible" ? "可整理" : "保留"}：${target.path}\n原因：${target.reason}`,
+      )
+      .join("\n\n");
+    setConfirm({
+      text: `设备使用状态已经记录。以下是空框架目录逐项预览；“保留”项目不会被触碰。\n\n${targetLines}`,
+      actionLabel: `整理 ${eligible.length} 个空目录`,
+      danger: true,
+      acknowledgement:
+        "我已核对完整路径；只允许移除有 Kocpy 创建证明、执行时仍为空且磁盘身份一致的目录。",
+      run: async () => {
+        const result = await api.cleanupProjectEmptyDirectories(
+          project.id,
+          preview.id,
+          operator,
+        );
+        setProjects(result.projects);
+        const removed = result.audit.targets.filter(
+            (target) => target.result === "removed",
+          ).length,
+          skipped = result.audit.targets.length - removed;
+        notify(
+          `空目录整理完成：移除 ${removed} 个，保留 ${skipped} 个；逐目标结果已写入项目审计`,
+          false,
+        );
+      },
+    });
+  };
   const updateProjectSchedule = async (
     project: ProjectConfig,
     dateValue: string,
@@ -814,27 +1208,38 @@ export function App() {
       notify("请先填写每日计划操作人，再确认设备使用状态", true);
       return false;
     }
+    const wasRest = Boolean(
+        project.restDays?.some(
+          (item) => shootingDateKey(item) === shootingDateKey(dateValue),
+        ),
+      ),
+      recordedDecision = device
+        ? decision
+        : wasRest
+          ? "working"
+          : "rest";
     try {
-      setProjects(
-        await api.updateProjectDailyPlan(project.id, {
+      const updated = await api.updateProjectDailyPlan(project.id, {
           date: dateValue,
           scheduleKey: device,
-          decision: device
-            ? decision
-            : project.restDays?.some(
-                  (item) =>
-                    shootingDateKey(item) === shootingDateKey(dateValue),
-                )
-              ? "working"
-              : "rest",
+          decision: recordedDecision,
           operator: dailyPlanOperator.trim(),
-        }),
-      );
+        });
+      setProjects(updated);
       notify(
         device
           ? "每日设备使用决定已记录，并保留操作人与时间"
           : "拍摄日状态已记录，并保留操作人与时间",
       );
+      if (recordedDecision === "unused" || recordedDecision === "rest")
+        try {
+          await offerProjectDirectoryCleanup(project, dateValue, device);
+        } catch (error) {
+          notify(
+            `使用状态已保存，但空目录预览失败：${readableOperationError(error)}`,
+            true,
+          );
+        }
       return true;
     } catch (error) {
       notify(readableOperationError(error), true);
@@ -2153,160 +2558,29 @@ export function App() {
                           个
                         </span>
                       </div>
-                      <div className="project-matrix">
-                        <div className="project-matrix-head">
-                          <span>拍摄日期</span>
-                          <span>设备 / 机位</span>
-                          <span>素材卷</span>
-                          <span>文件</span>
-                          <span>素材量</span>
-                          <span>收工检查</span>
-                        </div>
-                        {projectDates(
-                          projectDetail,
-                          projectDetailTasks,
-                        ).flatMap((shootingDate) =>
-                          projectDeviceCells(
+                      <ProjectDayGroups
+                        project={projectDetail}
+                        summaries={projectDetailDaySummaries}
+                        expandedSafeDays={expandedSafeProjectDays}
+                        onToggleSafeDay={(key, expanded) =>
+                          setExpandedSafeProjectDays((current) => ({
+                            ...current,
+                            [key]: expanded,
+                          }))
+                        }
+                        onUpdateSchedule={(shootingDate, scheduleKey, decision) =>
+                          void updateProjectSchedule(
                             projectDetail,
-                            projectDetailTasks,
                             shootingDate,
-                          ).map((deviceCell) => {
-                            const cell = projectCellStatus(
-                                projectDetail,
-                                projectDetailTasks,
-                                shootingDate,
-                                deviceCell.device,
-                                deviceCell.cameraPosition,
-                              ),
-                              rows = cell.rows;
-                            return (
-                              <div
-                                className="project-matrix-row"
-                                key={`${shootingDate}-${deviceCell.scheduleKey}`}
-                              >
-                                <strong>
-                                  {shootingDate.replace(/-/g, "")}
-                                </strong>
-                                <span>{deviceCell.label}</span>
-                                <span>{rows.length}</span>
-                                <span>
-                                  {rows.reduce(
-                                    (sum, task) => sum + task.totalFiles,
-                                    0,
-                                  )}
-                                </span>
-                                <span>
-                                  {bytes(
-                                    rows.reduce(
-                                      (sum, task) => sum + task.totalBytes,
-                                      0,
-                                    ),
-                                  )}
-                                </span>
-                                {cell.unconfirmed ? (
-                                  <span className="matrix-decisions">
-                                    <button
-                                      className="muted"
-                                      onClick={() =>
-                                        void updateProjectSchedule(
-                                          projectDetail,
-                                          shootingDate,
-                                          deviceCell.scheduleKey,
-                                          "unused",
-                                        )
-                                      }
-                                    >
-                                      确认未使用
-                                    </button>
-                                    <button
-                                      className="amber-text"
-                                      onClick={() =>
-                                        void updateProjectSchedule(
-                                          projectDetail,
-                                          shootingDate,
-                                          deviceCell.scheduleKey,
-                                          "expected",
-                                        )
-                                      }
-                                    >
-                                      应该有素材
-                                    </button>
-                                  </span>
-                                ) : (
-                                  <button
-                                    className={
-                                      cell.exempt ||
-                                      (rows.length && cell.safe === rows.length)
-                                        ? "green-text"
-                                        : "amber-text"
-                                    }
-                                    onClick={() =>
-                                      !rows.length
-                                        ? void updateProjectSchedule(
-                                            projectDetail,
-                                            shootingDate,
-                                            deviceCell.scheduleKey,
-                                            "clear",
-                                          )
-                                        : setDetail(
-                                            (
-                                              rows.find(
-                                                (task) =>
-                                                  !taskMeetsCopyRequirement(
-                                                    task,
-                                                    projectDetail.requiredCopies ||
-                                                      2,
-                                                  ),
-                                              ) || rows[0]
-                                            ).id,
-                                          )
-                                    }
-                                    title={
-                                      !rows.length ? "恢复为待确认" : cell.label
-                                    }
-                                  >
-                                    {cell.label}
-                                  </button>
-                                )}
-                              </div>
-                            );
-                          }),
-                        )}
-                      </div>
+                            scheduleKey,
+                            decision,
+                          )
+                        }
+                        onOpenTask={setDetail}
+                        onManifestIssue={setManifestIssue}
+                        onBaseline={setExistingBaseline}
+                      />
                       <div className="closeout-actions">
-                        <span>整日未拍摄时可直接标记：</span>
-                        {projectDates(projectDetail, projectDetailTasks).map(
-                          (shootingDate) => (
-                            <Button
-                              key={shootingDate}
-                              kind="subtle"
-                              onClick={() =>
-                                void updateProjectSchedule(
-                                  projectDetail,
-                                  shootingDate,
-                                )
-                              }
-                            >
-                              {projectDetail.restDays?.some(
-                                (date) =>
-                                  shootingDateKey(date) ===
-                                  shootingDateKey(shootingDate),
-                              ) ? (
-                                <Check size={13} />
-                              ) : (
-                                <CalendarDays size={13} />
-                              )}{" "}
-                              {shootingDate.replace(/-/g, "")}{" "}
-                              {projectDetail.restDays?.some(
-                                (date) =>
-                                  shootingDateKey(date) ===
-                                  shootingDateKey(shootingDate),
-                              )
-                                ? "休息日"
-                                : "标记休息"}
-                            </Button>
-                          ),
-                        )}
                         <Button
                           kind="subtle"
                           onClick={() =>
@@ -2337,126 +2611,25 @@ export function App() {
                           刷新接管信息
                         </Button>
                       </div>
-                      {projectDetailTasks.length > 0 && (
-                        <div className="project-task-breakdown">
+                      {projectDetailUndatedVolumes.length > 0 && (
+                        <div className="project-task-breakdown undated-project-rolls">
                           <div className="project-task-breakdown-title">
-                            <strong>素材卷明细</strong>
-                            <span>
-                              刷新后按唯一素材卷统计，不重复累加同一路径
-                            </span>
+                            <strong>未标拍摄日期 · 需要处理</strong>
+                            <span>这些素材卷不会被隐藏在任一日期组中</span>
                           </div>
                           <div className="project-task-breakdown-head">
-                            <span>拍摄日期 · 设备 / 机位</span>
+                            <span>设备 / 机位</span>
                             <span>素材卷</span>
                             <span>文件 · 素材量</span>
-                            <span>接管可信状态</span>
+                            <span>可信状态</span>
                           </div>
-                          {groupLogicalVolumes(
-                            projectDetailTasks,
-                            projectDetail.requiredCopies || 2,
-                          )
-                            .sort(
-                              (a, b) =>
-                                (
-                                  a.representative.shootingDate || ""
-                                ).localeCompare(
-                                  b.representative.shootingDate || "",
-                                ) ||
-                                (a.representative.startedAt || 0) -
-                                  (b.representative.startedAt || 0),
-                            )
-                            .map((logicalVolume) => {
-                              const task = logicalVolume.representative;
-                              return (
-                                <div
-                                  className="project-task-breakdown-row"
-                                  key={logicalVolume.id}
-                                >
-                                  <span>
-                                    {task.shootingDate?.replace(/-/g, "") ||
-                                      "未标日期"}{" "}
-                                    · {task.devices.join("/")}
-                                    {task.cameraPosition
-                                      ? ` · ${task.cameraPosition}`
-                                      : ""}
-                                  </span>
-                                  <button
-                                    className="project-roll-link"
-                                    onClick={() => setDetail(task.id)}
-                                    title="查看实时传输详情"
-                                  >
-                                    {task.name}
-                                    {logicalVolume.attempts.length > 1 && (
-                                      <small className="project-roll-attempts">
-                                        {logicalVolume.attempts.length} 次尝试
-                                      </small>
-                                    )}
-                                  </button>
-                                  <small>
-                                    {task.totalFiles} 个文件 ·{" "}
-                                    {bytes(task.totalBytes)}
-                                    {active(task) && (
-                                      <span className="project-live-transfer">
-                                        {task.status === "paused"
-                                          ? "已暂停"
-                                          : `${transferPhaseText(task)} · ${transferProgressLabel(task, task.status === "verifying" ? "verify" : "copy")} · ${transferTiming(task).speed ? `${bytes(transferTiming(task).speed)}/s` : "测速中"}`}
-                                      </span>
-                                    )}
-                                  </small>
-                                  <span className="task-state-actions">
-                                    {(() => {
-                                      const trust = taskTrustState(task);
-                                      return task.externalManifest?.status ===
-                                        "mismatch" ? (
-                                        <button
-                                          className={`badge manifest-badge ${trust.status}`}
-                                          title="查看差异并处理"
-                                          onClick={() => setManifestIssue(task)}
-                                        >
-                                          <i />
-                                          {trust.label}
-                                          <ChevronRight size={13} />
-                                        </button>
-                                      ) : task.externalManifest?.resolution
-                                          ?.type === "revised-missing" ? (
-                                        <button
-                                          className={`badge manifest-badge ${trust.status}`}
-                                          title="显示修订前的原始 MHL 审计副本"
-                                          onClick={() =>
-                                            void api.revealExistingManifestAudit(
-                                              task.id,
-                                            )
-                                          }
-                                        >
-                                          <i />
-                                          {trust.label}
-                                          <FolderOpen size={13} />
-                                        </button>
-                                      ) : (
-                                        <span
-                                          className={`badge ${trust.status}`}
-                                          title={task.errorMessage}
-                                        >
-                                          <i />
-                                          {trust.label}
-                                        </span>
-                                      );
-                                    })()}
-                                    {task.provenance &&
-                                      task.provenance !== "kocpy-transfer" &&
-                                      task.status !== "completed" && (
-                                        <button
-                                          onClick={() =>
-                                            setExistingBaseline(task)
-                                          }
-                                        >
-                                          建立首次基线
-                                        </button>
-                                      )}
-                                  </span>
-                                </div>
-                              );
-                            })}
+                          <ProjectVolumeRows
+                            volumes={projectDetailUndatedVolumes}
+                            showDate
+                            onOpen={setDetail}
+                            onManifestIssue={setManifestIssue}
+                            onBaseline={setExistingBaseline}
+                          />
                         </div>
                       )}
                     </section>

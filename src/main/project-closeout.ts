@@ -174,3 +174,53 @@ export function projectCloseoutSummary(
     unconfirmed: cells.filter((cell) => cell.unconfirmed),
   };
 }
+
+export function projectDaySummary(
+  project: ProjectConfig,
+  tasks: BackupTask[],
+  shootingDate: string,
+  referenceDate = new Date().toISOString().slice(0, 10),
+) {
+  const day = shootingDateKey(shootingDate),
+    rows = tasks.filter(
+      (task) => shootingDateKey(task.shootingDate) === day,
+    ),
+    cells = projectDeviceCells(project, tasks, day).map((cell) => ({
+      ...cell,
+      ...projectCellStatus(
+        project,
+        tasks,
+        day,
+        cell.device,
+        cell.cameraPosition,
+      ),
+    })),
+    logicalVolumes = groupLogicalVolumes(rows, project.requiredCopies || 2),
+    attention = cells.filter((cell) => cell.attention).length,
+    unconfirmed = cells.filter((cell) => cell.unconfirmed).length,
+    dueUnconfirmed = day <= shootingDateKey(referenceDate) ? unconfirmed : 0,
+    current = day === shootingDateKey(referenceDate),
+    risk = attention + dueUnconfirmed;
+  return {
+    shootingDate: day,
+    cells,
+    logicalVolumes,
+    volumes: logicalVolumes.length,
+    compliantVolumes: logicalVolumes.filter((item) => item.compliant).length,
+    files: logicalVolumes.reduce(
+      (sum, item) => sum + item.representative.totalFiles,
+      0,
+    ),
+    bytes: logicalVolumes.reduce(
+      (sum, item) => sum + item.representative.totalBytes,
+      0,
+    ),
+    completeCells: cells.filter((cell) => cell.complete).length,
+    totalCells: cells.length,
+    attention,
+    unconfirmed,
+    risk,
+    current,
+    forceExpanded: current || risk > 0,
+  };
+}

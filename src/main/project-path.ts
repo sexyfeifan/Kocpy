@@ -1,9 +1,11 @@
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 import { renderProjectCardPath } from "../common/project-layout";
 import { normalizePositions } from "../common/interaction";
 export { renderProjectCardPath } from "../common/project-layout";
 import { promises as fs } from "node:fs";
 import { segment } from "./backup/safety";
+import { volumeIdentity } from "./system";
 import type { ProjectConfig, ProjectStructureReport } from "./types";
 
 export function compactDate(value: string): string {
@@ -127,12 +129,102 @@ export function expectedProjectPaths(project: ProjectConfig): string[] {
   );
 }
 
+/** Resolve the exact framework leaf paths represented by a day decision. */
+export function projectFrameworkPaths(
+  project: ProjectConfig,
+  shootingDate: string,
+  scheduleKey?: string,
+): string[] {
+  if (!project.shootingDateStart) throw new Error("请设置项目开始日期");
+  const folder =
+    project.projectFolderName ||
+    makeProjectFolderName(project.shootingDateStart, project.name);
+  const [requestedDevice, requestedPosition] = scheduleKey?.split("::") || [];
+  const devices = requestedDevice ? [requestedDevice] : project.devices;
+  return [
+    ...new Set(
+      devices.flatMap((device) => {
+        const configured = normalizePositions(project.devicePositions?.[device]);
+        const positions = requestedPosition
+          ? [requestedPosition === "unassigned" ? undefined : requestedPosition]
+          : scheduleKey && configured.length
+            ? configured
+            : configured.length
+              ? configured
+              : [undefined];
+        return positions.map((position) => {
+          if (!project.namingRule)
+            return makeProjectDayPath(folder, shootingDate, device, position);
+          const full = renderProjectCardPath(project.namingRule, {
+            projectFolderName: folder,
+            projectName: project.name,
+            projectStartDate: project.shootingDateStart!,
+            shootingDate,
+            device,
+            position,
+            card: "__KOCPY_CARD__",
+          });
+          const parts = full.split("/"),
+            cardIndex = parts.findIndex((part) =>
+              part.includes("__KOCPY_CARD__"),
+            );
+          return parts.slice(0, cardIndex).join("/");
+        });
+      }),
+    ),
+  ].filter(Boolean);
+}
+
+export function projectUsesPrecreatedDirectories(project: ProjectConfig) {
+  // The missing field is the legacy behaviour and must stay compatible.
+  return project.directoryCreationMode !== "lazy";
+}
+
+function suppressedProjectPaths(
+  project: ProjectConfig,
+  destination: string,
+): Set<string> {
+  const root = path.resolve(destination);
+  return new Set(
+    (project.managedProjectDirectories || [])
+      .filter(
+        (record) =>
+          Boolean(record.removedAt) &&
+          path.resolve(record.destinationRoot) === root,
+      )
+      .map((record) => record.relativePath),
+  );
+}
+
+function expectedPathsForDestination(
+  project: ProjectConfig,
+  destination: string,
+): string[] {
+  const suppressed = suppressedProjectPaths(project, destination);
+  return expectedProjectPaths(project).filter(
+    (relative) => !suppressed.has(relative),
+  );
+}
+
 export async function inspectProjectStructure(
   project: ProjectConfig,
 ): Promise<ProjectStructureReport> {
-  const relatives = expectedProjectPaths(project);
+  if (!projectUsesPrecreatedDirectories(project))
+    return {
+      expectedCount: 0,
+      missingCount: 0,
+      conflictCount: 0,
+      destinations: (project.destinationPaths || []).map((destination) => ({
+        destination,
+        expectedCount: 0,
+        existingCount: 0,
+        missing: [],
+        conflicts: [],
+      })),
+    };
   const destinations = await Promise.all(
     (project.destinationPaths || []).map(async (destination) => {
+      const relatives = expectedPathsForDestination(project, destination);
       const missing: string[] = [],
         conflicts: string[] = [];
       let existingCount = 0,
@@ -165,7 +257,10 @@ export async function inspectProjectStructure(
     }),
   );
   return {
-    expectedCount: relatives.length * destinations.length,
+    expectedCount: destinations.reduce(
+      (sum, item) => sum + item.expectedCount,
+      0,
+    ),
     missingCount: destinations.reduce(
       (sum, item) => sum + item.missing.length,
       0,
@@ -180,18 +275,86 @@ export async function inspectProjectStructure(
 
 export async function createProjectStructure(
   project: ProjectConfig,
+  reason: "explicit-precreate" | "repair" = "explicit-precreate",
+  workstationId?: string,
 ): Promise<string[]> {
-  const relatives = expectedProjectPaths(project);
-  const paths = (project.destinationPaths || []).flatMap((destination) =>
-    relatives.map((relative) => path.join(destination, relative)),
+  if (!projectUsesPrecreatedDirectories(project)) return [];
+  const plans = await Promise.all(
+    (project.destinationPaths || []).map(async (destination) => {
+      const stat = await fs.stat(destination);
+      if (!stat.isDirectory()) throw new Error("备份根路径不是文件夹");
+      const destinationRealPath = await fs.realpath(destination),
+        identity = await volumeIdentity(destination),
+        missing: Array<{ relative: string; fullPath: string }> = [];
+      for (const relative of expectedPathsForDestination(project, destination)) {
+        const fullPath = path.join(destination, relative);
+        try {
+          const existing = await fs.lstat(fullPath);
+          if (!existing.isDirectory() || existing.isSymbolicLink())
+            throw new Error(`项目目录路径冲突：${fullPath}`);
+        } catch (cause: any) {
+          if (cause?.code === "ENOENT") missing.push({ relative, fullPath });
+          else throw cause;
+        }
+      }
+      return { destination, destinationRealPath, identity, missing };
+    }),
   );
-  for (const folder of paths) await fs.mkdir(folder, { recursive: true });
-  return paths;
+  const created: string[] = [];
+  project.managedProjectDirectories ||= [];
+  for (const plan of plans) {
+    for (const item of plan.missing) {
+      await fs.mkdir(path.dirname(item.fullPath), { recursive: true });
+      let createdByKocpy = false;
+      try {
+        // The leaf is deliberately non-recursive: EEXIST means another actor
+        // won the race, so Kocpy must not claim deletion authority for it.
+        await fs.mkdir(item.fullPath);
+        createdByKocpy = true;
+      } catch (error: any) {
+        if (error?.code !== "EEXIST") throw error;
+        const existing = await fs.lstat(item.fullPath);
+        if (!existing.isDirectory() || existing.isSymbolicLink())
+          throw new Error(`项目目录路径冲突：${item.fullPath}`);
+      }
+      const realPath = await fs.realpath(item.fullPath),
+        expectedRealPath = path.join(
+          plan.destinationRealPath,
+          ...item.relative.split("/"),
+        );
+      if (realPath !== expectedRealPath)
+        throw new Error(`项目目录真实路径与预期不一致：${item.fullPath}`);
+      if (!createdByKocpy) continue;
+      created.push(item.fullPath);
+      if (
+        !project.managedProjectDirectories.some(
+          (record) =>
+            !record.removedAt &&
+            path.resolve(record.destinationRoot) ===
+              path.resolve(plan.destination) &&
+            record.relativePath === item.relative,
+        )
+      )
+        project.managedProjectDirectories.push({
+          id: randomUUID(),
+          workstationId,
+          destinationRoot: plan.destination,
+          destinationRealPath: plan.destinationRealPath,
+          relativePath: item.relative,
+          volumeId: plan.identity.id,
+          volumeUuid: plan.identity.uuid,
+          createdAt: Date.now(),
+          reason,
+        });
+    }
+  }
+  return created;
 }
 
 /** Preflight every saved destination before creating any missing directory. */
 export async function repairProjectStructure(
   project: ProjectConfig,
+  workstationId?: string,
 ): Promise<ProjectStructureReport> {
   const before = await inspectProjectStructure(project),
     unavailable = before.destinations.filter((item) => item.error);
@@ -203,7 +366,8 @@ export async function repairProjectStructure(
     throw new Error(
       `有 ${unavailable.length} 个已保存目的地无法访问，Kocpy 未创建任何目录`,
     );
-  if (before.missingCount) await createProjectStructure(project);
+  if (before.missingCount)
+    await createProjectStructure(project, "repair", workstationId);
   const after = await inspectProjectStructure(project);
   if (after.missingCount || after.conflictCount)
     throw new Error("补齐后重新检查仍不完整，请检查磁盘权限和目录状态");

@@ -135,6 +135,33 @@ const template = (): ProjectTemplate => ({
 });
 
 describe("0.1.31 workstation exchange", () => {
+  it("exports managed-directory history without local deletion authority", () => {
+    const local = project();
+    local.managedProjectDirectories = [
+      {
+        id: "managed-directory-1",
+        workstationId: identity.id,
+        destinationRoot: "/Volumes/MASTER",
+        destinationRealPath: "/Volumes/MASTER",
+        relativePath: "20260902_Film/20260902/A",
+        volumeId: "volume-a",
+        createdAt: 1,
+        reason: "explicit-precreate",
+      },
+    ];
+    const value = createWorkspacePackage({
+      version: "0.1.36",
+      identity,
+      workspace: workspace([local]),
+      templates: [],
+    });
+    expect(
+      "workstationId" in
+        value.projects[0].managedProjectDirectories![0],
+    ).toBe(false);
+    expect(local.managedProjectDirectories[0].workstationId).toBe(identity.id);
+  });
+
   it("keeps a stable workstation id across hostname changes and fails closed on corruption", async () => {
     const directory = await fs.mkdtemp(
       path.join(os.tmpdir(), "kocpy-station-"),
