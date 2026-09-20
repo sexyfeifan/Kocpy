@@ -9,6 +9,12 @@ contextBridge.exposeInMainWorld("api", {
   selectDirectory: call("dialog:directory"),
   validateDirectories: call("dialog:validate-directories"),
   getOperations: call("operations:list"),
+  getBackgroundActivities: call("background:list"),
+  onBackgroundChanged: (listener: () => void) => {
+    const handler = () => listener();
+    ipcRenderer.on("background:changed", handler);
+    return () => ipcRenderer.removeListener("background:changed", handler);
+  },
   onWorkspaceChanged: (listener: () => void) => {
     const handler = () => listener();
     ipcRenderer.on("workspace:changed", handler);

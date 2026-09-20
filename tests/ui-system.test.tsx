@@ -117,12 +117,26 @@ describe("0.1.25 shared UI contract", () => {
     expect(appSource).toContain("KOCPY · QUICK START");
     expect(appSource).toContain("<h2>软件使用说明</h2>");
     expect(appSource).toContain(
-      "<strong>当前更新：完整接收、按日交付与归档转存</strong>",
+      "<strong>当前更新：后台任务与项目归档联动</strong>",
+    );
+    expect(appSource).toContain(
+      "<strong>0.1.37：完整接收、按日交付与归档转存</strong>",
     );
     expect(appSource).toContain(
       "<strong>0.1.35：发布链与真实介质验收保护</strong>",
     );
     expect(appSource).not.toContain("KOCPY {APP_VERSION} · QUICK START");
+  });
+
+  it("keeps template management collapsed by default and open while editing", () => {
+    const appSource = rendererSources.find(({ name }) => name === "App.tsx")!
+      .source;
+    expect(appSource).toContain(
+      'window.sessionStorage.getItem("kocpy-templates-expanded") === "true"',
+    );
+    expect(appSource).toContain('disabled={Boolean(templateEditor)}');
+    expect(appSource).toContain('disabledReason="请先保存或关闭正在编辑的模板"');
+    expect(appSource).toContain('setTemplatesExpanded(true)');
   });
 
   it("keeps automatic PDF reports enabled by default and configurable per task", () => {

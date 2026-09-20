@@ -1,6 +1,6 @@
 # Kocpy 文档导航
 
-当前正式版：**0.1.37**。本目录说明已经实现的功能、操作方法和验证边界。[返回项目首页](../README.md) · [下载正式版](https://github.com/sexyfeifan/Kocpy/releases/latest)
+当前正式版：**0.1.38**。本目录说明已经实现的功能、操作方法和验证边界。[返回项目首页](../README.md) · [下载正式版](https://github.com/sexyfeifan/Kocpy/releases/latest)
 
 ## 使用 Kocpy
 
@@ -10,6 +10,7 @@
 | 不建项目，先完成一份备份 | [第一次使用](USER_GUIDE.md#1-第一次使用) |
 | 理解普通备份、镜像与目的地路径 | [新建备份与命名](USER_GUIDE.md#2-新建备份与命名) |
 | 查看速度、暂停、失败恢复或 UUID 提示 | [传输、校验与恢复](USER_GUIDE.md#3-传输校验与恢复) |
+| 集中查看所有运行、待处理与近期后台任务 | [统一后台任务](USER_GUIDE.md#统一后台任务) |
 | 纳入已有素材、核对 MHL／SHA 差异 | [接管既有备份](USER_GUIDE.md#4-接管既有备份) |
 | 修正旧接管记录与重复统计 | [刷新接管信息](USER_GUIDE.md#5-刷新接管信息) |
 | 建立项目规则、模板、收工标准与交接 | [项目矩阵与收工状态](USER_GUIDE.md#6-项目矩阵与收工状态) |
@@ -25,6 +26,7 @@
 
 ## 版本与验证
 
+- [0.1.38 更新说明](RELEASE_NOTES_0.1.38.md)：统一后台任务、独立归档转存细粒度进度、模板折叠与项目归档视图联动。
 - [0.1.37 更新说明](RELEASE_NOTES_0.1.37.md)：完整范围、拍摄日分组、每日交付、自动 PDF、空目录治理与独立归档转存（NAS／已挂载目录）。
 - [0.1.36 更新说明](RELEASE_NOTES_0.1.36.md)：项目规则确认、目录补齐与大型 PDF 修复。
 - [GitHub Releases](https://github.com/sexyfeifan/Kocpy/releases)：真正公开的安装包、对应源码、摘要与发布说明。

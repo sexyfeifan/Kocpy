@@ -149,6 +149,56 @@ describe("0.1.16 indexed catalog", () => {
     }
   });
 
+  it("separates active and archived project material while retaining unassigned tasks", async () => {
+    const root = await fs.mkdtemp(
+      path.join(os.tmpdir(), "kocpy-catalog-project-scope-"),
+    );
+    try {
+      const db = new CatalogDatabase(root),
+        { task, project } = fixture(),
+        archivedProject = {
+          ...project,
+          id: "archived-project",
+          name: "Archived",
+          status: "archived",
+        },
+        archivedTask = {
+          ...task,
+          id: "archived-task",
+          projectId: archivedProject.id,
+          createdAt: 2,
+        },
+        unassignedTask = {
+          ...task,
+          id: "unassigned-task",
+          projectId: undefined,
+          createdAt: 3,
+        };
+      await db.rebuild(
+        [task, archivedTask, unassignedTask] as any,
+        [{ ...project, status: "active" }, archivedProject] as any,
+      );
+
+      const current = await db.pageFileBatch({ limit: 20 }),
+        archived = await db.pageFileBatch({
+          projectScope: "archived",
+          limit: 20,
+        }),
+        all = await db.pageFileBatch({ projectScope: "all", limit: 20 });
+      expect(new Set(current.rows.map((row) => row.task_id))).toEqual(
+        new Set(["t", "unassigned-task"]),
+      );
+      expect(new Set(archived.rows.map((row) => row.task_id))).toEqual(
+        new Set(["archived-task"]),
+      );
+      expect(new Set(all.rows.map((row) => row.task_id))).toEqual(
+        new Set(["t", "archived-task", "unassigned-task"]),
+      );
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("restores the previous durable index when publication fails after commit", async () => {
     const root = await fs.mkdtemp(
       path.join(os.tmpdir(), "kocpy-catalog-rollback-"),

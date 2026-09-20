@@ -1,4 +1,4 @@
-# Kocpy 0.1.37 architecture
+# Kocpy 0.1.38 architecture
 
 ## Frozen complete inventory and compatibility boundary
 
@@ -31,6 +31,14 @@ An unused-device or rest-day decision can request a read-only cleanup preview, b
 NAS archive transfer has its own persistence domain and does not create a backup task, logical card or project-copy count. Source and mounted destination parent are canonicalized; aliases, nesting, symlinks, unsupported entries, insufficient space, identity changes and an existing final target stop the operation. The final target preserves the source-root name. Writes use owned temporary/resume state and no-replace publication; recovery revalidates both source scope and destination identity.
 
 Completion requires the final NAS target to match the frozen relative-path inventory, exact bytes, empty-directory set and a fresh SHA-256 read of every file. Existing MHL/XML/PDF files are ordinary payload and their historical conclusions are not changed. Detail PDF and high-resolution PNG reports share one immutable fact contract containing name provenance, shooting date, counts, exact bytes, source/final paths, times, inventory digest and evidence boundary. Report failure does not invalidate completed data and creates a new report-attempt ID on retry instead of overwriting an unknown artifact.
+
+Archive-transfer runtime progress is sampled after 4 MiB chunks and emitted at most about every 250 ms. Per-file bytes, instantaneous speed and ETA are transient UI state; they are not appended to the durable task on every sample. Durable file checkpoints, exclusive publication, volume identity checks and final SHA-256 rereads remain authoritative. Copy and verification phases reset their rate windows; reporting and terminal phases report zero transfer speed.
+
+## Unified background activity and archive visibility
+
+The renderer reads a normalized `BackgroundActivitySummary` assembled in the main process from backup tasks, proxy jobs, standalone archive transfers and the persisted operation registry. Live archive-transfer samples are merged by stable source ID and the operation mirror is deduplicated. The result contains all running or actionable items plus at most 50 recent terminal items. Optional fields preserve compatibility with older operation records; missing telemetry is never reconstructed as historical fact.
+
+Project archive state is a visibility scope, not a storage migration. Transfer and catalog queries default to non-archived projects while retaining projectless ordinary tasks; explicit `archived` and `all` scopes expose historical rows. Restoring a project changes the same query relationship back without rescanning media. Before an active project is archived, the main process rejects related pending/running/paused/verifying transfers, automatic reports, daily deliveries, proxy jobs, archive transfers and project-tagged maintenance operations. Stopped failures remain durable risk evidence and may move into the archived view.
 
 The archive conclusion deliberately excludes allocated disk usage, ACLs, extended attributes, permissions, creation/modification timestamps, server-side disk topology and historical shooting completeness. A mounted network path cannot prove independent physical fault domains from the client.
 

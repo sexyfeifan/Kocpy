@@ -14,6 +14,7 @@ export class OperationRegistry {
   private records: OperationRecord[] = [];
   constructor(
     private save?: (records: OperationRecord[]) => Promise<unknown>,
+    private changed?: () => void,
   ) {}
   restore(records: OperationRecord[]) {
     this.records = records
@@ -38,12 +39,15 @@ export class OperationRegistry {
   }
   progress(value: any) {
     const current = this.records.find((record) => record.status === "running");
-    if (current) current.progress = value;
+    if (current) {
+      current.progress = value;
+      this.changed?.();
+    }
   }
   async run<T>(name: string, action: () => Promise<T>): Promise<T> {
     if (this.active)
       throw new Error(
-        "已有维护操作执行中，请在后台操作面板查看进度，完成后再开始",
+        "已有维护操作执行中，请在“后台任务”查看进度，完成后再开始",
       );
     const record: OperationRecord = {
       id: randomUUID(),
@@ -52,6 +56,7 @@ export class OperationRegistry {
       status: "running",
     };
     this.records = [...this.records.slice(-49), record];
+    this.changed?.();
     try {
       await this.save?.(this.list());
       const result = await action();
@@ -79,6 +84,7 @@ export class OperationRegistry {
     } finally {
       record.completedAt = Date.now();
       await this.save?.(this.list());
+      this.changed?.();
     }
   }
 }

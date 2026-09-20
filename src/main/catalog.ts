@@ -19,6 +19,7 @@ interface CatalogCursor {
 
 export interface CatalogPageOptions {
   projectId?: string;
+  projectScope?: "current" | "archived" | "all";
   query?: string;
   kind?: string;
   cursor?: string;
@@ -35,6 +36,7 @@ function pageScope(options: CatalogPageOptions) {
     .update(
       JSON.stringify({
         projectId: options.projectId || "",
+        projectScope: options.projectScope || "current",
         query: options.query || "",
         kind: options.kind || "all",
       }),
@@ -720,6 +722,14 @@ export class CatalogDatabase {
       clauses.unshift("t.project_id=?");
       params.unshift(options.projectId);
     }
+    if (options.projectScope === "archived")
+      clauses.push(
+        "EXISTS (SELECT 1 FROM projects p WHERE p.id=t.project_id AND p.status='archived')",
+      );
+    else if (options.projectScope !== "all")
+      clauses.push(
+        "NOT EXISTS (SELECT 1 FROM projects p WHERE p.id=t.project_id AND p.status='archived')",
+      );
     if (kindSql) clauses.push(kindSql.replace(/^ AND /, ""));
     if (cursor) {
       clauses.push(

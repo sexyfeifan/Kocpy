@@ -11,6 +11,9 @@ describe("renderer initial render (not a substitute for desktop acceptance)", ()
     const { LifecycleControls } =
       await import("../src/renderer/src/LifecycleControls");
     const { Composer } = await import("../src/renderer/src/Composer");
+    const { BackgroundActivityOverview, BackgroundTasksPage } = await import(
+      "../src/renderer/src/BackgroundTasks"
+    );
     expect(renderToStaticMarkup(<App />)).toContain("拍摄项目");
     const lifecycle = renderToStaticMarkup(
       <LifecycleControls
@@ -97,5 +100,49 @@ describe("renderer initial render (not a substitute for desktop acceptance)", ()
         inventoryScope: undefined,
       } as never),
     ).toBe(false);
+    const backgroundActivity = {
+      id: "archive-transfer:a",
+      sourceId: "a",
+      kind: "archive-transfer",
+      name: "项目归档",
+      state: "running",
+      status: "running",
+      phase: "copying",
+      progress: 0.5,
+      completedBytes: 500,
+      totalBytes: 1000,
+      completedFiles: 2,
+      totalFiles: 4,
+      currentFile: "Media/clip.mov",
+      currentFileBytes: 250,
+      currentFileTotalBytes: 500,
+      speedBps: 100,
+      averageSpeedBps: 90,
+      etaSeconds: 5,
+      elapsedMs: 5000,
+      sourcePath: "/source",
+      destinationPath: "/nas/project",
+      startedAt: 1,
+      route: "maintenance",
+    } as const;
+    const overview = renderToStaticMarkup(
+      <BackgroundActivityOverview
+        activities={[backgroundActivity]}
+        onOpen={() => {}}
+      />,
+    );
+    expect(overview).toContain("后台活动");
+    expect(overview).toContain("Media/clip.mov");
+    expect(overview).toContain("当前文件");
+    const backgroundPage = renderToStaticMarkup(
+      <BackgroundTasksPage
+        activities={[backgroundActivity]}
+        notices={[]}
+        projects={[]}
+        onOpenRoute={() => {}}
+      />,
+    );
+    expect(backgroundPage).toContain("后台任务状态");
+    expect(backgroundPage).toContain("/nas/project");
   });
 });

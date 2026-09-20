@@ -33,6 +33,23 @@ const statusText: Record<ArchiveTransferTaskSummary["status"], string> = {
 
 const COMPLETED_PAGE_SIZE = 8;
 
+const phaseText: Record<ArchiveTransferProgress["phase"], string> = {
+  scanning: "扫描源目录",
+  copying: "复制（写入目标）",
+  verifying: "回读校验（读取目标）",
+  reporting: "生成 PDF / PNG 报告",
+  completed: "全部完成",
+  attention: "等待处理",
+};
+
+function durationText(milliseconds: number) {
+  const seconds = Math.max(0, Math.round(milliseconds / 1000));
+  if (seconds < 60) return `${seconds} 秒`;
+  const minutes = Math.floor(seconds / 60),
+    rest = seconds % 60;
+  return `${minutes} 分 ${rest} 秒`;
+}
+
 export function visibleArchiveTransferTasks(
   tasks: ArchiveTransferTaskSummary[],
   completedLimit = COMPLETED_PAGE_SIZE,
@@ -353,7 +370,22 @@ export function ArchiveTransferPanel({
                 const live = progress[task.id],
                   completed = live?.completedFiles ?? task.completedFiles,
                   total = live?.totalFiles ?? task.inventory.totalFiles,
-                  percent = total ? Math.round((completed / total) * 100) : 100,
+                  progressBytes = live?.overallProcessedBytes ?? task.verifiedBytes,
+                  progressTotal = live?.overallTotalBytes ?? task.inventory.totalBytes,
+                  percent = progressTotal
+                    ? Math.min(100, Math.round((progressBytes / progressTotal) * 100))
+                    : total
+                      ? Math.min(100, Math.round((completed / total) * 100))
+                      : 100,
+                  filePercent = live?.currentFileTotalBytes
+                    ? Math.min(
+                        100,
+                        Math.round(
+                          (live.currentFileBytes / live.currentFileTotalBytes) *
+                            100,
+                        ),
+                      )
+                    : 0,
                   report = task.reportAttempts
                     .filter((item) => item.status === "completed")
                     .at(-1),
@@ -379,7 +411,8 @@ export function ArchiveTransferPanel({
                         <strong>{task.archiveName}</strong>
                       </span>
                       <small>
-                        数据：{statusText[live?.status || task.status]} · 报告：
+                        数据：{statusText[live?.status || task.status]}
+                        {live ? ` · ${phaseText[live.phase]}` : ""} · 报告：
                         {task.reportStatus === "completed"
                           ? "已生成"
                           : task.reportStatus === "failed"
@@ -392,6 +425,43 @@ export function ArchiveTransferPanel({
                     <div className="archive-transfer-progress">
                       <i style={{ width: `${percent}%` }} />
                     </div>
+                    {live && (
+                      <div className="archive-transfer-live" aria-live="polite">
+                        <div className="archive-transfer-live-summary">
+                          <strong>{phaseText[live.phase]} · {percent}%</strong>
+                          <span>
+                            {completed.toLocaleString()} / {total.toLocaleString()} 个文件
+                            {live.speedBps > 0
+                              ? ` · 当前 ${bytes(live.speedBps)}/s`
+                              : ""}
+                            {live.averageSpeedBps > 0
+                              ? ` · 平均 ${bytes(live.averageSpeedBps)}/s`
+                              : ""}
+                          </span>
+                          <span>
+                            已用 {durationText(live.elapsedMs)}
+                            {live.etaSeconds > 0
+                              ? ` · 预计剩余 ${durationText(live.etaSeconds * 1000)}`
+                              : ""}
+                          </span>
+                        </div>
+                        {live.currentFile && (
+                          <div className="archive-transfer-current-file">
+                            <span className="mono" title={live.currentFile}>
+                              {live.currentFile}
+                            </span>
+                            <span>
+                              {bytes(live.currentFileBytes)} / {bytes(live.currentFileTotalBytes)} · {filePercent}%
+                            </span>
+                            <progress
+                              aria-label={`${live.currentFile} 文件进度`}
+                              max={live.currentFileTotalBytes || 1}
+                              value={live.currentFileBytes}
+                            />
+                          </div>
+                        )}
+                      </div>
+                    )}
                     <p className="mono">{task.finalPath}</p>
                     <small>
                       {task.inventory.totalFiles.toLocaleString()} 个文件 ·{" "}

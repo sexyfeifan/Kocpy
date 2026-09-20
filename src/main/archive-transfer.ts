@@ -146,11 +146,41 @@ export interface ArchiveTransferTask extends ArchiveTransferContext {
 export interface ArchiveTransferProgress {
   taskId: string;
   status: ArchiveTransferStatus;
+  phase:
+    | "scanning"
+    | "copying"
+    | "verifying"
+    | "reporting"
+    | "completed"
+    | "attention";
   currentFile?: string;
+  currentFileBytes: number;
+  currentFileTotalBytes: number;
+  overallProcessedBytes: number;
+  overallTotalBytes: number;
+  processedBytes: number;
   completedFiles: number;
   totalFiles: number;
   verifiedBytes: number;
   totalBytes: number;
+  speedBps: number;
+  averageSpeedBps: number;
+  elapsedMs: number;
+  etaSeconds: number;
+}
+
+interface ArchiveTransferLiveProgress {
+  phase: ArchiveTransferProgress["phase"];
+  phaseStartedAt: number;
+  currentFile?: string;
+  currentFileBytes: number;
+  currentFileTotalBytes: number;
+  processedBytes: number;
+  phaseCompletedFiles: number;
+  lastSampleAt: number;
+  lastSampleBytes: number;
+  lastEmittedAt: number;
+  speedBps: number;
 }
 
 export type ArchiveTransferInventorySummary = Omit<
@@ -878,11 +908,19 @@ export function loadArchiveTransferTasks(
   };
 }
 
-async function fileSha256(file: string) {
+async function fileSha256(
+  file: string,
+  onProgress?: (processedBytes: number) => void,
+) {
   const hash = createHash("sha256");
+  let processedBytes = 0;
   await new Promise<void>((resolve, reject) => {
     const stream = createReadStream(file);
-    stream.on("data", (chunk) => hash.update(chunk));
+    stream.on("data", (chunk) => {
+      hash.update(chunk);
+      processedBytes += chunk.length;
+      onProgress?.(processedBytes);
+    });
     stream.on("error", reject);
     stream.on("end", resolve);
   });
@@ -1003,6 +1041,7 @@ async function exclusiveCopyWithHash(
   destination: string,
   expected: ArchiveTransferInventoryFile,
   destinationParent: BoundArchiveDirectory,
+  onProgress?: (processedBytes: number) => void,
 ) {
   await assertBoundArchiveDirectory(
     destinationParent,
@@ -1074,6 +1113,7 @@ async function exclusiveCopyWithHash(
         written += result.bytesWritten;
       }
       offset += bytesRead;
+      onProgress?.(offset);
     }
     const after = await sourceHandle.stat();
     if (
@@ -1133,6 +1173,7 @@ export class ArchiveTransferManager {
   private tasks: ArchiveTransferTask[] = [];
   private running = new Set<string>();
   private checkpointFiles = new Map<string, number>();
+  private liveProgress = new Map<string, ArchiveTransferLiveProgress>();
   private stateCommitTail: Promise<void> = Promise.resolve();
 
   constructor(private readonly dependencies: ArchiveTransferDependencies) {}
@@ -1364,8 +1405,14 @@ export class ArchiveTransferManager {
       throw new Error("该归档报告已经生成完成");
     }
     await this.assertCompletedTargetOwnership(task);
+    this.startProgressPhase(task, "reporting");
     await this.generateReports(task);
-    if (task.reportAttempts.at(-1)?.status === "completed")
+    const reportCompleted = task.reportAttempts.at(-1)?.status === "completed";
+    this.startProgressPhase(
+      task,
+      reportCompleted ? "completed" : "attention",
+    );
+    if (reportCompleted)
       await this.finalizeCompletedMarker(task);
     return structuredClone(task);
   }
@@ -1398,6 +1445,13 @@ export class ArchiveTransferManager {
     if (this.running.has(task.id)) throw new Error("该归档转存正在运行");
     this.running.add(task.id);
     try {
+      task.status = "running";
+      task.startedAt ||= this.now();
+      task.error = undefined;
+      if (recovering)
+        task.recoveryEvents.push({ at: this.now(), action: "resume-authorized" });
+      await this.persist();
+      this.startProgressPhase(task, "scanning");
       await this.assertRecoveryIdentity(task);
       const current = await inventoryDirectory(task.sourcePath);
       if (current.digest !== task.inventory.digest) throw new Error(SOURCE_CHANGED);
@@ -1406,17 +1460,12 @@ export class ArchiveTransferManager {
         .reduce((sum, item) => sum + item.size, 0);
       if ((await this.dependencies.availableBytes(task.destinationParent)) < remaining)
         throw new Error("归档目标可用空间不足，已停止；释放空间后可恢复同一任务");
-      task.status = "running";
-      task.startedAt ||= this.now();
-      task.error = undefined;
-      if (recovering)
-        task.recoveryEvents.push({ at: this.now(), action: "resume-authorized" });
-      await this.persist();
       this.checkpointFiles.set(task.id, task.completedFiles);
 
       for (const directory of task.inventory.directories)
         await bindArchiveTargetDirectory(task.finalPath, directory, true);
 
+      this.startProgressPhase(task, "copying");
       for (const file of task.inventory.files) {
         await this.assertLiveIdentities(task);
         const source = safeTarget(task.sourcePath, file.relativePath),
@@ -1432,7 +1481,14 @@ export class ArchiveTransferManager {
           ),
           target = inspectedTarget.target;
         task.currentFile = file.relativePath;
-        this.progress(task);
+        this.updateProgress(
+          task,
+          task.verifiedBytes,
+          0,
+          file.size,
+          true,
+          task.completedFiles,
+        );
         if (file.verifiedAt) {
           const [sourceHash, targetHash] = await Promise.all([
             fileSha256(source),
@@ -1442,6 +1498,14 @@ export class ArchiveTransferManager {
           });
           if (sourceHash !== file.sourceSha256 || targetHash !== file.targetSha256)
             throw new Error(`恢复核对发现已完成文件变化，已停止：${file.relativePath}`);
+          this.updateProgress(
+            task,
+            task.verifiedBytes,
+            file.size,
+            file.size,
+            true,
+            task.completedFiles,
+          );
           continue;
         }
         const existing = inspectedTarget.stat;
@@ -1462,6 +1526,14 @@ export class ArchiveTransferManager {
               relativePath: file.relativePath,
             });
             this.recalculate(task);
+            this.updateProgress(
+              task,
+              task.verifiedBytes,
+              file.size,
+              file.size,
+              true,
+              task.completedFiles,
+            );
             await this.checkpoint(task);
             continue;
           }
@@ -1474,6 +1546,12 @@ export class ArchiveTransferManager {
             target,
             file,
             targetParent,
+            (processedBytes) =>
+              this.updateProgress(
+                task,
+                task.verifiedBytes + processedBytes,
+                processedBytes,
+              ),
           ),
           targetHash = await fileSha256(target);
         if (sourceHash !== targetHash)
@@ -1482,12 +1560,20 @@ export class ArchiveTransferManager {
         file.targetSha256 = targetHash;
         file.verifiedAt = this.now();
         this.recalculate(task);
+        this.updateProgress(
+          task,
+          task.verifiedBytes,
+          file.size,
+          file.size,
+          true,
+          task.completedFiles,
+        );
         await this.checkpoint(task);
-        this.progress(task);
       }
 
       task.status = "verifying";
       task.currentFile = undefined;
+      this.startProgressPhase(task, "verifying");
       await this.persist();
       this.checkpointFiles.set(task.id, task.completedFiles);
       this.progress(task);
@@ -1524,14 +1610,19 @@ export class ArchiveTransferManager {
         detail: `${task.inventory.totalFiles} files / ${task.inventory.totalBytes} bytes`,
       });
       await this.persist();
-      this.progress(task);
+      this.startProgressPhase(task, "reporting");
       await this.generateReports(task);
+      this.startProgressPhase(
+        task,
+        task.reportStatus === "completed" ? "completed" : "attention",
+      );
       if (task.reportStatus === "completed")
         await this.finalizeCompletedMarker(task);
       return structuredClone(task);
     } finally {
       this.running.delete(task.id);
       this.checkpointFiles.delete(task.id);
+      this.liveProgress.delete(task.id);
     }
   }
 
@@ -1569,8 +1660,12 @@ export class ArchiveTransferManager {
           throw new Error("目标文件数或精确字节数与源快照不一致，已停止");
       };
     assertStructure(await inventoryDirectory(task.finalPath));
+    let phaseBytes = 0,
+      phaseFiles = 0;
     for (const file of task.inventory.files) {
       await this.assertLiveIdentities(task);
+      task.currentFile = file.relativePath;
+      this.updateProgress(task, phaseBytes, 0, file.size, true, phaseFiles);
       const source = safeTarget(task.sourcePath, file.relativePath),
         targetParent = await bindArchiveTargetParent(
           task.finalPath,
@@ -1586,7 +1681,14 @@ export class ArchiveTransferManager {
         ).target,
         [sourceHash, targetHash] = await Promise.all([
           fileSha256(source),
-          fileSha256(target),
+          fileSha256(target, (processedBytes) =>
+            this.updateProgress(
+              task,
+              phaseBytes + processedBytes,
+              processedBytes,
+              file.size,
+            ),
+          ),
         ]);
       if (
         !file.sourceSha256 ||
@@ -1595,7 +1697,18 @@ export class ArchiveTransferManager {
         sourceHash !== targetHash
       )
         throw new Error(`最终独立回读不一致，已停止：${file.relativePath}`);
+      phaseBytes += file.size;
+      phaseFiles++;
+      this.updateProgress(
+        task,
+        phaseBytes,
+        file.size,
+        file.size,
+        true,
+        phaseFiles,
+      );
     }
+    task.currentFile = undefined;
     const [finalSourceInventory, finalTargetInventory] = await Promise.all([
       inventoryDirectory(task.sourcePath),
       inventoryDirectory(task.finalPath),
@@ -2035,7 +2148,9 @@ export class ArchiveTransferManager {
       detail: task.error,
     });
     await this.persist();
-    this.progress(task);
+    const live = this.liveProgress.get(task.id);
+    if (live) live.phase = "attention";
+    this.progress(task, true);
   }
 
   private recalculate(task: ArchiveTransferTask) {
@@ -2044,15 +2159,132 @@ export class ArchiveTransferManager {
     task.verifiedBytes = completed.reduce((sum, file) => sum + file.size, 0);
   }
 
-  private progress(task: ArchiveTransferTask) {
+  private startProgressPhase(
+    task: ArchiveTransferTask,
+    phase: ArchiveTransferProgress["phase"],
+    currentFile?: string,
+    currentFileTotalBytes = 0,
+  ) {
+    const now = this.now();
+    const processedBytes =
+      phase === "copying"
+        ? task.verifiedBytes
+        : phase === "completed"
+          ? task.inventory.totalBytes
+          : 0;
+    this.liveProgress.set(task.id, {
+      phase,
+      phaseStartedAt: now,
+      currentFile,
+      currentFileBytes: 0,
+      currentFileTotalBytes,
+      processedBytes,
+      phaseCompletedFiles:
+        phase === "copying"
+          ? task.completedFiles
+          : ["reporting", "completed"].includes(phase)
+            ? task.inventory.totalFiles
+            : 0,
+      lastSampleAt: now,
+      lastSampleBytes: processedBytes,
+      lastEmittedAt: 0,
+      speedBps: 0,
+    });
+    this.progress(task, true);
+  }
+
+  private updateProgress(
+    task: ArchiveTransferTask,
+    processedBytes: number,
+    currentFileBytes: number,
+    currentFileTotalBytes = this.liveProgress.get(task.id)?.currentFileTotalBytes || 0,
+    force = false,
+    completedFiles = this.liveProgress.get(task.id)?.phaseCompletedFiles || 0,
+  ) {
+    const live = this.liveProgress.get(task.id);
+    if (!live) return;
+    const now = this.now(),
+      elapsed = Math.max(0, now - live.lastSampleAt),
+      delta = Math.max(0, processedBytes - live.lastSampleBytes);
+    if (elapsed > 0 && delta > 0) {
+      const instant = (delta * 1000) / elapsed;
+      live.speedBps = live.speedBps ? live.speedBps * 0.7 + instant * 0.3 : instant;
+      live.lastSampleAt = now;
+      live.lastSampleBytes = processedBytes;
+    }
+    live.currentFile = task.currentFile;
+    live.currentFileBytes = Math.max(0, Math.min(currentFileBytes, currentFileTotalBytes));
+    live.currentFileTotalBytes = currentFileTotalBytes;
+    live.processedBytes = Math.max(0, Math.min(processedBytes, task.inventory.totalBytes));
+    live.phaseCompletedFiles = Math.max(
+      0,
+      Math.min(completedFiles, task.inventory.totalFiles),
+    );
+    this.progress(task, force);
+  }
+
+  private progress(task: ArchiveTransferTask, force = false) {
+    const live = this.liveProgress.get(task.id),
+      now = this.now();
+    if (live && !force && now - live.lastEmittedAt < 250) return;
+    if (live) live.lastEmittedAt = now;
+    const elapsedMs = live ? Math.max(0, now - live.phaseStartedAt) : 0,
+      measuresDataRate =
+        live?.phase === "copying" || live?.phase === "verifying",
+      averageSpeedBps =
+        live && measuresDataRate && elapsedMs > 0
+          ? (live.processedBytes * 1000) / elapsedMs
+          : 0,
+      speedBps = measuresDataRate ? live?.speedBps || averageSpeedBps : 0,
+      remaining = measuresDataRate
+        ? Math.max(
+            0,
+            task.inventory.totalBytes - (live?.processedBytes || 0),
+          )
+        : 0;
+    const overallTotalBytes = task.inventory.totalBytes * 2,
+      overallProcessedBytes = live
+        ? live.phase === "copying"
+          ? live.processedBytes
+          : live.phase === "verifying"
+            ? task.inventory.totalBytes + live.processedBytes
+            : ["reporting", "completed"].includes(live.phase) ||
+                task.status === "completed"
+              ? overallTotalBytes
+              : task.status === "verifying"
+                ? task.inventory.totalBytes + live.processedBytes
+                : live.processedBytes
+        : task.status === "completed"
+          ? overallTotalBytes
+          : task.verifiedBytes;
     this.dependencies.onProgress?.({
       taskId: task.id,
       status: task.status,
-      currentFile: task.currentFile,
-      completedFiles: task.completedFiles,
+      phase:
+        live?.phase ||
+        (task.status === "verifying"
+          ? "verifying"
+          : task.status === "completed"
+            ? task.reportStatus === "completed"
+              ? "completed"
+              : "attention"
+            : ["interrupted", "failed"].includes(task.status)
+              ? "attention"
+              : "copying"),
+      currentFile: live?.currentFile || task.currentFile,
+      currentFileBytes: live?.currentFileBytes || 0,
+      currentFileTotalBytes: live?.currentFileTotalBytes || 0,
+      overallProcessedBytes,
+      overallTotalBytes,
+      processedBytes: live?.processedBytes || task.verifiedBytes,
+      completedFiles: live?.phaseCompletedFiles ?? task.completedFiles,
       totalFiles: task.inventory.totalFiles,
       verifiedBytes: task.verifiedBytes,
       totalBytes: task.inventory.totalBytes,
+      speedBps,
+      averageSpeedBps,
+      elapsedMs,
+      etaSeconds: speedBps > 0 ? Math.ceil(remaining / speedBps) : 0,
     });
   }
 

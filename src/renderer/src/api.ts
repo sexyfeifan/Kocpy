@@ -1,5 +1,6 @@
 import type { ArchiveScope } from "../../common/interaction";
 import type { OperationRecord } from "../../main/operations";
+import type { BackgroundActivitySummary } from "../../main/background-activities";
 import type {
   ArchiveTransferInventorySummary,
   ArchiveTransferPreview,
@@ -44,6 +45,7 @@ import type {
 } from "../../main/types";
 export { statusText } from "../../common/status";
 export type {
+  BackgroundActivitySummary,
   ArchiveTransferInventorySummary,
   ArchiveTransferProgress,
   ArchiveTransferTaskSummary,
@@ -163,6 +165,8 @@ export interface UpdateInfo {
 export interface API {
   onWorkspaceChanged(listener: () => void): () => void;
   getOperations(): Promise<OperationRecord[]>;
+  getBackgroundActivities(): Promise<BackgroundActivitySummary[]>;
+  onBackgroundChanged(listener: () => void): () => void;
   deleteArchiveReminder(id: string): Promise<boolean>;
   resolveDroppedPaths(files: File[]): string[];
   selectDirectory(defaultPath?: string): Promise<string | null>;
@@ -177,6 +181,7 @@ export interface API {
   }>;
   getCatalogFiles(options: {
     projectId?: string;
+    projectScope?: "current" | "archived" | "all";
     query?: string;
     kind?: string;
     cursor?: string;

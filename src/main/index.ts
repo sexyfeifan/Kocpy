@@ -252,6 +252,10 @@ import {
   buildArchiveTransferDetailHtml,
   buildArchiveTransferSummaryHtml,
 } from "./archive-transfer-report";
+import {
+  collectBackgroundActivities,
+  projectArchiveBlockers,
+} from "./background-activities";
 
 app.setName("Kocpy");
 const appDataRoot = app.getPath("appData");
@@ -478,6 +482,10 @@ let main: BrowserWindow | null = null,
   backupStartPending = 0,
   proxyJobs: ProxyJob[] = [];
 let archiveTransferManager: ArchiveTransferManager;
+const archiveTransferLiveProgress = new Map<
+  string,
+  import("./archive-transfer").ArchiveTransferProgress
+>();
 const proxyIdleWaiters = new Set<() => void>();
 let benchmarkHistory: BenchmarkResult[] = [];
 let reliabilityValidations: ReliabilityValidationRecord[] = [];
@@ -515,8 +523,12 @@ const assertNoPendingProjectDirectoryCleanup = (
     projectId,
     scope,
   );
-const operations = new OperationRegistry((records) =>
-  store.write("operation-history.json", records),
+const operations = new OperationRegistry(
+  (records) => store.write("operation-history.json", records),
+  () => {
+    if (main && !main.isDestroyed())
+      main.webContents.send("background:changed");
+  },
 );
 const maintenanceLocks = new Set<string>();
 const withMaintenanceLock = async <T>(
@@ -837,6 +849,10 @@ const maintenanceNames: Record<string, string> = {
   "workspace:import-apply": "合并工作站",
   "diagnostics:benchmark": "磁盘性能预检",
   "diagnostics:validate-volume": "有限介质测试",
+  "report:daily": "生成拍摄日汇总报告",
+  "report:project": "生成项目报告与交付包",
+  "report:resolve-csv": "生成 Resolve 媒体清单",
+  "report:export": "导出任务报告与清单",
   "nas:test": "NAS 读写检查",
   "proxy:export-package": "生成交付目录",
   "mixed-day:deliver": "生成当日素材交付",
@@ -892,7 +908,7 @@ function handle(name: string, fn: (...args: any[]) => any) {
           name,
         ))
     )
-      throw new Error("后台维护仍在进行，请在操作中心查看结果后再开始传输。");
+      throw new Error("后台维护仍在进行，请在“后台任务”查看进度，完成后再继续。");
     const execute = async () => {
       const guarded = guardedCommands.has(name);
       if (guarded) commandInFlight++;
@@ -955,8 +971,10 @@ const syncFileAndParent = async (file: string) => {
   }
 };
 const emitProxyJobs = () => {
-  if (main && !main.isDestroyed())
+  if (main && !main.isDestroyed()) {
     main.webContents.send("proxy:jobs", proxyJobs);
+    main.webContents.send("background:changed");
+  }
 };
 async function refreshNasHealth() {
   for (const preset of nasPresets) {
@@ -1742,8 +1760,31 @@ app.whenReady().then(async () => {
     persist: (tasks) => store.write("archive-transfers.json", tasks),
     renderReports: renderArchiveTransferReports,
     onProgress: (progress) => {
-      if (main && !main.isDestroyed())
+      archiveTransferLiveProgress.set(progress.taskId, progress);
+      if (["completed", "attention"].includes(progress.phase))
+        setTimeout(() => {
+          if (archiveTransferLiveProgress.get(progress.taskId) !== progress)
+            return;
+          archiveTransferLiveProgress.delete(progress.taskId);
+          if (main && !main.isDestroyed())
+            main.webContents.send("background:changed");
+        }, 1000);
+      const task = archiveTransferManager?.get(progress.taskId);
+      operations.progress({
+        ...progress,
+        kind: "archive-transfer",
+        sourceId: progress.taskId,
+        projectId: task?.projectId,
+        sourcePath: task?.sourcePath,
+        destinationPath: task?.finalPath,
+        completedBytes: progress.overallProcessedBytes,
+        totalBytes: progress.overallTotalBytes,
+        route: "maintenance",
+      });
+      if (main && !main.isDestroyed()) {
         main.webContents.send("archive-transfer:progress", progress);
+        main.webContents.send("background:changed");
+      }
     },
   });
   try {
@@ -2142,6 +2183,7 @@ app.whenReady().then(async () => {
     "catalog:files",
     async (options: {
       projectId?: string;
+      projectScope?: "current" | "archived" | "all";
       query?: string;
       kind?: string;
       cursor?: string;
@@ -2512,9 +2554,18 @@ app.whenReady().then(async () => {
           {
             onProgress: (completedFiles, completedBytes) =>
               operations.progress({
+                phase: "copying",
                 message: `当日交付 · ${completedFiles}/${run!.totalFiles}`,
+                sourceId: run!.id,
+                projectId: task.projectId,
+                sourcePath: run!.sourceRoot,
+                destinationPath: run!.finalPath,
+                currentFile: run!.publicationInProgress?.relativePath,
+                completedFiles,
+                totalFiles: run!.totalFiles,
                 totalBytes: run!.totalBytes,
                 completedBytes,
+                route: "transfers",
               }),
           },
         );
@@ -2801,6 +2852,12 @@ app.whenReady().then(async () => {
     },
   });
   handle("diagnostics:benchmark", async (directory: string, sizeMiB = 64) => {
+    operations.progress({
+      phase: "benchmarking",
+      message: "正在执行磁盘读写性能预检",
+      sourcePath: directory,
+      route: "diagnostics",
+    });
     if (!(await assertDiagnosticTarget(directory))) return null;
     if (!path.isAbsolute(directory))
       throw new Error("请选择有效的性能预检目录");
@@ -2813,6 +2870,12 @@ app.whenReady().then(async () => {
   });
   handle("diagnostics:reliability-list", () => reliabilityValidations);
   handle("diagnostics:validate-volume", async (directory: string) => {
+    operations.progress({
+      phase: "validating-media",
+      message: "正在执行有限介质可靠性测试",
+      sourcePath: directory,
+      route: "diagnostics",
+    });
     if (!(await assertDiagnosticTarget(directory))) return null;
     if (!path.isAbsolute(directory)) throw new Error("请选择有效的验收目录");
     if (engine.hasActive() || proxyBusy)
@@ -2936,6 +2999,16 @@ app.whenReady().then(async () => {
     return true;
   });
   handle("operations:list", () => operations.list());
+  handle("background:list", async () =>
+    collectBackgroundActivities({
+      tasks: engine.getAllTasks(),
+      proxyJobs,
+      archiveTransfers: archiveTransferManager.summaries(),
+      archiveProgress: archiveTransferLiveProgress,
+      operations: operations.list(),
+      projects: (await readProjects()).map(normalizeProject),
+    }),
+  );
   handle("archive:save-reminder", async (value: ArchiveReminder) => {
     const reminder = {
       ...value,
@@ -6313,6 +6386,21 @@ app.whenReady().then(async () => {
         idx = all.findIndex((p) => p.id === project.id);
       const previous = idx < 0 ? undefined : all[idx],
         changes = previous ? projectRuleChanges(previous, project) : [];
+      if (
+        previous?.status !== "archived" &&
+        project.status === "archived"
+      ) {
+        const blockers = projectArchiveBlockers(project.id, {
+          tasks: engine.getAllTasks(),
+          proxyJobs,
+          archiveTransfers: archiveTransferManager.summaries(),
+          operations: operations.list(),
+        });
+        if (blockers.length)
+          throw new Error(
+            `项目仍有活动任务，暂不能归档：${[...new Set(blockers)].join("；")}。请到“后台任务”处理完成后重试`,
+          );
+      }
       if (changes.length && !operator?.trim())
         throw new Error(
           `项目安全规则发生变化（${changes.map((item) => item.label).join("、")}），请核对变更并填写实际修改人`,
@@ -6461,6 +6549,12 @@ app.whenReady().then(async () => {
     },
   );
   handle("report:daily", async (shootingDate: string, projectId?: string) => {
+    operations.progress({
+      phase: "reporting",
+      message: `正在生成 ${shootingDate} 拍摄日汇总报告`,
+      projectId,
+      route: "reports",
+    });
     const tasks = engine
       .getAllTasks()
       .filter(
@@ -6491,6 +6585,12 @@ app.whenReady().then(async () => {
         .map(normalizeProject)
         .find((item) => item.id === projectId);
       if (!project) throw new Error("项目不存在");
+      operations.progress({
+        phase: "reporting",
+        message: `正在生成 ${project.name} 项目${format === "bundle" ? "归档包" : "报告"}`,
+        projectId,
+        route: "reports",
+      });
       const tasks = engine
         .getAllTasks()
         .filter((task) => task.projectId === projectId);
@@ -6602,6 +6702,12 @@ app.whenReady().then(async () => {
   handle(
     "report:resolve-csv",
     async (shootingDate: string, projectId?: string) => {
+      operations.progress({
+        phase: "reporting",
+        message: `正在生成 ${shootingDate} Resolve 媒体清单`,
+        projectId,
+        route: "reports",
+      });
       const tasks = engine
         .getAllTasks()
         .filter(
@@ -6679,6 +6785,14 @@ app.whenReady().then(async () => {
     async (id: string, format: "pdf" | "json" | "mhl" | "ascmhl") => {
       const task = engine.getTask(id);
       if (!task) throw new Error("任务不存在");
+      operations.progress({
+        phase: "reporting",
+        message: `正在导出 ${task.name} ${format.toUpperCase()} 报告`,
+        sourceId: id,
+        projectId: task.projectId,
+        sourcePath: task.sourcePath,
+        route: "reports",
+      });
       if (["pending", "running", "paused", "verifying"].includes(task.status))
         throw new Error("任务结束后才能导出完整报告");
       const r = await dialog.showSaveDialog({
@@ -7063,8 +7177,10 @@ app.whenReady().then(async () => {
         // in the transfer hot path.
         void persist(false, false).catch(() => {});
       }, 1000);
-    if (main && !main.isDestroyed())
+    if (main && !main.isDestroyed()) {
       main.webContents.send("tasks:progress", payload);
+      main.webContents.send("background:changed");
+    }
     if (
       ["running", "paused", "verifying"].includes(payload.status) &&
       blocker === undefined

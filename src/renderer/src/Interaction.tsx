@@ -1,7 +1,4 @@
-import { useEffect, useState } from "react";
-import { api, bytes } from "./api";
-import type { OperationRecord } from "../../main/operations";
-import { readableOperationError } from "../../common/interaction";
+import { useEffect } from "react";
 import {
   isDialogCloseControl,
   modalDialogSelector,
@@ -142,89 +139,4 @@ export function useModalStack() {
       document.removeEventListener("click", click, true);
     };
   }, []);
-}
-
-export function OperationCenter() {
-  const [records, setRecords] = useState<OperationRecord[]>([]);
-  const [error, setError] = useState("");
-  useEffect(() => {
-    let stopped = false;
-    const poll = () =>
-      api
-        .getOperations()
-        .then((values) => {
-          if (!stopped) {
-            setRecords(values);
-            setError("");
-          }
-        })
-        .catch((reason) => {
-          if (!stopped) setError(readableOperationError(reason));
-        });
-    void poll();
-    const timer = setInterval(poll, 1000);
-    return () => {
-      stopped = true;
-      clearInterval(timer);
-    };
-  }, []);
-  if (!records.length && !error) return null;
-  const running = records.find((record) => record.status === "running");
-  return (
-    <details className="operation-center" open={running ? true : undefined}>
-      <summary>
-        {running ? "后台正在执行：" + running.name : "本次运行操作记录"} ·{" "}
-        {records.length} 项
-      </summary>
-      <p className="muted small">
-        可切换页面；关闭详情不停止后台操作。写入提交阶段不可强行中断，完成前不允许退出软件或开始冲突任务。
-      </p>
-      {error && <p role="alert">{error}</p>}
-      {[...records].reverse().map((record) => (
-        <div key={record.id} className="operation-item">
-          <strong>
-            {record.name} ·{" "}
-            {
-              {
-                running: "进行中",
-                completed: "执行结束 · 请查看结果",
-                cancelled: "已取消",
-                failed: "未完成",
-              }[record.status]
-            }
-          </strong>
-          {record.progress && (
-            <span>
-              {record.progress.message} ·{" "}
-              {record.progress.totalBytes
-                ? bytes(record.progress.completedBytes || 0) +
-                  " / " +
-                  bytes(record.progress.totalBytes)
-                : "准备 / 扫描中"}
-              {record.progress.speedBps
-                ? " · " + bytes(record.progress.speedBps) + "/s"
-                : ""}
-            </span>
-          )}
-          {record.status === "running" && (
-            <progress
-              aria-label={record.name}
-              max={record.progress?.totalBytes || undefined}
-              value={
-                record.progress?.totalBytes
-                  ? Math.min(
-                      record.progress.completedBytes,
-                      record.progress.totalBytes * 0.99,
-                    )
-                  : undefined
-              }
-            />
-          )}
-          {record.result && <span>{record.result}</span>}
-          {record.error && <span role="alert">{record.error}</span>}
-          <small>{new Date(record.startedAt).toLocaleString()}</small>
-        </div>
-      ))}
-    </details>
-  );
 }

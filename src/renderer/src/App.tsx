@@ -1,7 +1,7 @@
 import { RecoveryDialog } from "./RecoveryDialog";
 import { recoveryAdvice } from "../../common/recovery";
 import { LifecycleControls } from "./LifecycleControls";
-import { OperationCenter, useModalStack } from "./Interaction";
+import { useModalStack } from "./Interaction";
 import { readableOperationError, didComplete } from "../../common/interaction";
 import { useState, useEffect, useCallback, useRef } from "react";
 import {
@@ -76,6 +76,7 @@ import {
   AudioWaveform,
   Bell,
   FileDown,
+  ListTodo,
 } from "lucide-react";
 import {
   api,
@@ -99,11 +100,16 @@ import {
   type ExistingImportProgress,
   type CompletionActionKind,
   type WorkspaceImportPreview,
+  type BackgroundActivitySummary,
 } from "./api";
 import { Composer } from "./Composer";
 import { ProjectEditor } from "./ProjectEditor";
 import { WorkstationImportDialog } from "./WorkstationImportDialog";
 import { ArchiveTransferPanel } from "./ArchiveTransferPanel";
+import {
+  BackgroundActivityOverview,
+  BackgroundTasksPage,
+} from "./BackgroundTasks";
 import { MixedDayDeliveryDialog } from "./MixedDayDeliveryDialog";
 import {
   TemplateApplyDialog,
@@ -135,6 +141,7 @@ export { Badge, Button, Empty } from "./Ui";
 type Page =
   | "overview"
   | "transfers"
+  | "background"
   | "recovery"
   | "projects"
   | "library"
@@ -149,6 +156,7 @@ const navigation: [Page, string, typeof LayoutDashboard][] = [
   ["overview", "工作台", LayoutDashboard],
   ["projects", "拍摄项目", FolderKanban],
   ["transfers", "传输队列", ArrowLeftRight],
+  ["background", "后台任务", ListTodo],
   ["recovery", "恢复中心", RefreshCw],
   ["library", "素材库", Film],
   ["processing", "代理队列", Activity],
@@ -660,6 +668,13 @@ export function App() {
     [tasks, setTasks] = useState<BackupTask[]>([]),
     [projects, setProjects] = useState<ProjectConfig[]>([]),
     [proxyJobs, setProxyJobs] = useState<ProxyJob[]>([]),
+    [backgroundActivities, setBackgroundActivities] = useState<
+      BackgroundActivitySummary[]
+    >([]),
+    [backgroundFocusId, setBackgroundFocusId] = useState<string>(),
+    [transferProjectScope, setTransferProjectScope] = useState<
+      "current" | "archived" | "all"
+    >("current"),
     [volumes, setVolumes] = useState<Volume[]>([]),
     [settings, setSettings] = useState<Settings>(defaults),
     [settingsReady, setSettingsReady] = useState(false);
@@ -766,14 +781,16 @@ export function App() {
     [notify],
   );
   const refresh = useCallback(async () => {
-    const [t, p, j] = await Promise.all([
+    const [t, p, j, background] = await Promise.all([
       api.getTasks(),
       api.getProjects(),
       api.getProxyJobs(),
+      api.getBackgroundActivities(),
     ]);
     setTasks(t);
     setProjects(p);
     setProxyJobs(j);
+    setBackgroundActivities(background);
   }, []);
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout>;
@@ -794,15 +811,17 @@ export function App() {
     };
   }, [refresh, notify]);
   useEffect(() => {
-    let stopped = false;
+    let stopped = false,
+      backgroundTimer: ReturnType<typeof setTimeout> | undefined;
     Promise.all([
       api.getTasks(),
       api.getProjects(),
       api.getSettings(),
       api.listVolumes(),
       api.getProxyJobs(),
+      api.getBackgroundActivities(),
     ])
-      .then(([t, p, s, v, jobs]) => {
+      .then(([t, p, s, v, jobs, background]) => {
         if (!stopped) {
           setTasks(t);
           setProjects(p);
@@ -810,6 +829,7 @@ export function App() {
           setSettingsReady(true);
           setVolumes(v);
           setProxyJobs(jobs);
+          setBackgroundActivities(background);
         }
       })
       .catch((e) => notify(String(e), true))
@@ -826,10 +846,26 @@ export function App() {
         void refresh().catch((e) => notify(String(e), true));
     });
     const unsubProxy = api.onProxyJobs(setProxyJobs);
+    const refreshBackground = () =>
+      void api
+        .getBackgroundActivities()
+        .then((values) => {
+          if (!stopped) setBackgroundActivities(values);
+        })
+        .catch(() => {});
+    const scheduleBackgroundRefresh = () => {
+      if (backgroundTimer) return;
+      backgroundTimer = setTimeout(() => {
+        backgroundTimer = undefined;
+        refreshBackground();
+      }, 250);
+    };
+    const unsubBackground = api.onBackgroundChanged(scheduleBackgroundRefresh);
     const unsubSettled = api.onTaskSettled((task) => {
       setDetailTask((previous) => (previous?.id === task.id ? task : previous));
       if (task.status === "completed") setCompletion(task);
     });
+    const backgroundInterval = setInterval(refreshBackground, 1000);
     const interval = setInterval(() => {
       void api
         .listVolumes()
@@ -848,7 +884,10 @@ export function App() {
       stopped = true;
       unsub();
       unsubProxy();
+      unsubBackground();
       unsubSettled();
+      if (backgroundTimer) clearTimeout(backgroundTimer);
+      clearInterval(backgroundInterval);
       clearInterval(interval);
     };
   }, [notify, refresh]);
@@ -907,9 +946,32 @@ export function App() {
     setQuery("");
     setFilter("all");
   };
-  const running = tasks.filter(active),
+  const openBackgroundActivity = (activity?: BackgroundActivitySummary) => {
+    setBackgroundFocusId(activity?.id);
+    go("background");
+  };
+  const openBackgroundRoute = (activity: BackgroundActivitySummary) => {
+    if (activity.route === "transfers") {
+      setDetail(activity.sourceId);
+      go("transfers");
+      return;
+    }
+    go(activity.route);
+  };
+  const archivedProjectIds = new Set(
+      projects
+        .filter((project) => project.status === "archived")
+        .map((project) => project.id),
+    ),
+    currentProjectTasks = tasks.filter(
+      (task) => !task.projectId || !archivedProjectIds.has(task.projectId),
+    ),
+    running = currentProjectTasks.filter(active),
     finished = tasks.filter((t) => taskTrustState(t).contentVerified),
-    current = tasks.find((t) =>
+    homeFinished = currentProjectTasks.filter(
+      (task) => taskTrustState(task).contentVerified,
+    ),
+    current = currentProjectTasks.find((t) =>
       ["running", "paused", "verifying"].includes(t.status),
     );
   const filtered = tasks.filter(
@@ -927,7 +989,11 @@ export function App() {
         .includes(query.toLowerCase()) &&
       (filter === "all" ||
         (filter === "active" && active(t)) ||
-        t.status === filter),
+        t.status === filter) &&
+      (transferProjectScope === "all" ||
+        (transferProjectScope === "archived"
+          ? Boolean(t.projectId && archivedProjectIds.has(t.projectId))
+          : !t.projectId || !archivedProjectIds.has(t.projectId))),
   );
   const selected = selectLiveTask(detail, tasks, detailTask);
   const controlTask = (id: string, action: "pause" | "resume") =>
@@ -1400,6 +1466,17 @@ export function App() {
               <span>{label}</span>
               {id === "transfers" && running.length > 0 ? (
                 <b>{running.length}</b>
+              ) : id === "background" &&
+                backgroundActivities.some((item) =>
+                  ["running", "attention"].includes(item.state),
+                ) ? (
+                <b>
+                  {
+                    backgroundActivities.filter((item) =>
+                      ["running", "attention"].includes(item.state),
+                    ).length
+                  }
+                </b>
               ) : page === id ? (
                 <span className="nav-marker" />
               ) : null}
@@ -1511,17 +1588,6 @@ export function App() {
           </div>
         </header>
         <main key={page} className="page-content">
-          <OperationCenter />
-          {notices.length > 0 && (
-            <details className="notification-history">
-              <summary>操作消息（{notices.length}）</summary>
-              {[...notices].reverse().map((item, index) => (
-                <p key={index} className={item.error ? "red-text" : ""}>
-                  {item.message}
-                </p>
-              ))}
-            </details>
-          )}
           <div className="page-heading">
             <div>
               <div className="eyebrow">
@@ -1529,6 +1595,7 @@ export function App() {
                   {
                     overview: "YOUR CREATIVE WORKSPACE",
                     transfers: "TRANSFER CENTER",
+                    background: "BACKGROUND ACTIVITY",
                     recovery: "RECOVERY CENTER",
                     projects: "PRODUCTION ORGANIZER",
                     library: "VERIFIED MEDIA",
@@ -1547,6 +1614,7 @@ export function App() {
                   {
                     overview: "每一份素材，都安心抵达。",
                     transfers: "传输队列",
+                    background: "后台任务",
                     recovery: "恢复中心",
                     projects: "拍摄项目",
                     library: "素材库",
@@ -1565,6 +1633,7 @@ export function App() {
                   {
                     overview: "从现场备份到素材交付，让创作井然有序。",
                     transfers: "拷贝、校验与任务记录，在一个地方掌握。",
+                    background: "集中查看正在执行的工作、实时进度与处理结果。",
                     recovery: "识别中断、离线目标和未完成校验，并安全恢复。",
                     projects: "提前整理拍摄计划，让每一次备份自动归位。",
                     library: "浏览备份文件清单，从已校验的副本继续工作。",
@@ -1614,6 +1683,10 @@ export function App() {
             <>
               {page === "overview" && (
                 <>
+                  <BackgroundActivityOverview
+                    activities={backgroundActivities}
+                    onOpen={openBackgroundActivity}
+                  />
                   {tasks.length > 0 && (
                     <section className="operational-panel">
                       <div>
@@ -1637,7 +1710,7 @@ export function App() {
                         <p>
                           {current
                             ? `${current.currentFile || "正在准备"} · ${transferProgressLabel(current, current.status === "verifying" ? "verify" : "copy")}`
-                            : `最近完成 ${finished.length} 次校验备份，连接下一张素材卡即可继续。`}
+                            : `最近完成 ${homeFinished.length} 次校验备份，连接下一张素材卡即可继续。`}
                         </p>
                       </div>
                       <div className="operational-actions">
@@ -1771,14 +1844,14 @@ export function App() {
                     <Stat
                       icon={ShieldCheck}
                       label="已校验备份"
-                      value={String(finished.length)}
+                      value={String(homeFinished.length)}
                       hint="按完整内容证据统计，副本达标另行核对"
                     />
                     <Stat
                       icon={Layers}
                       label="已保护素材"
                       value={bytes(
-                        finished.reduce((n, t) => n + t.totalBytes, 0),
+                        homeFinished.reduce((n, t) => n + t.totalBytes, 0),
                       )}
                       hint="按成功任务的源数据量统计"
                     />
@@ -1931,6 +2004,30 @@ export function App() {
                         </button>
                       ))}
                     </div>
+                    <div
+                      className="tabs scope-tabs"
+                      role="group"
+                      aria-label="传输任务项目范围"
+                    >
+                      {[
+                        ["current", "当前项目"],
+                        ["archived", "已归档"],
+                        ["all", "全部范围"],
+                      ].map(([id, label]) => (
+                        <button
+                          key={id}
+                          aria-pressed={transferProjectScope === id}
+                          className={transferProjectScope === id ? "active" : ""}
+                          onClick={() =>
+                            setTransferProjectScope(
+                              id as "current" | "archived" | "all",
+                            )
+                          }
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
                     <SearchBox
                       value={query}
                       onChange={setQuery}
@@ -1973,6 +2070,15 @@ export function App() {
                     />
                   )}
                 </section>
+              )}
+              {page === "background" && (
+                <BackgroundTasksPage
+                  activities={backgroundActivities}
+                  notices={notices}
+                  projects={projects}
+                  focusId={backgroundFocusId}
+                  onOpenRoute={openBackgroundRoute}
+                />
               )}
               {page === "recovery" && (
                 <section className="panel recovery-center">
@@ -2236,24 +2342,34 @@ export function App() {
                                       role="menuitem"
                                       onClick={() => {
                                         setProjectMenuId(null);
-                                        void act(
-                                          async () =>
-                                            setProjects(
-                                              await api.saveProject(
-                                                {
-                                                  ...p,
-                                                  status:
-                                                    p.status === "archived"
-                                                      ? "active"
-                                                      : "archived",
-                                                },
-                                                false,
-                                              ),
-                                            ),
-                                          p.status === "archived"
-                                            ? "项目已恢复到进行中"
-                                            : "项目已归档",
-                                        );
+                                        void api
+                                          .saveProject(
+                                            {
+                                              ...p,
+                                              status:
+                                                p.status === "archived"
+                                                  ? "active"
+                                                  : "archived",
+                                            },
+                                            false,
+                                          )
+                                          .then((next) => {
+                                            setProjects(next);
+                                            notify(
+                                              p.status === "archived"
+                                                ? "项目已恢复到进行中"
+                                                : "项目已归档；关联传输与素材历史已进入归档范围",
+                                            );
+                                          })
+                                          .catch((error) => {
+                                            const message = readableOperationError(error);
+                                            notify(message, true);
+                                            if (
+                                              message.includes("项目仍有活动任务") ||
+                                              message.includes("后台维护仍在进行")
+                                            )
+                                              openBackgroundActivity();
+                                          });
                                       }}
                                     >
                                       <Archive size={14} />
@@ -4091,6 +4207,9 @@ function Library({
     .map((task) => task.id + ":" + task.status + ":" + task.completedAt)
     .join("|");
   const [kind, setKind] = useState("all"),
+    [projectScope, setProjectScope] = useState<
+      "current" | "archived" | "all"
+    >("current"),
     [pagination, setPagination] = useState<{
       key: string;
       index: number;
@@ -4102,7 +4221,7 @@ function Library({
     [nextCursor, setNextCursor] = useState<string | undefined>(),
     [preview, setPreview] = useState<any>(null),
     [previewBusy, setPreviewBusy] = useState(false);
-  const pageKey = [query, kind, taskSignature, catalogRevision].join("\0"),
+  const pageKey = [query, kind, projectScope, taskSignature, catalogRevision].join("\0"),
     pageIndex = pagination.key === pageKey ? pagination.index : 0,
     pageCursor =
       pagination.key === pageKey
@@ -4119,6 +4238,7 @@ function Library({
           .getCatalogFiles({
             query,
             kind,
+            projectScope,
             limit: 100,
             cursor: pageCursor,
           })
@@ -4147,7 +4267,7 @@ function Library({
       stopped = true;
       clearTimeout(timer);
     };
-  }, [query, kind, pageCursor, pageKey]);
+  }, [query, kind, projectScope, pageCursor, pageKey]);
   useEffect(() => {
     setSelectedPaths([]);
   }, [query, kind, catalogRevision]);
@@ -4180,6 +4300,24 @@ function Library({
           ))}
         </div>
         <div className="row">
+          <div className="tabs scope-tabs" role="group" aria-label="素材项目范围">
+            {[
+              ["current", "当前项目"],
+              ["archived", "已归档"],
+              ["all", "全部范围"],
+            ].map(([id, label]) => (
+              <button
+                key={id}
+                aria-pressed={projectScope === id}
+                className={projectScope === id ? "active" : ""}
+                onClick={() =>
+                  setProjectScope(id as "current" | "archived" | "all")
+                }
+              >
+                {label}
+              </button>
+            ))}
+          </div>
           <Button onClick={() => setCatalogRevision((value) => value + 1)}>
             刷新可访问副本
           </Button>
@@ -5604,6 +5742,24 @@ function HelpPage({
       page: "maintenance",
     },
     {
+      id: "background",
+      icon: ListTodo,
+      title: "后台任务",
+      purpose: "集中查看备份、代理、归档转存、维护、报告与诊断进度。",
+      steps: [
+        "在首页“后台活动”查看所有进行中或等待处理的任务；无活动时只保留紧凑正常状态。",
+        "进入左侧“后台任务”，按状态、类型或项目筛选；页面保留当前任务与最近 50 条持久化历史。",
+        "展开任务信息核对阶段、整体与当前文件进度、源／目标、速度、预计时间、结果和错误。",
+        "错误任务点击“打开原功能”，返回传输、代理、归档维护或诊断入口继续恢复、重试或处理。",
+      ],
+      tips: [
+        "复制速度表示写入目标；归档转存的回读速度表示从目标重新读取并计算 SHA-256。阶段切换或停止后速度与预计时间会清零。",
+        "旧操作记录缺少新增字段时只显示当时实际保存的内容，不会补造历史速度或当前文件。",
+        "即时通知仍会短暂出现；详细历史和本次运行消息统一在后台任务页查看。",
+      ],
+      page: "background",
+    },
+    {
       id: "backup",
       icon: MemoryStick,
       title: "新建备份",
@@ -5843,7 +5999,7 @@ function HelpPage({
         "对归档根目录扫描未登记新增文件，并查看读取吞吐与风险等级。",
         "发现失败副本后，从另一健康副本修复。",
         "修复前原损坏文件会改名保留。",
-        "在项目模板区查看五个系统模板的适用说明；需要修改时先复制为自定义模板，或直接新建模板。",
+        "项目模板管理默认折叠；需要时展开查看五个系统模板的适用说明，修改前先复制为自定义模板，或直接新建模板。交接表单始终可见。",
         "应用模板前逐项比较当前配置和模板配置，只勾选需要覆盖的部分；项目名称、日期和目的地不会被模板修改。",
         "自定义模板可导入导出；系统模板可隐藏并恢复。",
         "导出本地数据备份或工作站包。",
@@ -5970,6 +6126,7 @@ function HelpPage({
         "项目或普通备份完成后，使用“独立归档转存（NAS / 已挂载目录）”选择整个源项目文件夹和目标父目录，完成逐文件 SHA-256 与目标独立回读。",
         "把已校验备份盘带到另一台安装 Kocpy 的 Mac 时，也可直接选择盘内项目文件夹作为源；关联项目是可选项，只用于补充报告名称、拍摄日期和历史证据。",
         "转存通过后在目标项目内的 Kocpy报告 目录生成 PDF 详细报告与高清 PNG 摘要；两份文件都会在发布后重新读取并记录摘要。",
+        "开始后在首页或“后台任务”查看扫描、复制、目标回读和报告阶段，以及当前文件、单文件／整体字节、速度、用时与预计剩余时间。",
       ],
       tips: [
         "网络中断目标可重试，本地健康目标继续完成。",
@@ -6051,12 +6208,16 @@ function HelpPage({
       <section className="help-release-note">
         <RefreshCw size={20} />
         <div>
-          <strong>当前更新：完整接收、按日交付与归档转存</strong>
+          <strong>当前更新：后台任务与项目归档联动</strong>
           <p>
-            新备份默认冻结完整素材清单，包含隐藏项与空目录；任务及全部目的地完成校验后，每个备份目的地默认在自身目录内生成不可变的首次完成 PDF，报告失败不会改写素材校验结论。
+            首页与独立“后台任务”页面统一显示备份、代理、归档转存和维护进度；归档转存会持续更新当前文件、单文件／整体字节、复制或回读速度、用时和预计剩余时间。
           </p>
           <p>
-            项目详情按拍摄日分组。混合日期素材卡始终保留完整卡，人工确认日期后可生成独立回读的当日交付；交付不计入备份副本。完成项目可转存到 NAS 或其他已挂载目录，并生成发布后重新核验的 PDF/PNG 报告；Kocpy 不把任意目录冒充为已确认的 NAS。
+            项目归档后，关联传输与素材历史进入“已归档”范围，恢复项目后自动回到当前范围；活动任务会在主进程阻止归档。模板管理默认折叠，交接表单保持可见。
+          </p>
+          <strong>0.1.37：完整接收、按日交付与归档转存</strong>
+          <p>
+            新备份默认冻结完整素材清单，包含隐藏项与空目录；任务及全部目的地完成校验后，每个备份目的地默认在自身目录内生成不可变的首次完成 PDF。混合日期完整卡可生成独立回读的当日交付；完整项目可独立转存到 NAS 或其他已挂载目录并生成 PDF/PNG 报告。
           </p>
           <strong>0.1.36：项目规则确认与大型 PDF 报告</strong>
           <p>
@@ -6207,6 +6368,9 @@ function MaintenancePage({
     [outcome, setOutcome] = useState(""),
     [workspaceImport, setWorkspaceImport] =
       useState<WorkspaceImportPreview | null>(null),
+    [templatesExpanded, setTemplatesExpanded] = useState(
+      () => window.sessionStorage.getItem("kocpy-templates-expanded") === "true",
+    ),
     [templateEditor, setTemplateEditor] = useState<Partial<
       import("./api").ProjectTemplate
     > | null>(null),
@@ -6252,6 +6416,11 @@ function MaintenancePage({
       if (settings.operator) setArchiveOperator(settings.operator);
     });
   }, []);
+  useEffect(() => {
+    if (!templateEditor) return;
+    setTemplatesExpanded(true);
+    window.sessionStorage.setItem("kocpy-templates-expanded", "true");
+  }, [templateEditor]);
   const run = async (
     key: string,
     action: () => Promise<unknown>,
@@ -6683,10 +6852,31 @@ function MaintenancePage({
               模板保存设备、副本标准、命名规则与完成动作；交接记录随工作站包合并
             </span>
           </div>
-          <div className="row template-toolbar">
-            <span className="muted small">
-              {visibleTemplates.length} 个可用模板
-            </span>
+          <Button
+            kind="subtle"
+            disabled={Boolean(templateEditor)}
+            disabledReason="请先保存或关闭正在编辑的模板"
+            aria-expanded={templatesExpanded}
+            onClick={() => {
+              const next = !templatesExpanded;
+              setTemplatesExpanded(next);
+              window.sessionStorage.setItem(
+                "kocpy-templates-expanded",
+                String(next),
+              );
+            }}
+          >
+            {templatesExpanded ? (
+              <ChevronDown size={15} />
+            ) : (
+              <ChevronRight size={15} />
+            )}
+            {visibleTemplates.length} 个模板 · {templateEditor ? "编辑中" : templatesExpanded ? "收起" : "展开管理"}
+          </Button>
+        </div>
+        {templatesExpanded && (
+          <div className="template-management" data-testid="template-management">
+            <div className="row template-toolbar">
             {hiddenSystemTemplates.length > 0 && (
               <Button
                 kind="subtle"
@@ -6745,10 +6935,9 @@ function MaintenancePage({
               <Plus size={14} />
               新建模板
             </Button>
-          </div>
-        </div>
-        {visibleTemplates.length ? (
-          <div className="template-list">
+            </div>
+            {visibleTemplates.length ? (
+              <div className="template-list">
             {visibleTemplates.map((template) => {
               const system = template.id.startsWith("builtin-");
               return (
@@ -6888,14 +7077,22 @@ function MaintenancePage({
                 </div>
               );
             })}
+              </div>
+            ) : (
+              <Empty
+                icon={Copy}
+                title="还没有项目模板"
+                detail="在上方项目中选择“保存为模板”，即可复用设备和收工标准。"
+              />
+            )}
           </div>
-        ) : (
-          <Empty
-            icon={Copy}
-            title="还没有项目模板"
-            detail="在上方项目中选择“保存为模板”，即可复用设备和收工标准。"
-          />
         )}
+        <div className="handoff-heading">
+          <div>
+            <strong>项目交接</strong>
+            <span className="muted small">独立于模板管理，随时可填写并保存审计记录</span>
+          </div>
+        </div>
         <div className="handoff-row">
           <label>
             交接人

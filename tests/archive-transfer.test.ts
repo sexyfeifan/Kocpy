@@ -9,6 +9,7 @@ import {
   loadArchiveTransferTasks,
   validateArchiveTransferTasks,
   type ArchiveTransferContext,
+  type ArchiveTransferProgress,
   type ArchiveTransferReportSnapshot,
   type ArchiveTransferRenderedReports,
   type ArchiveTransferTask,
@@ -64,6 +65,7 @@ function testManager(options?: {
   disconnected?: () => boolean;
   destinationUuid?: () => string;
   progress?: (completed: number) => void;
+  progressDetail?: (progress: ArchiveTransferProgress) => void;
   report?: (
     snapshot: ArchiveTransferReportSnapshot,
     artifactReportId: string,
@@ -72,6 +74,7 @@ function testManager(options?: {
   availableBytes?: number;
   randomId?: () => string;
   removeFile?: (file: string) => Promise<void>;
+  nowStep?: number;
 }) {
   let persisted: ArchiveTransferTask[] = [],
     persistCall = 0;
@@ -105,10 +108,13 @@ function testManager(options?: {
     renderReports:
       options?.report ||
       (async () => ({ pdf: Buffer.from("pdf"), png: Buffer.from("png") })),
-    onProgress: (value) => options?.progress?.(value.completedFiles),
+    onProgress: (value) => {
+      options?.progress?.(value.completedFiles);
+      options?.progressDetail?.(value);
+    },
     now: (() => {
       let value = Date.UTC(2026, 8, 19, 10, 0, 0);
-      return () => value++;
+      return () => (value += options?.nowStep || 1);
     })(),
     randomId:
       options?.randomId ||
@@ -119,6 +125,65 @@ function testManager(options?: {
 }
 
 describe("independent NAS archive transfer", () => {
+  it("emits throttled monotonic in-file progress across copy, reread and report phases", async () => {
+    const { source, destinationParent } = await fixture("大文件进度项目"),
+      largeFile = path.join(source, "素材", "A001.mov"),
+      events: ArchiveTransferProgress[] = [];
+    await fs.writeFile(largeFile, Buffer.alloc(13 * 1024 * 1024, 23));
+    const { manager } = testManager({
+        destinationParent,
+        nowStep: 300,
+        progressDetail: (progress) => events.push(structuredClone(progress)),
+      }),
+      preview = await manager.preview(source, destinationParent, context);
+    await manager.start({
+      sourcePath: source,
+      destinationParent,
+      previewDigest: preview.inventory.digest,
+      context,
+    });
+
+    const copying = events.filter(
+        (event) =>
+          event.phase === "copying" &&
+          event.currentFile === "素材/A001.mov" &&
+          event.currentFileBytes > 0,
+      ),
+      verifying = events.filter(
+        (event) =>
+          event.phase === "verifying" &&
+          event.currentFile === "素材/A001.mov" &&
+          event.currentFileBytes > 0,
+      );
+    expect(copying.length).toBeGreaterThan(2);
+    expect(verifying.length).toBeGreaterThan(2);
+    for (const phase of [copying, verifying]) {
+      const values = phase.map((event) => event.currentFileBytes);
+      expect(values).toEqual([...values].sort((left, right) => left - right));
+      expect(values.every((value) => value <= phase[0].currentFileTotalBytes)).toBe(
+        true,
+      );
+      expect(phase.some((event) => event.speedBps > 0)).toBe(true);
+    }
+    expect(events.map((event) => event.phase)).toEqual(
+      expect.arrayContaining(["copying", "verifying", "reporting", "completed"]),
+    );
+    const overall = events.map((event) => event.overallProcessedBytes);
+    expect(overall).toEqual([...overall].sort((left, right) => left - right));
+    expect(events.every((event) => event.overallProcessedBytes <= event.overallTotalBytes)).toBe(true);
+    const reporting = events.find((event) => event.phase === "reporting"),
+      completed = events.at(-1)!;
+    expect(reporting).toMatchObject({ speedBps: 0, etaSeconds: 0 });
+    expect(completed).toMatchObject({
+      phase: "completed",
+      processedBytes: preview.inventory.totalBytes,
+      overallProcessedBytes: preview.inventory.totalBytes * 2,
+      overallTotalBytes: preview.inventory.totalBytes * 2,
+      speedBps: 0,
+      etaSeconds: 0,
+    });
+  });
+
   it("rejects a same-name network remount even when its device number is reused", () => {
     const base = {
       id: "42",

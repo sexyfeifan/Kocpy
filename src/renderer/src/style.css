@@ -5718,6 +5718,293 @@ small {
     overflow-x: auto;
   }
 }
+
+/* 0.1.38 unified background activity and compact template management */
+.background-overview {
+  display: grid;
+  gap: 12px;
+}
+.background-idle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.background-idle svg {
+  color: var(--green);
+}
+.background-overview-list,
+.background-task-list,
+.background-messages {
+  display: grid;
+  gap: 10px;
+}
+.background-overview-list > button {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 13px 14px;
+  color: var(--text);
+  text-align: left;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: var(--panel2);
+}
+.background-overview-list > button:hover {
+  border-color: var(--border-strong);
+  background: var(--hover);
+}
+.background-overview-list > button > div,
+.background-overview-list strong,
+.background-overview-list small {
+  min-width: 0;
+  display: block;
+}
+.background-overview-list small {
+  margin-top: 3px;
+  color: var(--muted);
+}
+.background-kind.running {
+  color: var(--purple);
+}
+.background-kind.attention {
+  color: var(--warning);
+}
+.background-progress {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+}
+.background-progress-head,
+.background-progress-meta,
+.background-timing,
+.background-task-title,
+.background-task-title > span {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.background-progress-head,
+.background-progress-meta,
+.background-timing {
+  color: var(--muted);
+  font-size: 10px;
+}
+.background-progress progress,
+.background-current-file progress,
+.archive-transfer-current-file progress {
+  width: 100%;
+  height: 5px;
+  accent-color: var(--purple);
+}
+.background-current-file {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 5px 12px;
+  min-width: 0;
+}
+.background-current-file > span {
+  overflow: hidden;
+  color: var(--quiet);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.background-current-file progress,
+.background-current-file small {
+  grid-column: 1 / -1;
+}
+.background-filters {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+.background-filters .row {
+  flex-wrap: wrap;
+}
+.background-filters select {
+  min-height: 38px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--input);
+  color: var(--text);
+  padding: 0 32px 0 11px;
+}
+.background-task {
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel2);
+  scroll-margin: 90px;
+}
+.background-task.attention,
+.background-task.failed {
+  border-color: color-mix(in srgb, var(--warning) 42%, var(--border));
+}
+.background-task-title > span {
+  justify-content: flex-start;
+}
+.background-task-title > b {
+  color: var(--muted);
+  font-size: 10px;
+}
+.background-task > p {
+  margin: 0;
+  color: var(--muted);
+}
+.background-paths {
+  display: grid;
+  gap: 6px;
+}
+.background-paths > span {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--muted);
+}
+.background-paths code {
+  overflow: hidden;
+  color: inherit;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.background-timing {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+}
+.background-timing span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.background-timeline {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  overflow-x: auto;
+  color: var(--muted);
+  font-size: 10px;
+}
+.background-timeline span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.background-timeline span:not(:last-child)::after {
+  width: 30px;
+  height: 1px;
+  margin: 0 8px;
+  background: var(--line);
+  content: "";
+}
+.background-timeline i {
+  width: 7px;
+  height: 7px;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  background: var(--panel2);
+}
+.background-timeline .current i {
+  border-color: var(--purple);
+  background: var(--purple);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--purple) 14%, transparent);
+}
+.background-timeline .completed i {
+  border-color: var(--green);
+  background: var(--green);
+}
+.background-timeline .failed i {
+  border-color: var(--danger);
+  background: var(--danger);
+}
+.background-messages > p {
+  margin: 0;
+  padding: 9px 11px;
+  border-radius: 8px;
+  background: var(--panel2);
+  color: var(--muted);
+}
+.archive-transfer-live {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--purple) 7%, var(--panel2));
+}
+.archive-transfer-live-summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+}
+.archive-transfer-live-summary strong {
+  font-size: 11px;
+}
+.archive-transfer-live-summary span {
+  color: var(--muted);
+  font-size: 10px;
+}
+.archive-transfer-current-file {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px 12px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 10px;
+}
+.archive-transfer-current-file > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.archive-transfer-current-file progress {
+  grid-column: 1 / -1;
+}
+.template-management {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 18px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--line);
+}
+.handoff-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 4px 0 12px;
+}
+.handoff-heading strong,
+.handoff-heading span {
+  display: block;
+}
+.handoff-heading span {
+  margin-top: 3px;
+}
+@media (max-width: 980px) {
+  .background-filters,
+  .background-task-title,
+  .background-progress-meta {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .archive-transfer-progress i {
+    transition: none;
+  }
+}
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -5956,47 +6243,6 @@ small {
 }
 .composer-main.interaction-fieldset {
   padding: 30px;
-}
-.operation-center,
-.notification-history {
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--panel);
-  padding: 12px 16px;
-  margin-bottom: 12px;
-  font-size: 12px;
-}
-.operation-center summary,
-.notification-history summary {
-  cursor: pointer;
-}
-.operation-center > p {
-  margin: 10px 0;
-}
-.operation-item {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  padding: 12px 0;
-  border-top: 1px solid var(--border);
-  overflow-wrap: anywhere;
-}
-.operation-item progress {
-  width: 100%;
-  height: 6px;
-  accent-color: var(--purple);
-}
-.operation-center[open] {
-  max-height: 280px;
-  overflow-y: auto;
-}
-.notification-history[open] {
-  max-height: 220px;
-  overflow-y: auto;
-}
-.notification-history p {
-  padding: 8px 0;
-  overflow-wrap: anywhere;
 }
 .completion-banner {
   position: fixed;
