@@ -280,6 +280,96 @@ function validateDateAllocation(task: BackupTask) {
     throw new Error("素材日期归属未完整覆盖任务文件记录");
 }
 
+function validDailyDeliveryVolumeIdentity(value: unknown) {
+  if (value === undefined) return true;
+  const identity = value as Record<string, unknown>;
+  return Boolean(
+    identity &&
+      typeof identity.id === "string" &&
+      identity.id.length > 0 &&
+      identity.id.length <= 1024 &&
+      typeof identity.name === "string" &&
+      identity.name.length > 0 &&
+      identity.name.length <= 1024 &&
+      typeof identity.device === "string" &&
+      identity.device.length > 0 &&
+      identity.device.length <= 1024 &&
+      (identity.uuid === undefined ||
+        (typeof identity.uuid === "string" && identity.uuid.length <= 1024)) &&
+      (identity.deviceNode === undefined ||
+        (typeof identity.deviceNode === "string" &&
+          identity.deviceNode.length <= 4096)) &&
+      (identity.mountPoint === undefined || strictAbsolutePath(identity.mountPoint)) &&
+      (identity.fileSystem === undefined ||
+        (typeof identity.fileSystem === "string" &&
+          identity.fileSystem.length <= 1024)) &&
+      (identity.mountSourceDigest === undefined ||
+        sha256(identity.mountSourceDigest))
+  );
+}
+
+const validDailyDeliveryDirectoryIdentity = (value: unknown) => {
+  const identity = value as { dev?: unknown; ino?: unknown } | undefined;
+  return Boolean(
+    identity &&
+      Number.isSafeInteger(identity.dev) &&
+      Number(identity.dev) >= 0 &&
+      Number.isSafeInteger(identity.ino) &&
+      Number(identity.ino) >= 0,
+  );
+};
+
+function validDailyDeliveryDirectoryBindings(value: unknown) {
+  if (value === undefined) return true;
+  const bindings = value as NonNullable<
+    BackupTask["dailyDeliveryRuns"]
+  >[number]["directoryBindings"];
+  if (
+    !bindings ||
+    !validDailyDeliveryDirectoryIdentity(bindings.destinationParent) ||
+    (bindings.finalPath !== undefined &&
+      !validDailyDeliveryDirectoryIdentity(bindings.finalPath)) ||
+    (bindings.mediaRoot !== undefined &&
+      !validDailyDeliveryDirectoryIdentity(bindings.mediaRoot)) ||
+    (bindings.reportDirectory !== undefined &&
+      !validDailyDeliveryDirectoryIdentity(bindings.reportDirectory)) ||
+    (bindings.recoveryDirectory !== undefined &&
+      !validDailyDeliveryDirectoryIdentity(bindings.recoveryDirectory)) ||
+    (bindings.mediaRoot !== undefined && bindings.finalPath === undefined) ||
+    (bindings.reportDirectory !== undefined && bindings.finalPath === undefined) ||
+    (bindings.recoveryDirectory !== undefined &&
+      bindings.finalPath === undefined) ||
+    (bindings.parents !== undefined &&
+      (typeof bindings.parents !== "object" ||
+        bindings.parents === null ||
+        Array.isArray(bindings.parents) ||
+        bindings.mediaRoot === undefined))
+  )
+    return false;
+  return Object.entries(bindings.parents || {}).every(
+    ([relativePath, identity]) =>
+      allocationRelativePath(`${relativePath}/.kocpy-parent-sentinel`) &&
+      !relativePath.endsWith("/") &&
+      validDailyDeliveryDirectoryIdentity(identity),
+  );
+}
+
+function validDailyDeliveryJournal(value: unknown) {
+  if (value === undefined) return true;
+  const journal = value as Record<string, unknown>;
+  return Boolean(
+    journal &&
+      journal.schemaVersion === 1 &&
+      journal.fileName === ".kocpy-daily-delivery.journal.ndjson" &&
+      safeInteger(journal.sequence) &&
+      Number(journal.sequence) >= 0 &&
+      sha256(journal.headSha256) &&
+      safeInteger(journal.byteLength) &&
+      Number(journal.byteLength) > 0 &&
+      Number(journal.byteLength) <= 128 * 1024 * 1024
+  );
+}
+
 function validateDailyDeliveryRuns(task: BackupTask) {
   const runs = task.dailyDeliveryRuns;
   if (runs === undefined) return;
@@ -330,6 +420,7 @@ function validateDailyDeliveryRuns(task: BackupTask) {
         (typeof run.sourceVolumeUuid !== "string" ||
           !run.sourceVolumeUuid ||
           run.sourceVolumeUuid.length > 1024)) ||
+      !validDailyDeliveryVolumeIdentity(run.sourceVolumeIdentity) ||
       !strictAbsolutePath(run.destinationParent) ||
       !strictAbsolutePath(run.finalPath) ||
       typeof run.destinationVolumeId !== "string" ||
@@ -339,6 +430,9 @@ function validateDailyDeliveryRuns(task: BackupTask) {
         (typeof run.destinationVolumeUuid !== "string" ||
           !run.destinationVolumeUuid ||
           run.destinationVolumeUuid.length > 1024)) ||
+      !validDailyDeliveryVolumeIdentity(run.destinationVolumeIdentity) ||
+      !validDailyDeliveryDirectoryBindings(run.directoryBindings) ||
+      !validDailyDeliveryJournal(run.deliveryJournal) ||
       path.dirname(run.finalPath) !== run.destinationParent ||
       run.finalPath !==
         path.join(
@@ -488,16 +582,19 @@ function validateDailyDeliveryRuns(task: BackupTask) {
       if (!Array.isArray(run.recoveryArtifacts))
         throw new Error("当日交付恢复文件记录无效");
       const unique = new Set<string>();
+      const recoveryDirectory = path.join(
+        run.finalPath,
+        `Kocpy恢复-${run.id}`,
+      );
       for (const artifact of run.recoveryArtifacts) {
-        const matchesOwnedPath = [...expectedOutputs.values()].some((output) =>
-          new RegExp(
-            `^${output.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:\\.partial-${run.id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})?\\.(?:incomplete|invalid)-\\d+-[a-f0-9]{8}$`,
-            "i",
-          ).test(artifact),
-        );
+        const matchesOwnedPath = new RegExp(
+          `^[^/]+\\.[a-f0-9]{16}\\.(?:incomplete|invalid)-\\d+-[a-f0-9]{8}$`,
+          "i",
+        ).test(path.basename(artifact));
         if (
           !strictAbsolutePath(artifact) ||
-          !insidePath(artifact, mediaRoot) ||
+          path.dirname(artifact) !== recoveryDirectory ||
+          !insidePath(artifact, run.finalPath) ||
           unique.has(artifact) ||
           !matchesOwnedPath ||
           run.status === "pending"

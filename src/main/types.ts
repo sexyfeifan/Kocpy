@@ -1,3 +1,5 @@
+import type { VolumeIdentity } from "../common/volume-identity";
+
 export type HashAlgorithm = "md5" | "sha1" | "sha256" | "xxhash32";
 export type TaskStatus =
   | "pending"
@@ -266,10 +268,30 @@ export interface DailyDeliveryRun {
   sourceRoot: string;
   sourceVolumeId?: string;
   sourceVolumeUuid?: string;
+  /** Added in 0.1.37. Older candidate records without this snapshot remain
+   * readable, but execution/report writes fail closed and require a new run. */
+  sourceVolumeIdentity?: VolumeIdentity;
   destinationParent: string;
   finalPath: string;
   destinationVolumeId?: string;
   destinationVolumeUuid?: string;
+  destinationVolumeIdentity?: VolumeIdentity;
+  directoryBindings?: {
+    destinationParent: { dev: number; ino: number };
+    finalPath?: { dev: number; ino: number };
+    mediaRoot?: { dev: number; ino: number };
+    reportDirectory?: { dev: number; ino: number };
+    recoveryDirectory?: { dev: number; ino: number };
+    /** POSIX paths relative to Media; values freeze every created parent. */
+    parents?: Record<string, { dev: number; ino: number }>;
+  };
+  deliveryJournal?: {
+    schemaVersion: 1;
+    fileName: string;
+    sequence: number;
+    headSha256: string;
+    byteLength: number;
+  };
   hashAlgorithm: "sha256";
   allocationDigest: string;
   totalFiles: number;

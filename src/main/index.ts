@@ -89,8 +89,8 @@ import {
   dailyDeliveryReportHtml,
   executeDailyDeliveryRun,
   prepareDailyDeliveryRun,
+  publishDailyDeliveryReport as publishBoundDailyDeliveryReport,
   reauthorizeRecordedDailyDeliveryReport,
-  verifyPublishedDailyDeliveryReport,
 } from "./mixed-day-delivery";
 import {
   beginCompletionAction,
@@ -1072,14 +1072,7 @@ async function publishDailyDeliveryReport(
   run.reportError = undefined;
   upsertDailyDeliveryRun(task, run);
   await persist(true);
-  const existing = await hashFile(target, "sha256").catch(() => undefined);
-  if (existing && existing !== digest)
-    throw new Error(`报告路径已有其他文件，Kocpy 未覆盖：${target}`);
-  if (!existing) {
-    await authorizeDailyDeliveryArtifact(run, fileName);
-    await publishNewArtifact(target, value);
-  }
-  await verifyPublishedDailyDeliveryReport(run, target, digest);
+  await publishBoundDailyDeliveryReport(run, target, value, digest);
   run.reportStatus = "completed";
   upsertDailyDeliveryRun(task, run);
   await persist(true);
@@ -2508,11 +2501,6 @@ app.whenReady().then(async () => {
           async (checkpoint) => {
             run = structuredClone(checkpoint);
             upsertDailyDeliveryRun(task, run);
-            operations.progress({
-              message: `当日交付 · ${run.completedFiles}/${run.totalFiles}`,
-              totalBytes: run.totalBytes,
-              completedBytes: run.completedBytes,
-            });
             if (
               checkpoint.status !== "running" ||
               Date.now() - lastCheckpoint >= 1000
@@ -2520,6 +2508,14 @@ app.whenReady().then(async () => {
               lastCheckpoint = Date.now();
               await persist(false, false);
             }
+          },
+          {
+            onProgress: (completedFiles, completedBytes) =>
+              operations.progress({
+                message: `当日交付 · ${completedFiles}/${run!.totalFiles}`,
+                totalBytes: run!.totalBytes,
+                completedBytes,
+              }),
           },
         );
         upsertDailyDeliveryRun(task, run);
