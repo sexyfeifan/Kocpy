@@ -9,9 +9,12 @@ import {
   applyCardDateAllocationDecisions,
   authorizeDailyDeliveryArtifact,
   buildCardDateAllocation,
+  dailyDeliveryReportFileName,
   dailyDeliveryReportHtml,
+  verifyPublishedDailyDeliveryReport,
   executeDailyDeliveryRun,
   prepareDailyDeliveryRun,
+  reauthorizeRecordedDailyDeliveryReport,
 } from "../src/main/mixed-day-delivery";
 
 let root: string,
@@ -88,6 +91,42 @@ beforeEach(async () => {
 afterEach(async () => {
   await fs.rm(root, { recursive: true, force: true });
 });
+
+async function completedDeliveryRun() {
+  const { plan, run } = await preparedDeliveryRun();
+  return executeDailyDeliveryRun(task, plan, run);
+}
+
+async function preparedDeliveryRun() {
+  let plan = await buildCardDateAllocation(task, verifiedCard);
+  plan = applyCardDateAllocationDecisions(
+    task,
+    plan,
+    plan.groups.map((group) => ({
+      groupId: group.id,
+      shootingDate: "2026-09-15",
+    })),
+    "DIT",
+  );
+  const run = await prepareDailyDeliveryRun(task, plan, {
+    shootingDate: "2026-09-15",
+    sourceDestinationId: "verified-copy",
+    destinationParent: deliveryParent,
+    operator: "DIT",
+  });
+  return { plan, run };
+}
+
+function ownershipSidecar(run: {
+  finalPath: string;
+  destinationParent: string;
+  id: string;
+}) {
+  return path.join(
+    run.destinationParent,
+    `.${path.basename(run.finalPath)}.${run.id}.kocpy-owner.json`,
+  );
+}
 
 describe("mixed-day full-card allocation and delivery", () => {
   it("keeps date detection advisory and preserves clip sidecars as one group", async () => {
@@ -168,8 +207,7 @@ describe("mixed-day full-card allocation and delivery", () => {
       plan,
       plan.groups.map((group) => ({
         groupId: group.id,
-        shootingDate:
-          group.label === "C001" ? "2026-09-15" : "2026-09-14",
+        shootingDate: group.label === "C001" ? "2026-09-15" : "2026-09-14",
       })),
       "DIT",
     );
@@ -193,7 +231,9 @@ describe("mixed-day full-card allocation and delivery", () => {
     expect(completed.totalFiles).toBe(2);
     expect(completed.files.every((file) => file.verified)).toBe(true);
     await expect(
-      fs.access(path.join(completed.finalPath, "Media", "DCIM", "20260915", "C002.MOV")),
+      fs.access(
+        path.join(completed.finalPath, "Media", "DCIM", "20260915", "C002.MOV"),
+      ),
     ).rejects.toThrow();
     expect(completed.manifestPaths).toHaveLength(2);
     expect(checkpoints).toContain("running:1");
@@ -207,6 +247,38 @@ describe("mixed-day full-card allocation and delivery", () => {
       ),
     );
     expect(after).toEqual(before);
+  });
+
+  it("does not deliver xxhash32 content changed at the former two-read boundary", async () => {
+    task.hashAlgorithm = "xxhash32";
+    for (const record of task.fileRecords) {
+      const digest = await hashFile(record.destinations[0].path, "xxhash32");
+      record.srcChecksum = digest;
+      record.destinations[0].checksum = digest;
+    }
+    const { plan, run } = await preparedDeliveryRun();
+    let injections = 0;
+    const relativePath = "DCIM/20260915/C001.MOV",
+      source = path.join(verifiedCard, relativePath),
+      output = path.join(run.finalPath, "Media", relativePath),
+      staging = `${output}.partial-${run.id}`;
+
+    await expect(
+      executeDailyDeliveryRun(task, plan, run, undefined, {
+        afterSourceEvidenceRead: async (sourceFile, currentRelativePath) => {
+          if (currentRelativePath !== relativePath || injections) return;
+          injections++;
+          expect(sourceFile).toBe(await fs.realpath(source));
+          // Same-size mutation at the exact boundary where the previous
+          // implementation started its second, SHA-256-only source read.
+          await fs.writeFile(sourceFile, "muted");
+        },
+      }),
+    ).rejects.toThrow(/交付写入后校验失败/);
+
+    expect(injections).toBe(1);
+    await expect(fs.access(output)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await fs.readFile(staging, "utf8")).toBe("muted");
   });
 
   it("refuses to merge into an unrelated existing delivery directory", async () => {
@@ -231,9 +303,110 @@ describe("mixed-day full-card allocation and delivery", () => {
     await expect(executeDailyDeliveryRun(task, plan, run)).rejects.toThrow(
       /禁止覆盖或合并/,
     );
-    expect(await fs.readFile(path.join(run.finalPath, "unrelated.txt"), "utf8")).toBe(
-      "keep",
+    expect(
+      await fs.readFile(path.join(run.finalPath, "unrelated.txt"), "utf8"),
+    ).toBe("keep");
+  });
+
+  it("does not adopt an unknown empty delivery directory without an ownership sidecar", async () => {
+    const { plan, run } = await preparedDeliveryRun();
+    await fs.mkdir(run.finalPath);
+
+    await expect(executeDailyDeliveryRun(task, plan, run)).rejects.toThrow(
+      /不属于本次任务/,
     );
+    expect(await fs.readdir(run.finalPath)).toEqual([]);
+  });
+
+  it("resumes the exact mkdir-before-marker crash boundary and removes its sidecar", async () => {
+    const { plan, run } = await preparedDeliveryRun(),
+      sidecar = ownershipSidecar(run),
+      marker = path.join(run.finalPath, ".kocpy-daily-delivery.json");
+
+    await expect(
+      executeDailyDeliveryRun(task, plan, run, undefined, {
+        afterFinalDirectoryCreated: () => {
+          throw new Error("simulated crash after mkdir");
+        },
+      }),
+    ).rejects.toThrow(/simulated crash after mkdir/);
+    expect((await fs.lstat(run.finalPath)).isDirectory()).toBe(true);
+    await expect(fs.access(marker)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(JSON.parse(await fs.readFile(sidecar, "utf8"))).toMatchObject({
+      runId: run.id,
+      finalPath: run.finalPath,
+      destinationVolumeId: run.destinationVolumeId,
+      destinationVolumeUuid: run.destinationVolumeUuid,
+    });
+
+    const resumed = await executeDailyDeliveryRun(task, plan, run);
+    expect(resumed.status).toBe("completed");
+    expect(resumed.completedFiles).toBe(run.totalFiles);
+    await expect(fs.access(sidecar)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it.each([
+    [
+      "run identity",
+      (value: Record<string, unknown>) => ({ ...value, runId: "another-run" }),
+    ],
+    [
+      "final path",
+      (value: Record<string, unknown>) => ({
+        ...value,
+        finalPath: path.join(root, "another-delivery"),
+      }),
+    ],
+    [
+      "destination volume",
+      (value: Record<string, unknown>) =>
+        value.destinationVolumeUuid
+          ? { ...value, destinationVolumeUuid: "another-volume-uuid" }
+          : { ...value, destinationVolumeId: "another-volume-id" },
+    ],
+  ])("rejects a bootstrap sidecar with changed %s", async (_label, mutate) => {
+    const { plan, run } = await preparedDeliveryRun(),
+      sidecar = ownershipSidecar(run);
+    await expect(
+      executeDailyDeliveryRun(task, plan, run, undefined, {
+        afterFinalDirectoryCreated: () => {
+          throw new Error("simulated crash after mkdir");
+        },
+      }),
+    ).rejects.toThrow(/simulated crash after mkdir/);
+    const valid = JSON.parse(await fs.readFile(sidecar, "utf8")) as Record<
+      string,
+      unknown
+    >;
+    await fs.writeFile(sidecar, JSON.stringify(mutate(valid)));
+
+    await expect(executeDailyDeliveryRun(task, plan, run)).rejects.toThrow(
+      /所有权标记.*不一致/,
+    );
+    expect(await fs.readdir(run.finalPath)).toEqual([]);
+  });
+
+  it("refuses a symlinked bootstrap sidecar without changing its target", async () => {
+    const { plan, run } = await preparedDeliveryRun(),
+      sidecar = ownershipSidecar(run),
+      outside = path.join(root, "outside-owner.json");
+    await expect(
+      executeDailyDeliveryRun(task, plan, run, undefined, {
+        afterFinalDirectoryCreated: () => {
+          throw new Error("simulated crash after mkdir");
+        },
+      }),
+    ).rejects.toThrow(/simulated crash after mkdir/);
+    const valid = await fs.readFile(sidecar);
+    await fs.unlink(sidecar);
+    await fs.writeFile(outside, valid);
+    await fs.symlink(outside, sidecar);
+
+    await expect(executeDailyDeliveryRun(task, plan, run)).rejects.toThrow(
+      /所有权标记不可安全读取/,
+    );
+    expect(await fs.readFile(outside)).toEqual(valid);
+    expect(await fs.readdir(run.finalPath)).toEqual([]);
   });
 
   it("resumes only its own interrupted directory and rechecks completed files", async () => {
@@ -349,5 +522,102 @@ describe("mixed-day full-card allocation and delivery", () => {
       authorizeDailyDeliveryArtifact(completed, "report.pdf"),
     ).rejects.toThrow(/真实目录|符号链接/);
     expect(await fs.readdir(outside)).toEqual([]);
+  });
+
+  it("reauthorizes a legitimate recorded report before accepting its digest", async () => {
+    const completed = await completedDeliveryRun(),
+      reportPath = await authorizeDailyDeliveryArtifact(
+        completed,
+        dailyDeliveryReportFileName(completed),
+      );
+    await fs.writeFile(reportPath, "stable daily delivery report");
+    const digest = await hashFile(reportPath, "sha256");
+    completed.reportStatus = "completed";
+    completed.reportPaths = [reportPath];
+    completed.reportSha256 = { [reportPath]: digest };
+
+    await expect(
+      reauthorizeRecordedDailyDeliveryReport(completed),
+    ).resolves.toEqual({
+      authorizedPath: reportPath,
+      recordedDigest: digest,
+      actualDigest: digest,
+    });
+  });
+
+  it("rereads a newly published report and rejects post-publication corruption", async () => {
+    const completed = await completedDeliveryRun(),
+      reportPath = await authorizeDailyDeliveryArtifact(
+        completed,
+        dailyDeliveryReportFileName(completed),
+      );
+    await fs.writeFile(reportPath, "published report bytes");
+    const digest = await hashFile(reportPath, "sha256");
+    await expect(
+      verifyPublishedDailyDeliveryReport(completed, reportPath, digest),
+    ).resolves.toEqual({
+      authorizedPath: reportPath,
+      actualSha256: digest,
+    });
+    await fs.writeFile(reportPath, "truncated");
+    await expect(
+      verifyPublishedDailyDeliveryReport(completed, reportPath, digest),
+    ).rejects.toThrow(/回读摘要不一致/);
+  });
+
+  it("rejects a recorded report path outside the fixed delivery report location", async () => {
+    const completed = await completedDeliveryRun(),
+      escaped = path.join(root, "unrelated-report.pdf");
+    await fs.writeFile(escaped, "do not trust this file");
+    completed.reportStatus = "completed";
+    completed.reportPaths = [escaped];
+    completed.reportSha256 = {
+      [escaped]: await hashFile(escaped, "sha256"),
+    };
+
+    await expect(
+      reauthorizeRecordedDailyDeliveryReport(completed),
+    ).rejects.toThrow(/不再属于该交付任务/);
+  });
+
+  it("rejects a recorded report target replaced by a symlink before hashing", async () => {
+    const completed = await completedDeliveryRun(),
+      reportPath = await authorizeDailyDeliveryArtifact(
+        completed,
+        dailyDeliveryReportFileName(completed),
+      ),
+      outside = path.join(root, "outside-report.pdf");
+    await fs.writeFile(outside, "outside report");
+    await fs.symlink(outside, reportPath);
+    completed.reportStatus = "completed";
+    completed.reportPaths = [reportPath];
+    completed.reportSha256 = {
+      [reportPath]: await hashFile(outside, "sha256"),
+    };
+
+    await expect(
+      reauthorizeRecordedDailyDeliveryReport(completed),
+    ).rejects.toThrow(/符号链接|不是安全的普通文件/);
+  });
+
+  it("rejects a recorded report when the destination volume identity changed", async () => {
+    const completed = await completedDeliveryRun(),
+      reportPath = await authorizeDailyDeliveryArtifact(
+        completed,
+        dailyDeliveryReportFileName(completed),
+      );
+    await fs.writeFile(reportPath, "stable daily delivery report");
+    completed.reportStatus = "completed";
+    completed.reportPaths = [reportPath];
+    completed.reportSha256 = {
+      [reportPath]: await hashFile(reportPath, "sha256"),
+    };
+    if (completed.destinationVolumeUuid)
+      completed.destinationVolumeUuid = "00000000-0000-0000-0000-000000000000";
+    else completed.destinationVolumeId = "definitely-another-volume";
+
+    await expect(
+      reauthorizeRecordedDailyDeliveryReport(completed),
+    ).rejects.toThrow(/磁盘身份/);
   });
 });

@@ -102,6 +102,7 @@
   font-size: 11px;
 }
 .archive-transfer-final-path,
+.archive-transfer-mount-evidence,
 .archive-transfer-preview > .row,
 .archive-transfer-warning,
 .archive-transfer-boundary {
@@ -137,6 +138,12 @@
   padding: 12px;
   border-radius: 10px;
   background: color-mix(in srgb, var(--panel-2, #292c31) 80%, transparent);
+}
+.archive-transfer-result.needs-attention {
+  border: 1px solid color-mix(in srgb, var(--warning) 42%, var(--border));
+}
+.archive-transfer-result.needs-attention .archive-transfer-result-head > span > svg {
+  color: var(--warning);
 }
 .archive-transfer-result-head,
 .archive-transfer-result-head > span {
@@ -3792,6 +3799,9 @@ small {
 .project-day-group.risk {
   border-color: color-mix(in srgb, var(--warning) 48%, var(--border));
 }
+.project-day-group.planned {
+  border-color: color-mix(in srgb, var(--sub) 38%, var(--border));
+}
 .project-day-group.current {
   box-shadow: inset 3px 0 0 var(--accent);
 }
@@ -5129,6 +5139,45 @@ small {
   color: var(--muted);
 }
 .destination-status > span:last-child {
+  overflow-wrap: anywhere;
+}
+.automatic-report-evidence {
+  margin-top: 20px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--panel2);
+}
+.automatic-report-evidence > div:first-child {
+  display: grid;
+  gap: 5px;
+}
+.automatic-report-evidence > div:first-child span {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.6;
+}
+.automatic-report-targets {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+.automatic-report-targets > div {
+  display: grid;
+  grid-template-columns: minmax(90px, 0.25fr) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+}
+.automatic-report-targets code {
+  color: var(--muted);
+  font-size: 9px;
+  overflow-wrap: anywhere;
+}
+.automatic-report-targets small {
+  max-width: 220px;
+  text-align: right;
   overflow-wrap: anywhere;
 }
 .log-box {

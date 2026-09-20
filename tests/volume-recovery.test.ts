@@ -127,12 +127,40 @@ describe("disk identity and guided recovery", () => {
     expect(reverified.errorMessage).toBeUndefined();
     expect(reverified.destinations[0].available).toBe(true);
   }, 30000);
-  it("does not certify an empty or incomplete hash baseline", async () => {
+  it("does not certify incomplete complete-v2, malformed empty, or legacy baselines", async () => {
     const { engine, task } = await fixture();
     await expect(engine.reverifyTask(task.id)).rejects.toThrow(
       "完整文件哈希基线",
     );
     expect(task.status).not.toBe("completed");
+    task.inventoryScope = {
+      policy: task.inventoryPolicy!,
+      capturedAt: Date.now(),
+      sourcePath: task.sourcePath,
+      fingerprint: "a".repeat(64),
+      includedFiles: 1,
+      includedBytes: 0,
+      includedDirectories: 0,
+      includedDirectoryPaths: [],
+      excludedFiles: 0,
+      excludedDirectories: 0,
+      excludedBytes: 0,
+      exclusions: [],
+    };
+    await expect(engine.reverifyTask(task.id)).rejects.toThrow(
+      "完整文件哈希基线",
+    );
+    task.inventoryScope.includedFiles = 0;
+    delete (task.inventoryScope as Partial<typeof task.inventoryScope>)
+      .includedDirectoryPaths;
+    await expect(engine.reverifyTask(task.id)).rejects.toThrow(
+      "完整文件哈希基线",
+    );
+    delete task.inventoryPolicy;
+    delete task.inventoryScope;
+    await expect(engine.reverifyTask(task.id)).rejects.toThrow(
+      "完整文件哈希基线",
+    );
     task.totalFiles = 1;
     await expect(engine.reverifyTask(task.id)).rejects.toThrow(
       "完整文件哈希基线",

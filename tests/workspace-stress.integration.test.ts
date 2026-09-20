@@ -32,7 +32,16 @@ function stressTask(fileCount: number): BackupTask {
     name: "CARD01",
     sourcePath: "/Volumes/SYNTHETIC",
     devices: [],
-    destinations: [],
+    destinations: [
+      {
+        id: "archive",
+        path: "/Volumes/ARCHIVE",
+        resolvedPath: "/Volumes/ARCHIVE",
+        label: "ARCHIVE",
+        verified: true,
+        bytesWritten: fileRecords.reduce((total, file) => total + file.size, 0),
+      },
+    ],
     hashAlgorithm: "sha256",
     namingTemplate: "{name}",
     status: "completed",

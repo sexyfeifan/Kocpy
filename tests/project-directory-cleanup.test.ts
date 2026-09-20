@@ -14,9 +14,11 @@ import {
   type ProjectDirectoryCleanupJournal,
 } from "../src/main/project-directory-cleanup";
 import {
+  assertProjectDirectoryCleanupJournalIdle,
   clearProjectDirectoryCleanupJournal,
   readProjectDirectoryCleanupJournal,
   reconcileProjectDirectoryCleanupJournal,
+  withProjectDirectoryCleanupMutation,
   writeProjectDirectoryCleanupJournal,
 } from "../src/main/project-directory-cleanup-journal";
 import { Storage } from "../src/main/storage";
@@ -284,6 +286,125 @@ describe("project empty framework directory policy", () => {
 });
 
 describe("project empty-directory cleanup recovery journal", () => {
+  it("keeps the global journal exclusive across concurrent project cleanups", async () => {
+    const root = await fs.mkdtemp(
+        path.join(os.tmpdir(), "kocpy-cleanup-concurrent-"),
+      ),
+      storage = new Storage(path.join(root, "state")),
+      secondTarget = path.join(root, "project-b-empty"),
+      first: ProjectDirectoryCleanupJournal = {
+        schemaVersion: 1,
+        id: "journal-project-a-concurrent",
+        auditId: "audit-project-a-concurrent",
+        previewId: "preview-project-a-concurrent",
+        projectId: "project-a",
+        workstationId,
+        date: "2026-09-19",
+        scheduleKey: "FX3",
+        operator: "DIT A",
+        requestedAt: 1_000,
+        startedAt: 1_100,
+        targets: [],
+      },
+      second: ProjectDirectoryCleanupJournal = {
+        ...first,
+        id: "journal-project-b-concurrent",
+        auditId: "audit-project-b-concurrent",
+        previewId: "preview-project-b-concurrent",
+        projectId: "project-b",
+        operator: "DIT B",
+      };
+    roots.push(root);
+    await fs.mkdir(secondTarget);
+
+    let releaseFirst!: () => void,
+      firstStarted!: () => void,
+      secondEnteredMutation = false;
+    const firstPaused = new Promise<void>((resolve) => {
+        firstStarted = resolve;
+      }),
+      allowFirstToFinish = new Promise<void>((resolve) => {
+        releaseFirst = resolve;
+      }),
+      firstRun = withProjectDirectoryCleanupMutation(async () => {
+        await writeProjectDirectoryCleanupJournal(storage, first);
+        firstStarted();
+        await allowFirstToFinish;
+        await clearProjectDirectoryCleanupJournal(storage);
+      });
+
+    await firstPaused;
+    const secondRun = withProjectDirectoryCleanupMutation(async () => {
+      secondEnteredMutation = true;
+      await writeProjectDirectoryCleanupJournal(storage, second);
+      await fs.rmdir(secondTarget);
+      await clearProjectDirectoryCleanupJournal(storage);
+    });
+    await expect(secondRun).rejects.toThrow(/另一个项目.*正在执行/);
+    expect(secondEnteredMutation).toBe(false);
+    expect(await readProjectDirectoryCleanupJournal(storage)).toEqual(first);
+    expect((await fs.lstat(secondTarget)).isDirectory()).toBe(true);
+
+    releaseFirst();
+    await firstRun;
+    expect(await readProjectDirectoryCleanupJournal(storage)).toBeUndefined();
+    expect((await fs.lstat(secondTarget)).isDirectory()).toBe(true);
+  });
+
+  it("globally blocks another project from replacing a pending cleanup journal", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "kocpy-cleanup-lock-")),
+      storage = new Storage(path.join(root, "state")),
+      first: ProjectDirectoryCleanupJournal = {
+        schemaVersion: 1,
+        id: "journal-project-a",
+        auditId: "audit-project-a",
+        previewId: "preview-project-a",
+        projectId: "project-a",
+        workstationId,
+        date: "2026-09-19",
+        scheduleKey: "FX3",
+        operator: "DIT A",
+        requestedAt: 1_000,
+        startedAt: 1_100,
+        targets: [],
+      },
+      second: ProjectDirectoryCleanupJournal = {
+        ...first,
+        id: "journal-project-b",
+        auditId: "audit-project-b",
+        previewId: "preview-project-b",
+        projectId: "project-b",
+        operator: "DIT B",
+      };
+    roots.push(root);
+    await writeProjectDirectoryCleanupJournal(storage, first);
+
+    const pending = await readProjectDirectoryCleanupJournal(storage);
+    expect(() =>
+      assertProjectDirectoryCleanupJournalIdle(
+        pending,
+        undefined,
+        second.projectId,
+        "global",
+      ),
+    ).toThrow(/另一个项目.*恢复记录/);
+
+    // This mirrors the IPC gate: the rejected second operation never reaches
+    // its journal write, so project A remains the sole durable authority.
+    await expect(
+      (async () => {
+        assertProjectDirectoryCleanupJournalIdle(
+          pending,
+          undefined,
+          second.projectId,
+          "global",
+        );
+        await writeProjectDirectoryCleanupJournal(storage, second);
+      })(),
+    ).rejects.toThrow(/另一个项目.*恢复记录/);
+    expect(await readProjectDirectoryCleanupJournal(storage)).toEqual(first);
+  });
+
   it("refuses to remove an authorized directory without a durable journal", async () => {
     const { project, date, target } = await fixture(),
       preview = await previewProjectDirectoryCleanup(project, [], {

@@ -8,10 +8,18 @@ import type {
   CardDateAllocationPlan,
   DailyDeliveryRun,
   FileRecord,
+  HashAlgorithm,
 } from "./types";
 import { assertVolumeIdentity } from "../common/volume-identity";
-import { canonical, inside, safeChild, segment, validatePaths } from "./backup/safety";
+import {
+  canonical,
+  inside,
+  safeChild,
+  segment,
+  validatePaths,
+} from "./backup/safety";
 import { hashFile } from "./backup/BackupEngine";
+import { XxHash32 } from "./backup/XxHash32";
 import { driveInfo, volumeIdentity } from "./system";
 
 const mediaForEmbeddedDate =
@@ -132,10 +140,7 @@ async function mapWithConcurrency<T, R>(
   return result;
 }
 
-async function verifiedSourceDestination(
-  task: BackupTask,
-  sourceRoot: string,
-) {
+async function verifiedSourceDestination(task: BackupTask, sourceRoot: string) {
   const root = await canonical(sourceRoot),
     candidates = await Promise.all(
       task.destinations.map(async (destination, index) => ({
@@ -202,7 +207,8 @@ export async function buildCardDateAllocation(
     task,
     sourceRoot,
   );
-  if (!(await fs.stat(root)).isDirectory()) throw new Error("素材卷副本目录不可用");
+  if (!(await fs.stat(root)).isDirectory())
+    throw new Error("素材卷副本目录不可用");
   const families = new Map<string, FileRecord[]>();
   for (const record of task.fileRecords) {
     const key = clipFamily(record.relativePath);
@@ -224,19 +230,11 @@ export async function buildCardDateAllocation(
         id = groupId(relativePaths),
         pathDates = new Set(relativePaths.flatMap(datesInText)),
         evidence: string[] = [],
-        verified = new Map<
-          string,
-          ReturnType<typeof verifiedRecordPath>
-        >(),
+        verified = new Map<string, ReturnType<typeof verifiedRecordPath>>(),
         readVerified = (record: FileRecord) => {
           let value = verified.get(record.relativePath);
           if (!value) {
-            value = verifiedRecordPath(
-              task,
-              root,
-              destinationIndex,
-              record,
-            );
+            value = verifiedRecordPath(task, root, destinationIndex, record);
             verified.set(record.relativePath, value);
           }
           return value;
@@ -268,8 +266,7 @@ export async function buildCardDateAllocation(
         modifiedDate =
           modifiedDates.size === 1 ? [...modifiedDates][0] : undefined;
       let suggestedDate: string | undefined,
-        suggestionBasis: CardDateAllocationGroup["suggestionBasis"] =
-          "unknown",
+        suggestionBasis: CardDateAllocationGroup["suggestionBasis"] = "unknown",
         suggestionConfidence: CardDateAllocationGroup["suggestionConfidence"] =
           "unknown";
       if (embeddedDate && pathDate && embeddedDate === pathDate) {
@@ -294,7 +291,10 @@ export async function buildCardDateAllocation(
       const prior = previous.get(id);
       return {
         id,
-        label: path.basename(records[0].relativePath, path.extname(records[0].relativePath)),
+        label: path.basename(
+          records[0].relativePath,
+          path.extname(records[0].relativePath),
+        ),
         relativePaths,
         files: records.length,
         bytes: records.reduce((sum, record) => sum + record.size, 0),
@@ -334,7 +334,8 @@ export function applyCardDateAllocationDecisions(
   )
     throw new Error("素材卷文件记录已经变化，请重新分析日期归属");
   const byId = new Map(decisions.map((item) => [item.groupId, item]));
-  if (byId.size !== decisions.length) throw new Error("日期归属决定存在重复项目");
+  if (byId.size !== decisions.length)
+    throw new Error("日期归属决定存在重复项目");
   for (const decision of decisions) {
     if (!plan.groups.some((group) => group.id === decision.groupId))
       throw new Error("日期归属决定包含未知素材组");
@@ -375,16 +376,17 @@ function selectedRecords(
       .filter((group) => group.assignedDate === shootingDate)
       .flatMap((group) => group.relativePaths),
   );
-  const records = task.fileRecords.filter((record) => paths.has(record.relativePath));
+  const records = task.fileRecords.filter((record) =>
+    paths.has(record.relativePath),
+  );
   if (!records.length) throw new Error("该拍摄日没有已确认归属的文件");
-  if (records.length !== paths.size) throw new Error("日期归属包含已不存在的文件记录");
+  if (records.length !== paths.size)
+    throw new Error("日期归属包含已不存在的文件记录");
   return records;
 }
 
 function deliveryFolderName(task: BackupTask, shootingDate: string) {
-  return segment(
-    `${shootingDate.replace(/-/g, "")}_${task.name}_当日交付`,
-  );
+  return segment(`${shootingDate.replace(/-/g, "")}_${task.name}_当日交付`);
 }
 
 export async function prepareDailyDeliveryRun(
@@ -518,6 +520,169 @@ async function writeJsonAtomic(file: string, value: unknown) {
   await syncDirectory(path.dirname(file));
 }
 
+interface DailyDeliveryOwnershipSidecar {
+  schemaVersion: 1;
+  runId: string;
+  sourceTaskId: string;
+  destinationParent: string;
+  finalPath: string;
+  destinationVolumeId?: string;
+  destinationVolumeUuid?: string;
+  allocationDigest: string;
+  totalFiles: number;
+  totalBytes: number;
+  createdAt: number;
+}
+
+const dailyDeliveryOwnershipPath = (run: DailyDeliveryRun) =>
+  path.join(
+    run.destinationParent,
+    `.${path.basename(run.finalPath)}.${run.id}.kocpy-owner.json`,
+  );
+
+function dailyDeliveryOwnership(
+  run: DailyDeliveryRun,
+): DailyDeliveryOwnershipSidecar {
+  return {
+    schemaVersion: 1,
+    runId: run.id,
+    sourceTaskId: run.sourceTaskId,
+    destinationParent: run.destinationParent,
+    finalPath: run.finalPath,
+    destinationVolumeId: run.destinationVolumeId,
+    destinationVolumeUuid: run.destinationVolumeUuid,
+    allocationDigest: run.allocationDigest,
+    totalFiles: run.totalFiles,
+    totalBytes: run.totalBytes,
+    createdAt: run.createdAt,
+  };
+}
+
+function assertDailyDeliveryOwnership(
+  value: unknown,
+  run: DailyDeliveryRun,
+): asserts value is DailyDeliveryOwnershipSidecar {
+  const expected = dailyDeliveryOwnership(run),
+    actual = value as Partial<DailyDeliveryOwnershipSidecar> | undefined;
+  if (
+    !actual ||
+    actual.schemaVersion !== expected.schemaVersion ||
+    actual.runId !== expected.runId ||
+    actual.sourceTaskId !== expected.sourceTaskId ||
+    actual.destinationParent !== expected.destinationParent ||
+    actual.finalPath !== expected.finalPath ||
+    actual.destinationVolumeId !== expected.destinationVolumeId ||
+    actual.destinationVolumeUuid !== expected.destinationVolumeUuid ||
+    actual.allocationDigest !== expected.allocationDigest ||
+    actual.totalFiles !== expected.totalFiles ||
+    actual.totalBytes !== expected.totalBytes ||
+    actual.createdAt !== expected.createdAt
+  )
+    throw new Error(
+      "当日交付外部所有权标记与权威任务、路径或磁盘身份不一致，已停止写入",
+    );
+}
+
+async function readDailyDeliveryOwnership(file: string, run: DailyDeliveryRun) {
+  let handle: Awaited<ReturnType<typeof fs.open>>;
+  try {
+    handle = await fs.open(
+      file,
+      constants.O_RDONLY | (constants.O_NOFOLLOW || 0),
+    );
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw new Error("当日交付外部所有权标记不可安全读取，已停止写入");
+  }
+  try {
+    const stat = await handle.stat();
+    if (!stat.isFile()) throw new Error("所有权标记不是普通文件");
+    const serialized = await handle.readFile("utf8"),
+      value = JSON.parse(serialized) as unknown;
+    assertDailyDeliveryOwnership(value, run);
+    return value;
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      error.message.startsWith("当日交付外部所有权标记与")
+    )
+      throw error;
+    throw new Error(
+      `当日交付外部所有权标记损坏，已停止写入：${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  } finally {
+    await handle.close();
+  }
+}
+
+async function acquireDailyDeliveryOwnership(
+  file: string,
+  run: DailyDeliveryRun,
+) {
+  const value = dailyDeliveryOwnership(run),
+    serialized = JSON.stringify(value, null, 2);
+  let handle: Awaited<ReturnType<typeof fs.open>>;
+  try {
+    handle = await fs.open(
+      file,
+      constants.O_WRONLY |
+        constants.O_CREAT |
+        constants.O_EXCL |
+        (constants.O_NOFOLLOW || 0),
+      0o600,
+    );
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    await readDailyDeliveryOwnership(file, run);
+    return { created: false as const, value };
+  }
+  try {
+    await handle.writeFile(serialized, "utf8");
+    await handle.sync();
+  } catch (error) {
+    await handle.close().catch(() => undefined);
+    await fs.unlink(file).catch(() => undefined);
+    await syncDirectory(path.dirname(file)).catch(() => undefined);
+    throw error;
+  }
+  await handle.close();
+  await syncDirectory(path.dirname(file));
+  return { created: true as const, value };
+}
+
+async function releaseDailyDeliveryOwnership(
+  file: string,
+  run: DailyDeliveryRun,
+) {
+  const value = await readDailyDeliveryOwnership(file, run);
+  if (!value) return;
+  await fs.unlink(file);
+  await syncDirectory(path.dirname(file));
+}
+
+async function assertBootstrapDeliveryDirectory(
+  directory: string,
+  markerPath: string,
+) {
+  const stat = await fs.lstat(directory);
+  if (!stat.isDirectory() || stat.isSymbolicLink())
+    throw new Error("交付最终路径已存在且不是安全目录");
+  const entries = await fs.readdir(directory);
+  const partialPrefix = `${path.basename(markerPath)}.partial-`;
+  for (const entry of entries) {
+    if (!entry.startsWith(partialPrefix))
+      throw new Error("当日交付目录在所有权标记完成前出现未知内容，已停止接管");
+    const candidate = path.join(directory, entry),
+      candidateStat = await fs.lstat(candidate);
+    if (!candidateStat.isFile() || candidateStat.isSymbolicLink())
+      throw new Error("当日交付目录的临时标记不是安全普通文件，已停止接管");
+  }
+  for (const entry of entries) await fs.unlink(path.join(directory, entry));
+  if (entries.length) await syncDirectory(directory);
+}
+
 async function writeGeneratedArtifactIdempotent(
   file: string,
   value: string | Buffer,
@@ -531,9 +696,7 @@ async function writeGeneratedArtifactIdempotent(
     });
   if (existing) {
     if (digest(existing) !== digest(expected))
-      throw new Error(
-        `交付报告位置已有内容不同的文件，Kocpy 未覆盖：${file}`,
-      );
+      throw new Error(`交付报告位置已有内容不同的文件，Kocpy 未覆盖：${file}`);
     return;
   }
   const temporary = `${file}.partial-${process.pid}-${randomUUID()}`;
@@ -546,20 +709,40 @@ async function writeGeneratedArtifactIdempotent(
     if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
     const raced = await fs.readFile(file);
     if (digest(raced) !== digest(expected))
-      throw new Error(
-        `交付报告位置已有内容不同的文件，Kocpy 未覆盖：${file}`,
-      );
+      throw new Error(`交付报告位置已有内容不同的文件，Kocpy 未覆盖：${file}`);
   }
 }
 
 async function readMarker(file: string) {
-  return fs
-    .readFile(file, "utf8")
-    .then((value) => JSON.parse(value) as DailyDeliveryRun)
-    .catch((error) => {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-      throw new Error("当日交付恢复标记损坏，已停止写入并保留现有目录");
-    });
+  let handle: Awaited<ReturnType<typeof fs.open>>;
+  try {
+    handle = await fs.open(
+      file,
+      constants.O_RDONLY | (constants.O_NOFOLLOW || 0),
+    );
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw new Error("当日交付恢复标记不可安全读取，已停止写入并保留现有目录");
+  }
+  try {
+    const stat = await handle.stat();
+    if (!stat.isFile()) throw new Error("恢复标记不是普通文件");
+    return JSON.parse(await handle.readFile("utf8")) as DailyDeliveryRun;
+  } catch {
+    throw new Error("当日交付恢复标记损坏，已停止写入并保留现有目录");
+  } finally {
+    await handle.close();
+  }
+}
+
+export interface DailyDeliveryExecutionHooks {
+  /** Test-only crash boundary after mkdir and before the in-directory marker. */
+  afterFinalDirectoryCreated?: () => Promise<void> | void;
+  /** Test-only mutation boundary after one source evidence read and before copy. */
+  afterSourceEvidenceRead?: (
+    sourceFile: string,
+    relativePath: string,
+  ) => Promise<void> | void;
 }
 
 export async function authorizeDailyDeliveryArtifact(
@@ -576,6 +759,11 @@ export async function authorizeDailyDeliveryArtifact(
     identity,
     "交付目的地",
   );
+  if (
+    !inside(path.resolve(run.finalPath), destinationParent) ||
+    path.dirname(path.resolve(run.finalPath)) !== destinationParent
+  )
+    throw new Error("交付最终目录已经越出原交付目的地，已停止发布报告");
   const expectedFinal = path.join(
     destinationParent,
     path.basename(run.finalPath),
@@ -616,6 +804,61 @@ export async function authorizeDailyDeliveryArtifact(
   return target;
 }
 
+export function dailyDeliveryReportFileName(run: DailyDeliveryRun) {
+  return `Kocpy_${run.shootingDate.replace(/-/g, "")}_${run.id.slice(0, 8)}_当日交付报告.pdf`;
+}
+
+export async function verifyPublishedDailyDeliveryReport(
+  run: DailyDeliveryRun,
+  target: string,
+  expectedSha256: string,
+) {
+  if (!/^[a-f0-9]{64}$/i.test(expectedSha256))
+    throw new Error("当日交付报告期望摘要无效");
+  const authorizedPath = await authorizeDailyDeliveryArtifact(
+    run,
+    dailyDeliveryReportFileName(run),
+  );
+  if (authorizedPath !== target)
+    throw new Error("当日交付报告目标已经偏离授权路径");
+  const actualSha256 = await hashFile(authorizedPath, "sha256");
+  if (actualSha256 !== expectedSha256)
+    throw new Error("当日交付报告落盘回读摘要不一致，未记录为完成");
+  return { authorizedPath, actualSha256 };
+}
+
+export async function reauthorizeRecordedDailyDeliveryReport(
+  run: DailyDeliveryRun,
+) {
+  const recordedPath = run.reportPaths?.[0];
+  if (!recordedPath || !run.reportSha256) return undefined;
+
+  // A persisted path is evidence, not authority. Rebuild the only permitted
+  // path from the immutable run snapshot and re-check the directory/volume
+  // before reading either the recorded digest or the file itself.
+  const authorizedPath = await authorizeDailyDeliveryArtifact(
+    run,
+    dailyDeliveryReportFileName(run),
+  );
+  if (run.reportPaths?.length !== 1 || recordedPath !== authorizedPath)
+    throw new Error("已记录的当日交付报告路径不再属于该交付任务");
+  const digestKeys = Object.keys(run.reportSha256),
+    recordedDigest = run.reportSha256[authorizedPath];
+  if (
+    digestKeys.length !== 1 ||
+    digestKeys[0] !== authorizedPath ||
+    !/^[a-f0-9]{64}$/i.test(recordedDigest || "")
+  )
+    throw new Error("已记录的当日交付报告摘要无效");
+  let actualDigest: string | undefined;
+  try {
+    actualDigest = await hashFile(authorizedPath, "sha256");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  return { authorizedPath, recordedDigest, actualDigest };
+}
+
 function mhlForDelivery(task: BackupTask, run: DailyDeliveryRun) {
   const created = new Date(run.completedAt || Date.now()).toISOString();
   return `<?xml version="1.0" encoding="UTF-8"?>\n<hashlist version="1.1"><creator><name>Kocpy</name><date>${xml(created)}</date></creator><process><note>${xml(`Daily delivery from immutable task ${task.id}`)}</note></process><hashes>${run.files
@@ -635,6 +878,7 @@ export async function executeDailyDeliveryRun(
   plan: CardDateAllocationPlan,
   run: DailyDeliveryRun,
   checkpoint: (run: DailyDeliveryRun) => Promise<void> = async () => {},
+  hooks: DailyDeliveryExecutionHooks = {},
 ) {
   const records = selectedRecords(task, plan, run.shootingDate);
   if (run.sourceTaskId !== task.id) throw new Error("当日交付不属于该素材卷");
@@ -659,32 +903,50 @@ export async function executeDailyDeliveryRun(
     throw new Error("交付目的地解析结果发生变化，已停止写入");
   const sourceIdentity = await volumeIdentity(sourceRoot),
     destinationIdentity = await volumeIdentity(destinationParent);
-  assertVolumeIdentity(run.sourceVolumeUuid, run.sourceVolumeId, sourceIdentity, "完整素材卷副本");
-  assertVolumeIdentity(run.destinationVolumeUuid, run.destinationVolumeId, destinationIdentity, "交付目的地");
+  assertVolumeIdentity(
+    run.sourceVolumeUuid,
+    run.sourceVolumeId,
+    sourceIdentity,
+    "完整素材卷副本",
+  );
+  assertVolumeIdentity(
+    run.destinationVolumeUuid,
+    run.destinationVolumeId,
+    destinationIdentity,
+    "交付目的地",
+  );
   await validatePaths(sourceRoot, [destinationParent]);
-  const markerPath = path.join(finalPath, ".kocpy-daily-delivery.json");
+  const markerPath = path.join(finalPath, ".kocpy-daily-delivery.json"),
+    ownershipPath = dailyDeliveryOwnershipPath(run);
   let existingMarker: DailyDeliveryRun | undefined;
   try {
     const stat = await fs.lstat(finalPath);
     if (!stat.isDirectory() || stat.isSymbolicLink())
       throw new Error("交付最终路径已存在且不是安全目录");
     existingMarker = await readMarker(markerPath);
-    if (!existingMarker || existingMarker.id !== run.id)
+    if (!existingMarker) {
+      if (!(await readDailyDeliveryOwnership(ownershipPath, run)))
+        throw new Error("交付最终目录已存在且不属于本次任务，禁止覆盖或合并");
+      await assertBootstrapDeliveryDirectory(finalPath, markerPath);
+    } else if (existingMarker.id !== run.id) {
       throw new Error("交付最终目录已存在且不属于本次任务，禁止覆盖或合并");
+    }
     const immutableMarkerFields = [
-      "sourceTaskId",
-      "shootingDate",
-      "sourceDestinationId",
-      "sourceRoot",
-      "destinationParent",
-      "finalPath",
-      "allocationDigest",
-      "totalFiles",
-      "totalBytes",
-    ] as const;
+        "sourceTaskId",
+        "shootingDate",
+        "sourceDestinationId",
+        "sourceRoot",
+        "destinationParent",
+        "finalPath",
+        "allocationDigest",
+        "totalFiles",
+        "totalBytes",
+      ] as const,
+      markerToValidate = existingMarker;
     if (
+      markerToValidate &&
       immutableMarkerFields.some(
-        (field) => existingMarker![field] !== run[field],
+        (field) => markerToValidate[field] !== run[field],
       )
     )
       throw new Error("当日交付恢复标记与权威任务记录不一致，已停止写入");
@@ -692,18 +954,29 @@ export async function executeDailyDeliveryRun(
       records.map((record) => [record.relativePath, record]),
     );
     if (
-      new Set(existingMarker.files.map((file) => file.relativePath)).size !==
-        existingMarker.files.length ||
-      existingMarker.files.some(
-        (file) =>
-          !expected.has(file.relativePath) ||
-          expected.get(file.relativePath)!.size !== file.size,
-      )
+      markerToValidate &&
+      (new Set(markerToValidate.files.map((file) => file.relativePath)).size !==
+        markerToValidate.files.length ||
+        markerToValidate.files.some(
+          (file) =>
+            !expected.has(file.relativePath) ||
+            expected.get(file.relativePath)!.size !== file.size,
+        ))
     )
       throw new Error("当日交付恢复标记包含范围外文件，已停止写入");
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    await fs.mkdir(finalPath, { recursive: false });
+    const ownership = await acquireDailyDeliveryOwnership(ownershipPath, run);
+    try {
+      await fs.mkdir(finalPath, { recursive: false });
+    } catch (mkdirError) {
+      if (ownership.created)
+        await releaseDailyDeliveryOwnership(ownershipPath, run).catch(
+          () => undefined,
+        );
+      throw mkdirError;
+    }
+    await hooks.afterFinalDirectoryCreated?.();
   }
   run = {
     ...run,
@@ -720,32 +993,36 @@ export async function executeDailyDeliveryRun(
   };
   await writeJsonAtomic(markerPath, run);
   await checkpoint(run);
+  await releaseDailyDeliveryOwnership(ownershipPath, run);
   const mediaRoot = path.join(finalPath, "Media");
   await fs.mkdir(mediaRoot, { recursive: true });
   try {
-    const completed = new Map(run.files.map((file) => [file.relativePath, file]));
+    const completed = new Map(
+      run.files.map((file) => [file.relativePath, file]),
+    );
     for (const record of records) {
       const destinationRecord = record.destinations[sourceDestinationIndex];
       if (!destinationRecord?.verified)
         throw new Error(`所选完整副本未通过该文件校验：${record.relativePath}`);
       const sourceFile = await canonical(destinationRecord.path);
       if (!inside(sourceFile, sourceRoot))
-        throw new Error(`完整副本文件路径越出素材卷目录：${record.relativePath}`);
+        throw new Error(
+          `完整副本文件路径越出素材卷目录：${record.relativePath}`,
+        );
       const stat = await fs.stat(sourceFile);
       if (!stat.isFile() || stat.size !== record.size)
         throw new Error(`完整副本文件大小与记录不一致：${record.relativePath}`);
-      const sourceHashes = ["md5", "sha1", "sha256"].includes(task.hashAlgorithm)
-          ? await dualHashFile(
-              sourceFile,
-              task.hashAlgorithm as "md5" | "sha1" | "sha256",
-            )
-          : {
-              other: await hashFile(sourceFile, task.hashAlgorithm),
-              sha256: await hashFile(sourceFile, "sha256"),
-            },
+      const sourceHashes = await dualHashFile(
+          sourceFile,
+          task.hashAlgorithm,
+          () =>
+            hooks.afterSourceEvidenceRead?.(sourceFile, record.relativePath),
+        ),
         sourceOriginalChecksum = sourceHashes.other;
       if (sourceOriginalChecksum !== record.srcChecksum)
-        throw new Error(`完整副本内容已偏离原始校验记录：${record.relativePath}`);
+        throw new Error(
+          `完整副本内容已偏离原始校验记录：${record.relativePath}`,
+        );
       const sourceSha256 = sourceHashes.sha256,
         existing = completed.get(record.relativePath),
         output = await safeChild(mediaRoot, record.relativePath);
@@ -769,7 +1046,9 @@ export async function executeDailyDeliveryRun(
         run.publicationInProgress.finalPath === output;
       if (outputExists) {
         if (!ownsPublication)
-          throw new Error(`交付位置已有未登记文件，已保留并停止：${record.relativePath}`);
+          throw new Error(
+            `交付位置已有未登记文件，已保留并停止：${record.relativePath}`,
+          );
         const recovered = await hashFile(output, "sha256");
         if (recovered === sourceSha256) {
           await fs.unlink(staging).catch(() => undefined);
@@ -786,7 +1065,10 @@ export async function executeDailyDeliveryRun(
             left.relativePath.localeCompare(right.relativePath),
           );
           run.completedFiles = run.files.length;
-          run.completedBytes = run.files.reduce((sum, file) => sum + file.size, 0);
+          run.completedBytes = run.files.reduce(
+            (sum, file) => sum + file.size,
+            0,
+          );
           await writeJsonAtomic(markerPath, run);
           await checkpoint(run);
           continue;
@@ -843,7 +1125,10 @@ export async function executeDailyDeliveryRun(
       await writeJsonAtomic(markerPath, run);
       await checkpoint(run);
     }
-    if (run.files.length !== run.totalFiles || run.completedBytes !== run.totalBytes)
+    if (
+      run.files.length !== run.totalFiles ||
+      run.completedBytes !== run.totalBytes
+    )
       throw new Error("交付文件统计与确认范围不一致");
     run.completedAt ||= Date.now();
     const base = `Kocpy_${run.shootingDate.replace(/-/g, "")}_${run.id.slice(0, 8)}`,
@@ -898,10 +1183,15 @@ export async function executeDailyDeliveryRun(
   }
 }
 
-export function dailyDeliveryReportHtml(task: BackupTask, run: DailyDeliveryRun) {
+export function dailyDeliveryReportHtml(
+  task: BackupTask,
+  run: DailyDeliveryRun,
+) {
   const formatBytes = (bytes: number) => {
     const units = ["B", "KB", "MB", "GB", "TB"],
-      index = bytes ? Math.min(4, Math.floor(Math.log(bytes) / Math.log(1024))) : 0;
+      index = bytes
+        ? Math.min(4, Math.floor(Math.log(bytes) / Math.log(1024)))
+        : 0;
     return `${(bytes / 1024 ** index).toLocaleString("zh-CN", { maximumFractionDigits: index > 1 ? 2 : 0 })} ${units[index]}`;
   };
   const rows = run.files
@@ -916,14 +1206,34 @@ export function dailyDeliveryReportHtml(task: BackupTask, run: DailyDeliveryRun)
   );
 }
 
-/** Read one file once and return both SHA-256 and another supported hash. */
-async function dualHashFile(file: string, other: "md5" | "sha1" | "sha256") {
+/** Read one file once and return both SHA-256 and its recorded hash. */
+async function dualHashFile(
+  file: string,
+  other: HashAlgorithm,
+  afterRead?: () => Promise<void> | void,
+) {
   const sha256 = createHash("sha256"),
-    secondary = other === "sha256" ? sha256 : createHash(other);
-  for await (const chunk of createReadStream(file, { highWaterMark: 4 * 1024 * 1024 })) {
+    secondary =
+      other === "xxhash32"
+        ? new XxHash32()
+        : other === "sha256"
+          ? sha256
+          : createHash(other);
+  for await (const chunk of createReadStream(file, {
+    highWaterMark: 4 * 1024 * 1024,
+  })) {
     sha256.update(chunk);
     if (secondary !== sha256) secondary.update(chunk);
   }
+  await afterRead?.();
   const primary = sha256.digest("hex");
-  return { sha256: primary, other: secondary === sha256 ? primary : secondary.digest("hex") };
+  return {
+    sha256: primary,
+    other:
+      secondary === sha256
+        ? primary
+        : secondary instanceof XxHash32
+          ? secondary.digestDecimal()
+          : secondary.digest("hex"),
+  };
 }

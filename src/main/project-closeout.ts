@@ -268,6 +268,7 @@ export function projectDaySummary(
     unconfirmed,
     risk,
     current,
+    future: day > shootingDateKey(referenceDate),
     forceExpanded: current || risk > 0,
   };
 }

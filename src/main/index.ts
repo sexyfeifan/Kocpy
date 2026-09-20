@@ -85,12 +85,16 @@ import {
   applyCardDateAllocationDecisions,
   authorizeDailyDeliveryArtifact,
   buildCardDateAllocation,
+  dailyDeliveryReportFileName,
   dailyDeliveryReportHtml,
   executeDailyDeliveryRun,
   prepareDailyDeliveryRun,
+  reauthorizeRecordedDailyDeliveryReport,
+  verifyPublishedDailyDeliveryReport,
 } from "./mixed-day-delivery";
 import {
   beginCompletionAction,
+  createExclusiveArtifactDirectory,
   ensureCompletionActionPlan,
   failCompletionAction,
   finishCompletionAction,
@@ -98,9 +102,15 @@ import {
   recoverInterruptedCompletionActions,
   sha256Bytes,
   skipCompletionAction,
+  syncArtifactExclusive,
+  verifyPublishedArtifact,
 } from "./completion-automation";
 import {
+  automaticReportBlocksDestinationEject,
+  automaticReportBlocksTaskMutation,
   automaticReportEligible,
+  automaticReportWriteInProgress,
+  reconcileAutomaticReportDestinations,
   runAutomaticReport,
   verifiedAutomaticReportPaths,
 } from "./automatic-report";
@@ -116,6 +126,11 @@ import {
   updateArchiveEvidence,
 } from "./archive-evidence";
 import { taskArchiveBaseline, verifyArchiveTask } from "./archive-verification";
+import {
+  assertRecordedDirectoryScope,
+  inspectRecordedDirectoryScope,
+  repairRecordedDirectoryScope,
+} from "./inventory-baseline";
 import { repairArchiveFile } from "./archive-repair";
 import { compareVersions, selectMacAsset, type GitHubRelease } from "./update";
 import {
@@ -134,9 +149,11 @@ import {
   type ProjectDirectoryCleanupJournal,
 } from "./project-directory-cleanup";
 import {
+  assertProjectDirectoryCleanupJournalIdle,
   clearProjectDirectoryCleanupJournal,
   readProjectDirectoryCleanupJournal,
   reconcileProjectDirectoryCleanupJournal,
+  withProjectDirectoryCleanupMutation,
   writeProjectDirectoryCleanupJournal,
 } from "./project-directory-cleanup-journal";
 import {
@@ -225,10 +242,11 @@ import {
 import { normalizeProject } from "./project-normalization";
 import {
   ArchiveTransferManager,
+  loadArchiveTransferTasks,
   summarizeArchiveTransfer,
   type ArchiveTransferContext,
+  type ArchiveTransferLoadResult,
   type ArchiveTransferReportSnapshot,
-  type ArchiveTransferTask,
 } from "./archive-transfer";
 import {
   buildArchiveTransferDetailHtml,
@@ -487,17 +505,16 @@ const projectDirectoryCleanupPreviews = new Map<
 >();
 let pendingProjectDirectoryCleanup: ProjectDirectoryCleanupJournal | undefined,
   pendingProjectDirectoryCleanupError: string | undefined;
-const assertNoPendingProjectDirectoryCleanup = (projectId: string) => {
-  if (
-    !pendingProjectDirectoryCleanupError &&
-    pendingProjectDirectoryCleanup?.projectId !== projectId
-  )
-    return;
-  throw new Error(
-    pendingProjectDirectoryCleanupError ||
-      "该项目有一次空目录整理等待恢复调和。请重启 Kocpy 完成调和；在此之前不会补目录、重复整理或删除项目。",
+const assertNoPendingProjectDirectoryCleanup = (
+  projectId: string,
+  scope: "project" | "global" = "project",
+) =>
+  assertProjectDirectoryCleanupJournalIdle(
+    pendingProjectDirectoryCleanup,
+    pendingProjectDirectoryCleanupError,
+    projectId,
+    scope,
   );
-};
 const operations = new OperationRegistry((records) =>
   store.write("operation-history.json", records),
 );
@@ -812,8 +829,8 @@ const maintenanceNames: Record<string, string> = {
   "archive:repair-copy": "修复归档副本",
   "archive:audit-untracked": "扫描未记录文件",
   "archive:move-copy": "更新副本位置",
-  "archive-transfer:start": "归档转存到 NAS",
-  "archive-transfer:resume": "恢复 NAS 归档转存",
+  "archive-transfer:start": "归档转存到 NAS / 已挂载目录",
+  "archive-transfer:resume": "恢复归档转存",
   "archive-transfer:retry-reports": "重试归档转存报告",
   "workspace:cold-archive": "冷归档",
   "workspace:restore-cold": "恢复冷归档",
@@ -966,10 +983,7 @@ async function refreshNasHealth() {
 async function syncReport(file: string) {
   const settings = await readSettings();
   if (!settings.reportSyncPath) return;
-  await fs.mkdir(settings.reportSyncPath, { recursive: true });
-  const target = path.join(settings.reportSyncPath, path.basename(file));
-  if (path.resolve(target) !== path.resolve(file))
-    await fs.copyFile(file, target);
+  await syncArtifactExclusive(file, settings.reportSyncPath);
 }
 async function writeProjectJsonStream(
   file: string,
@@ -1032,26 +1046,24 @@ async function publishDailyDeliveryReport(
 ) {
   if (run.status !== "completed")
     throw new Error("当日交付数据尚未完成校验，不能生成通过报告");
-  const recordedPath = run.reportPaths?.[0],
-    recordedDigest = recordedPath && run.reportSha256?.[recordedPath];
-  if (recordedPath && recordedDigest) {
-    const actual = await hashFile(recordedPath, "sha256").catch(
-      () => undefined,
-    );
-    if (actual === recordedDigest) {
+  const recorded = await reauthorizeRecordedDailyDeliveryReport(run);
+  if (recorded) {
+    if (recorded.actualDigest === recorded.recordedDigest) {
       run.reportStatus = "completed";
       run.reportError = undefined;
       upsertDailyDeliveryRun(task, run);
       await persist(true);
       return run;
     }
-    if (actual)
+    if (recorded.actualDigest)
       throw new Error(
-        `已记录的报告路径内容发生变化，Kocpy 未覆盖：${recordedPath}`,
+        `已记录的报告路径内容发生变化，Kocpy 未覆盖：${recorded.authorizedPath}`,
       );
   }
-  const fileName = `Kocpy_${run.shootingDate.replace(/-/g, "")}_${run.id.slice(0, 8)}_当日交付报告.pdf`,
-    target = await authorizeDailyDeliveryArtifact(run, fileName),
+  const fileName = dailyDeliveryReportFileName(run),
+    target =
+      recorded?.authorizedPath ||
+      (await authorizeDailyDeliveryArtifact(run, fileName)),
     value = await htmlToPdf(dailyDeliveryReportHtml(task, run)),
     digest = sha256Bytes(value);
   run.reportStatus = "pending";
@@ -1067,6 +1079,7 @@ async function publishDailyDeliveryReport(
     await authorizeDailyDeliveryArtifact(run, fileName);
     await publishNewArtifact(target, value);
   }
+  await verifyPublishedDailyDeliveryReport(run, target, digest);
   run.reportStatus = "completed";
   upsertDailyDeliveryRun(task, run);
   await persist(true);
@@ -1105,54 +1118,42 @@ async function htmlToPng(html: Buffer | string) {
     report.destroy();
   }
 }
-async function writeExclusiveArtifact(file: string, data: Buffer) {
-  const handle = await fs.open(file, "wx", 0o644);
-  try {
-    await handle.writeFile(data);
-    await handle.sync();
-  } finally {
-    await handle.close();
-  }
-}
 async function renderArchiveTransferReports(
   snapshot: ArchiveTransferReportSnapshot,
   artifactReportId: string,
 ) {
   if (!/^KAT-[A-Z0-9TZ-]+(?:-R\d+)?$/.test(artifactReportId))
     throw new Error("报告编号无效，已停止发布");
-  const reportDirectory = path.join(snapshot.finalPath, "Kocpy报告"),
-    pdfPath = path.join(
-      reportDirectory,
-      `Kocpy_NAS归档_${artifactReportId}.pdf`,
-    ),
-    pngPath = path.join(
-      reportDirectory,
-      `Kocpy_NAS归档_${artifactReportId}.png`,
-    );
-  const finalReal = await fs.realpath(snapshot.finalPath);
-  if (finalReal !== snapshot.finalPath)
-    throw new Error("归档目标现在通过别名指向其他位置，报告未写入");
-  const reportStat = await fs.lstat(reportDirectory).catch((error) => {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-    throw error;
-  });
-  if (reportStat && (!reportStat.isDirectory() || reportStat.isSymbolicLink()))
-    throw new Error("Kocpy报告 位置不是安全的普通目录，报告未写入");
-  if (!reportStat) await fs.mkdir(reportDirectory);
-  if ((await fs.realpath(reportDirectory)) !== reportDirectory)
-    throw new Error("Kocpy报告 目录通过别名指向其他位置，报告未写入");
   const [pdf, png] = await Promise.all([
     htmlToPdf(buildArchiveTransferDetailHtml(snapshot, artifactReportId)),
     htmlToPng(buildArchiveTransferSummaryHtml(snapshot, artifactReportId)),
   ]);
-  await writeExclusiveArtifact(pdfPath, pdf);
-  await writeExclusiveArtifact(pngPath, png);
-  await syncFileAndParent(pdfPath);
-  await syncFileAndParent(pngPath);
-  return { pdfPath, pngPath };
+  return { pdf, png };
 }
 
 const automaticReportRuns = new Map<string, Promise<unknown>>();
+function assertAutomaticReportIdleForTaskMutation(
+  task: BackupTask,
+  action: string,
+) {
+  const blocked = automaticReportBlocksTaskMutation(
+      task,
+      automaticReportRuns.has(task.id),
+    );
+  if (blocked)
+    throw new Error(
+      `自动 PDF 报告正在生成或恢复，暂不能${action}。请等待报告完成，或在失败后查看详情并重试。`,
+    );
+}
+function assertAutomaticReportNotWritingForTaskMutation(
+  task: BackupTask,
+  action: string,
+) {
+  if (automaticReportWriteInProgress(task, automaticReportRuns.has(task.id)))
+    throw new Error(
+      `自动 PDF 报告正在写入，暂不能${action}。请等待当前报告操作结束后重试。`,
+    );
+}
 function enqueueAutomaticReport(task: BackupTask) {
   const existing = automaticReportRuns.get(task.id);
   if (existing) return existing;
@@ -1202,6 +1203,7 @@ function enqueueAutomaticReport(task: BackupTask) {
           throw new Error(`报告目标不是实际文件：${outputPath}`);
         return hashFile(outputPath, "sha256");
       },
+      readArtifact: (outputPath) => fs.readFile(outputPath),
       publish: publishNewArtifact,
     });
     if (main && !main.isDestroyed())
@@ -1305,6 +1307,7 @@ async function executeCompletionAction(
       record.outputSha256 = { [target]: digest };
       await persist(true);
       await publishNewArtifact(target, value);
+      await verifyPublishedArtifact(target, digest);
       finishCompletionAction(record, {
         result: `${completionActionLabel[action]}完成：${target}`,
         outputPaths: [target],
@@ -1750,9 +1753,34 @@ app.whenReady().then(async () => {
         main.webContents.send("archive-transfer:progress", progress);
     },
   });
-  await archiveTransferManager.initialize(
-    await store.read<ArchiveTransferTask[]>("archive-transfers.json", []),
-  );
+  try {
+    const loadedArchiveTransfers =
+      await store.readValidatedWithSource<ArchiveTransferLoadResult>(
+        "archive-transfers.json",
+        { tasks: [], migrated: false },
+        (value) => loadArchiveTransferTasks(value),
+      );
+    if (loadedArchiveTransfers.value.migrated) {
+      if (loadedArchiveTransfers.source === "backup")
+        await store.writeRecovered(
+          "archive-transfers.json",
+          loadedArchiveTransfers.value.tasks,
+        );
+      else
+        await store.write(
+          "archive-transfers.json",
+          loadedArchiveTransfers.value.tasks,
+        );
+    }
+    await archiveTransferManager.initialize(loadedArchiveTransfers.value.tasks);
+  } catch (error) {
+    dialog.showErrorBox(
+      "归档转存记录需要处理",
+      `${error instanceof Error ? error.message : String(error)}\n\nKocpy 未继续启动，也没有改写归档目标。请保留 archive-transfers.json 及其 .bak 备份用于诊断。`,
+    );
+    app.exit(1);
+    return;
+  }
   await pruneMediaCache(
     path.join(app.getPath("userData"), "thumbnails"),
     Math.max(1, Math.min(100, initialSettings.thumbnailCacheGiB || 2)) *
@@ -2281,6 +2309,9 @@ app.whenReady().then(async () => {
   });
   handle("tasks:reverify", async (id: string) => {
     return withBackupPriority(async () => {
+      const task = engine.getTask(id);
+      if (!task) throw new Error("任务不存在");
+      assertAutomaticReportIdleForTaskMutation(task, "重新校验");
       const result = await engine.reverifyTask(id);
       await persist();
       return result;
@@ -2288,6 +2319,9 @@ app.whenReady().then(async () => {
   });
   handle("tasks:retry-failed", async (id: string) => {
     return withBackupPriority(async () => {
+      const task = engine.getTask(id);
+      if (!task) throw new Error("任务不存在");
+      assertAutomaticReportIdleForTaskMutation(task, "重试失败目标");
       engine.retryFailedDestinations(id);
       await persist();
       return true;
@@ -2301,6 +2335,7 @@ app.whenReady().then(async () => {
   handle("tasks:recover", async (id: string) => {
     const task = engine.getTask(id);
     if (!task) throw new Error("任务不存在");
+    assertAutomaticReportIdleForTaskMutation(task, "恢复任务");
     const report = await inspectTaskRecovery(task);
     if (!report.canRetry)
       throw new Error("当前尚不满足安全重试条件，请重新检查并处理标出的项目。");
@@ -2313,6 +2348,7 @@ app.whenReady().then(async () => {
   handle("tasks:delete", async (id: string) => {
     const task = engine.getTask(id);
     if (!task) return true;
+    assertAutomaticReportIdleForTaskMutation(task, "删除任务记录");
     engine.deleteTask(id);
     try {
       await persist(true);
@@ -2603,6 +2639,14 @@ app.whenReady().then(async () => {
     )
       throw new Error("该磁盘有进行中或等待中的任务，请先取消任务");
     if (
+      engine
+        .getAllTasks()
+        .some((task) => automaticReportBlocksDestinationEject(task, volume))
+    )
+      throw new Error(
+        "该磁盘的自动 PDF 报告尚未完成；请在任务详情等待或重试报告后再推出",
+      );
+    if (
       proxyJobs.some(
         (job) =>
           ["pending", "running", "paused"].includes(job.status) &&
@@ -2638,6 +2682,20 @@ app.whenReady().then(async () => {
             path: volume.path,
             ok: false,
             error: "仍有进行中任务",
+          });
+          continue;
+        }
+        if (
+          engine
+            .getAllTasks()
+            .some((task) =>
+              automaticReportBlocksDestinationEject(task, volume.path),
+            )
+        ) {
+          results.push({
+            path: volume.path,
+            ok: false,
+            error: "自动 PDF 报告尚未完成，请在任务详情等待或重试",
           });
           continue;
         }
@@ -2930,6 +2988,8 @@ app.whenReady().then(async () => {
         ),
       );
     if (!tasks.length) throw new Error("范围内没有素材记录");
+    for (const task of tasks)
+      assertAutomaticReportNotWritingForTaskMutation(task, "执行归档复校验");
     const taskResults: ArchiveVerificationTaskResult[] = [],
       changes: Array<Omit<ArchiveChangeRecord, "previousDigest" | "digest">> =
         [],
@@ -2961,6 +3021,7 @@ app.whenReady().then(async () => {
             checkedCopies: 0,
             verifiedCopies: 0,
             missingFiles: 0,
+            missingDirectories: 0,
             damagedFiles: 0,
             offlineCopies: 0,
             identityUnknownCopies: 0,
@@ -2997,6 +3058,7 @@ app.whenReady().then(async () => {
         (sum, item) =>
           sum +
           item.missingFiles +
+          (item.missingDirectories || 0) +
           item.damagedFiles +
           item.offlineCopies +
           item.identityUnknownCopies,
@@ -3082,6 +3144,15 @@ app.whenReady().then(async () => {
         (task) => updatedTasks.get(task.id) || task,
       );
     await commitArchiveEvidence(evidence, committedTasks);
+    for (const taskId of updatedTasks.keys()) {
+      const task = engine.getTask(taskId);
+      if (
+        task &&
+        automaticReportEligible(task) &&
+        task.automaticReport?.status !== "completed"
+      )
+        void enqueueAutomaticReport(task).catch(() => undefined);
+    }
     return { changes: evidence.changes.slice(-changes.length), record, run };
   };
   handle("archive:verify-scope", verifyArchiveScopeOperation);
@@ -3157,6 +3228,7 @@ app.whenReady().then(async () => {
           (item) => item.id === destinationId,
         );
       if (!task || !destination) throw new Error("副本记录不存在");
+      assertAutomaticReportIdleForTaskMutation(task, "更新副本位置");
       if (!path.isAbsolute(newPath)) throw new Error("请选择有效的新位置");
       const from = destination.resolvedPath || destination.path,
         previousVolumeId = destination.volumeUuid || destination.volumeId,
@@ -3178,6 +3250,7 @@ app.whenReady().then(async () => {
       destination.volumeUuid = identity.uuid;
       destination.volumeName = identity.name;
       destination.verified = false;
+      reconcileAutomaticReportDestinations(task);
       const evidence = updateArchiveEvidence(currentArchiveEvidence(), {
         changes: [
           {
@@ -3247,6 +3320,7 @@ app.whenReady().then(async () => {
         const tasks = workspace.getTasks(),
           task = tasks.find((item) => item.id === taskId);
         if (!task) throw new Error("任务不存在");
+        assertAutomaticReportNotWritingForTaskMutation(task, "修复归档副本");
         const target = task.destinations.find(
           (destination) => destination.id === destinationId,
         );
@@ -3257,12 +3331,38 @@ app.whenReady().then(async () => {
               inside(copy.path, target.resolvedPath || target.path) &&
               !copy.verified,
           ),
-        );
+        ),
+          targetRoot = target.resolvedPath || target.path,
+          targetDirectoryInspection = await inspectRecordedDirectoryScope(
+            task,
+            targetRoot,
+          );
         const sourceRoots = task.destinations
           .filter((item) => item.id !== target.id && item.verified)
           .map((item) => item.resolvedPath || item.path);
-        if (!repairFiles.length)
-          throw new Error("该副本没有待修复文件，请刷新记录。");
+        let healthyDirectorySource:
+          | { destination: BackupTask["destinations"][number]; root: string }
+          | undefined;
+        if (targetDirectoryInspection.issues.length)
+          for (const candidate of task.destinations.filter(
+            (item) => item.id !== target.id && item.verified,
+          )) {
+            const root = candidate.resolvedPath || candidate.path,
+              inspection = await inspectRecordedDirectoryScope(task, root);
+            if (!inspection.issues.length) {
+              healthyDirectorySource = { destination: candidate, root };
+              break;
+            }
+          }
+        if (
+          targetDirectoryInspection.issues.length &&
+          !healthyDirectorySource
+        )
+          throw new Error(
+            "目标缺少目录结构，但没有可重新核验的健康副本用于授权修复。",
+          );
+        if (!repairFiles.length && !targetDirectoryInspection.issues.length)
+          throw new Error("该副本没有待修复文件或目录，请刷新记录。");
         if (
           !(await confirmOperation(
             "从健康副本修复归档文件？",
@@ -3276,7 +3376,9 @@ app.whenReady().then(async () => {
               (target.volumeUuid || target.volumeId || "待现场核验") +
               "\n待修复：" +
               repairFiles.length +
-              " 个文件 / " +
+              " 个文件、" +
+              targetDirectoryInspection.issues.length +
+              " 个目录问题 / " +
               repairFiles.reduce((sum, file) => sum + file.size, 0) +
               " 字节\n写入前复核来源哈希，原损坏文件另名保留。中途失败可能已有部分文件修复，未完成项仍须处理。",
           ))
@@ -3291,6 +3393,17 @@ app.whenReady().then(async () => {
           targetIdentity,
           "修复目标 ",
         );
+        if (healthyDirectorySource) {
+          const sourceIdentity = await volumeIdentity(
+            healthyDirectorySource.root,
+          );
+          assertVolumeIdentity(
+            healthyDirectorySource.destination.volumeUuid,
+            healthyDirectorySource.destination.volumeId,
+            sourceIdentity,
+            "目录修复来源 ",
+          );
+        }
         const operationId = randomUUID(),
           recoveryFile = "archive-repair-recovery.json",
           recovery = {
@@ -3310,6 +3423,7 @@ app.whenReady().then(async () => {
           > = [];
         await store.write(recoveryFile, recovery);
         let repaired = 0,
+          repairedDirectories = 0,
           preservedDamagedOriginals = 0,
           repairRecorded = false,
           activeRepair:
@@ -3322,6 +3436,41 @@ app.whenReady().then(async () => {
               }
             | undefined;
         try {
+          if (healthyDirectorySource) {
+            const repairedScope = await repairRecordedDirectoryScope(
+              task,
+              healthyDirectorySource.root,
+              targetRoot,
+            );
+            repairedDirectories = repairedScope.created.length;
+            for (const relativePath of repairedScope.created) {
+              const repairedPath = await safeChild(targetRoot, relativePath);
+              repairChanges.push({
+                id: randomUUID(),
+                projectId: task.projectId || "",
+                taskId: task.id,
+                runId: operationId,
+                operator: actualOperator,
+                at: Date.now(),
+                kind: "repaired",
+                path: repairedPath,
+                relativePath,
+                targetVolumeId: targetIdentity.uuid || targetIdentity.id,
+                sourceVolumeId:
+                  healthyDirectorySource.destination.volumeUuid ||
+                  healthyDirectorySource.destination.volumeId,
+                outcome: "completed",
+                note: `${relativePath} 已依据冻结目录范围与健康副本安全重建`,
+              });
+              recovery.events.push({
+                at: Date.now(),
+                relativePath,
+                action: "directory-created",
+                path: repairedPath,
+              });
+            }
+            await store.write(recoveryFile, recovery);
+          }
           for (const record of task.fileRecords) {
             operations.progress({
               message: `修复中 · 已完成 ${repaired}/${repairFiles.length} 个文件`,
@@ -3435,6 +3584,7 @@ app.whenReady().then(async () => {
           );
           return {
             repaired,
+            repairedDirectories,
             preservedDamagedOriginals,
             verificationRunId: verification.run.id,
           };
@@ -3442,7 +3592,12 @@ app.whenReady().then(async () => {
           if (repairRecorded) throw error;
           target.verified = false;
           target.error =
-            "修复未完成：" + repaired + " 个文件已修复；" + String(error);
+            "修复未完成：" +
+            repaired +
+            " 个文件、" +
+            repairedDirectories +
+            " 个目录已修复；" +
+            String(error);
           task.status = "failed";
           task.errorMessage = target.error;
           recovery.status = "failed";
@@ -3450,6 +3605,7 @@ app.whenReady().then(async () => {
             at: Date.now(),
             action: "failed",
             repaired,
+            repairedDirectories,
             error: String(error),
           });
           await store.write(recoveryFile, recovery);
@@ -4733,6 +4889,7 @@ app.whenReady().then(async () => {
         (item) => item.relativePath === relativePath,
       );
     if (!task || !record) throw new Error("素材记录不存在");
+    assertAutomaticReportIdleForTaskMutation(task, "重新关联副本");
     const chosen = await dialog.showOpenDialog({
       properties: ["openDirectory"],
     });
@@ -4782,6 +4939,7 @@ app.whenReady().then(async () => {
       }
     }
     if (!matched) throw new Error("所选目录中没有找到对应素材文件");
+    await assertRecordedDirectoryScope(task, root);
     for (const item of task.fileRecords) {
       const candidate = await safeChild(root, item.relativePath);
       if (
@@ -4815,6 +4973,7 @@ app.whenReady().then(async () => {
     // The first pass is the user-visible preview. Repeat full hashes after the
     // confirmation so a file changed while the dialog was open cannot be
     // associated or relinked on stale evidence.
+    await assertRecordedDirectoryScope(task, root);
     for (const item of task.fileRecords) {
       const candidate = await safeChild(root, item.relativePath);
       if ((await hashFile(candidate, task.hashAlgorithm)) !== item.srcChecksum)
@@ -4864,6 +5023,7 @@ app.whenReady().then(async () => {
     };
     if (associatingCopy) task.destinations.push(destinationValue);
     else Object.assign(destination!, destinationValue);
+    reconcileAutomaticReportDestinations(task);
     if (
       !associatingCopy &&
       existingSourceKey(previousSourcePath) === existingSourceKey(previousRoot)
@@ -4929,6 +5089,7 @@ app.whenReady().then(async () => {
       engine.loadTask(taskBefore);
       throw error;
     }
+    void enqueueAutomaticReport(task).catch(() => undefined);
     return matched;
   });
   handle("system:open-path", async (file: string) => {
@@ -5396,7 +5557,7 @@ app.whenReady().then(async () => {
   handle(
     "projects:preview-directory-cleanup",
     async (projectId: string, input: ProjectDirectoryCleanupInput) => {
-      assertNoPendingProjectDirectoryCleanup(projectId);
+      assertNoPendingProjectDirectoryCleanup(projectId, "global");
       const projects = (await readProjects()).map(normalizeProject),
         project = projects.find((item) => item.id === projectId);
       if (!project) throw new Error("项目不存在");
@@ -5418,45 +5579,48 @@ app.whenReady().then(async () => {
   );
   handle(
     "projects:cleanup-empty-directories",
-    async (projectId: string, previewId: string, operator: string) => {
-      assertNoPendingProjectDirectoryCleanup(projectId);
-      const preview = projectDirectoryCleanupPreviews.get(previewId);
-      if (!preview || preview.projectId !== projectId)
-        throw new Error("空目录整理预览不存在或已经失效，请重新检查");
-      const projects = (await readProjects()).map(normalizeProject),
-        index = projects.findIndex((item) => item.id === projectId);
-      if (index < 0) throw new Error("项目不存在");
-      const workstation = await loadOrCreateWorkstationIdentity(store);
-      let cleanupJournalStarted = false;
-      const result = await executeProjectDirectoryCleanup(
-        projects[index],
-        engine.getAllTasks().filter((task) => task.projectId === projectId),
-        preview,
-        operator,
-        { workstationId: workstation.id },
-        {
-          beforeMutation: async (journal) => {
-            await writeProjectDirectoryCleanupJournal(store, journal);
-            pendingProjectDirectoryCleanup = journal;
-            pendingProjectDirectoryCleanupError = undefined;
-            cleanupJournalStarted = true;
+    async (projectId: string, previewId: string, operator: string) =>
+      withProjectDirectoryCleanupMutation(async () => {
+        // Recheck inside the mutation lock. The earlier preview gate is only a
+        // convenience and must never be treated as journal authority.
+        assertNoPendingProjectDirectoryCleanup(projectId, "global");
+        const preview = projectDirectoryCleanupPreviews.get(previewId);
+        if (!preview || preview.projectId !== projectId)
+          throw new Error("空目录整理预览不存在或已经失效，请重新检查");
+        const projects = (await readProjects()).map(normalizeProject),
+          index = projects.findIndex((item) => item.id === projectId);
+        if (index < 0) throw new Error("项目不存在");
+        const workstation = await loadOrCreateWorkstationIdentity(store);
+        let cleanupJournalStarted = false;
+        const result = await executeProjectDirectoryCleanup(
+          projects[index],
+          engine.getAllTasks().filter((task) => task.projectId === projectId),
+          preview,
+          operator,
+          { workstationId: workstation.id },
+          {
+            beforeMutation: async (journal) => {
+              await writeProjectDirectoryCleanupJournal(store, journal);
+              pendingProjectDirectoryCleanup = journal;
+              pendingProjectDirectoryCleanupError = undefined;
+              cleanupJournalStarted = true;
+            },
+            checkpoint: async (journal) => {
+              await writeProjectDirectoryCleanupJournal(store, journal);
+              pendingProjectDirectoryCleanup = journal;
+            },
           },
-          checkpoint: async (journal) => {
-            await writeProjectDirectoryCleanupJournal(store, journal);
-            pendingProjectDirectoryCleanup = journal;
-          },
-        },
-      );
-      projects[index] = normalizeProject(result.project);
-      await writeProjects(projects);
-      if (cleanupJournalStarted) {
-        await clearProjectDirectoryCleanupJournal(store);
-        pendingProjectDirectoryCleanup = undefined;
-        pendingProjectDirectoryCleanupError = undefined;
-      }
-      projectDirectoryCleanupPreviews.delete(previewId);
-      return { projects, audit: result.audit };
-    },
+        );
+        projects[index] = normalizeProject(result.project);
+        await writeProjects(projects);
+        if (cleanupJournalStarted) {
+          await clearProjectDirectoryCleanupJournal(store);
+          pendingProjectDirectoryCleanup = undefined;
+          pendingProjectDirectoryCleanupError = undefined;
+        }
+        projectDirectoryCleanupPreviews.delete(previewId);
+        return { projects, audit: result.audit };
+      }),
   );
   handle(
     "projects:add-handoff",
@@ -6201,6 +6365,8 @@ app.whenReady().then(async () => {
       const relatedTasks = engine
         .getAllTasks()
         .filter((task) => task.projectId === projectId);
+      for (const task of relatedTasks)
+        assertAutomaticReportIdleForTaskMutation(task, "删除项目记录");
       const deletionPreview = buildProjectDeletionPreview(
         project,
         engine.getAllTasks(),
@@ -6374,11 +6540,10 @@ app.whenReady().then(async () => {
           properties: ["openDirectory", "createDirectory"],
         });
         if (chosen.canceled) return null;
-        const folder = path.join(
+        const folder = await createExclusiveArtifactDirectory(
           chosen.filePaths[0],
           `Kocpy_${segment(project.name)}_项目归档包_${Date.now()}`,
         );
-        await fs.mkdir(folder, { recursive: true });
         const archiveFiles = [
           "项目完整报告.pdf",
           "项目完整数据.json",

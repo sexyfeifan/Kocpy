@@ -174,6 +174,22 @@ const defaults: Settings = {
   thumbnailCacheGiB: 2,
   notificationSound: true,
 };
+
+export type ComposerRequest = {
+  source?: string;
+  project?: ProjectConfig;
+};
+
+export function requestComposerWhenSettingsReady(
+  settingsReady: boolean,
+  request: ComposerRequest,
+  open: (request: ComposerRequest) => void,
+) {
+  if (!settingsReady) return false;
+  open(request);
+  return true;
+}
+
 const duration = (seconds = 0) => {
   const value = Math.max(0, Math.round(seconds));
   const h = Math.floor(value / 3600),
@@ -237,6 +253,23 @@ const completionActionStatus = {
   failed: "执行失败",
   skipped: "本任务已跳过",
 } as const;
+export const canReverifyTask = (task: BackupTask) => {
+  if (task.fileRecords.length !== task.totalFiles) return false;
+  if (task.totalFiles > 0)
+    return task.fileRecords.every((record) => Boolean(record.srcChecksum));
+  const policy = task.inventoryPolicy,
+    scope = task.inventoryScope;
+  return Boolean(
+    policy?.version === "complete-v2" &&
+      scope?.policy?.version === "complete-v2" &&
+      JSON.stringify(scope.policy) === JSON.stringify(policy) &&
+      scope.includedFiles === 0 &&
+      scope.includedBytes === 0 &&
+      Array.isArray(scope.includedDirectoryPaths) &&
+      scope.includedDirectories === scope.includedDirectoryPaths.length &&
+      /^[a-f0-9]{64}$/i.test(scope.fingerprint),
+  );
+};
 function TaskBadge({ task }: { task: BackupTask }) {
   const trust = taskTrustState(task);
   return (
@@ -390,6 +423,10 @@ export function ProjectDayGroups({
         const key = `${project.id}:${summary.shootingDate}`,
           expanded =
             summary.forceExpanded || Boolean(expandedSafeDays[key]),
+          planned =
+            summary.future &&
+            summary.unconfirmed > 0 &&
+            summary.attention === 0,
           rest = Boolean(
             project.restDays?.some(
               (date) =>
@@ -398,7 +435,7 @@ export function ProjectDayGroups({
           );
         return (
           <section
-            className={`project-day-group ${summary.risk ? "risk" : "safe"} ${summary.current ? "current" : ""}`}
+            className={`project-day-group ${summary.risk ? "risk" : planned ? "planned" : "safe"} ${summary.current ? "current" : ""}`}
             key={summary.shootingDate}
           >
             <button
@@ -409,6 +446,10 @@ export function ProjectDayGroups({
               title={
                 summary.forceExpanded
                   ? "当前日期或有风险的日期保持展开"
+                  : planned
+                    ? expanded
+                      ? "折叠这个未来计划日"
+                      : "展开这个未来计划日"
                   : expanded
                     ? "折叠这个已安全日期"
                     : "展开这个已安全日期"
@@ -421,6 +462,7 @@ export function ProjectDayGroups({
                 <CalendarDays size={17} />
                 <strong>{summary.shootingDate.replace(/-/g, "")}</strong>
                 {summary.current && <em>今天</em>}
+                {planned && <em>计划日</em>}
               </span>
               <span className="project-day-summary-metrics">
                 <span>
@@ -436,7 +478,7 @@ export function ProjectDayGroups({
                   <b>
                     {summary.compliantVolumes}/{summary.volumes}
                   </b>{" "}
-                  达标
+                  完整卡副本达标
                 </span>
               </span>
               <span className="project-day-risk-summary">
@@ -619,7 +661,8 @@ export function App() {
     [projects, setProjects] = useState<ProjectConfig[]>([]),
     [proxyJobs, setProxyJobs] = useState<ProxyJob[]>([]),
     [volumes, setVolumes] = useState<Volume[]>([]),
-    [settings, setSettings] = useState<Settings>(defaults);
+    [settings, setSettings] = useState<Settings>(defaults),
+    [settingsReady, setSettingsReady] = useState(false);
   const [composer, setComposer] = useState<{
       source?: string;
       project?: ProjectConfig;
@@ -699,6 +742,18 @@ export function App() {
     clearTimeout(toastTimer.current);
     if (!error) toastTimer.current = setTimeout(() => setToast(null), 7000);
   }, []);
+  const openComposer = useCallback(
+    (request: ComposerRequest = {}) => {
+      const opened = requestComposerWhenSettingsReady(
+        settingsReady,
+        request,
+        setComposer,
+      );
+      if (!opened) notify("正在读取偏好设置，请稍候再新建备份");
+      return opened;
+    },
+    [notify, settingsReady],
+  );
   const act = useCallback(
     async (fn: () => Promise<unknown>, success?: string) => {
       try {
@@ -752,6 +807,7 @@ export function App() {
           setTasks(t);
           setProjects(p);
           setSettings({ ...defaults, ...s });
+          setSettingsReady(true);
           setVolumes(v);
           setProxyJobs(jobs);
         }
@@ -828,7 +884,7 @@ export function App() {
       ].some((node) => node.getClientRects().length > 0);
       if (e.metaKey && e.key.toLowerCase() === "n" && !modalOpen) {
         e.preventDefault();
-        setComposer({});
+        openComposer();
       }
       if (
         e.key === "/" &&
@@ -844,7 +900,7 @@ export function App() {
     };
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
-  }, []);
+  }, [openComposer]);
   const go = (p: Page) => {
     document.querySelector(".page-content")?.scrollTo({ top: 0 });
     setPage(p);
@@ -1055,7 +1111,12 @@ export function App() {
         </div>
       )}
       <div className="volume-actions">
-        <Button kind="subtle" onClick={() => setComposer({ source: v.path })}>
+        <Button
+          kind="subtle"
+          disabled={!settingsReady}
+          disabledReason="正在读取偏好设置，请稍候"
+          onClick={() => openComposer({ source: v.path })}
+        >
           <Plus size={13} />
           用作素材源
         </Button>
@@ -1317,7 +1378,12 @@ export function App() {
             <small>素材工作台</small>
           </div>
         </div>
-        <Button kind="primary new-button" onClick={() => setComposer({})}>
+        <Button
+          kind="primary new-button"
+          disabled={!settingsReady}
+          disabledReason="正在读取偏好设置，请稍候"
+          onClick={() => openComposer()}
+        >
           <Plus size={17} />
           新建备份<span className="key-hint">⌘ N</span>
         </Button>
@@ -1528,7 +1594,12 @@ export function App() {
                 新建项目
               </Button>
             ) : page === "transfers" ? (
-              <Button kind="primary" onClick={() => setComposer({})}>
+              <Button
+                kind="primary"
+                disabled={!settingsReady}
+                disabledReason="正在读取偏好设置，请稍候"
+                onClick={() => openComposer()}
+              >
                 <Plus size={16} />
                 新建备份
               </Button>
@@ -1581,7 +1652,12 @@ export function App() {
                             查看异常
                           </Button>
                         )}
-                        <Button kind="primary" onClick={() => setComposer({})}>
+                        <Button
+                          kind="primary"
+                          disabled={!settingsReady}
+                          disabledReason="正在读取偏好设置，请稍候"
+                          onClick={() => openComposer()}
+                        >
                           <Plus size={15} />
                           继续拷卡
                         </Button>
@@ -1605,7 +1681,12 @@ export function App() {
                           <br />
                           从第一张素材卡开始，建立可靠的工作流。
                         </p>
-                        <Button kind="primary" onClick={() => setComposer({})}>
+                        <Button
+                          kind="primary"
+                          disabled={!settingsReady}
+                          disabledReason="正在读取偏好设置，请稍候"
+                          onClick={() => openComposer()}
+                        >
                           开始一次备份
                           <ArrowUpRight size={17} />
                         </Button>
@@ -1788,7 +1869,9 @@ export function App() {
                           action={
                             <Button
                               kind="subtle"
-                              onClick={() => setComposer({})}
+                              disabled={!settingsReady}
+                              disabledReason="正在读取偏好设置，请稍候"
+                              onClick={() => openComposer()}
                             >
                               <Plus size={14} />
                               新建备份任务
@@ -1878,7 +1961,9 @@ export function App() {
                         !tasks.length && (
                           <Button
                             kind="primary"
-                            onClick={() => setComposer({})}
+                            disabled={!settingsReady}
+                            disabledReason="正在读取偏好设置，请稍候"
+                            onClick={() => openComposer()}
                           >
                             <Plus size={15} />
                             新建备份
@@ -2018,7 +2103,7 @@ export function App() {
                                   检查并恢复
                                 </Button>
                               )}
-                              {task.totalFiles > 0 && (
+                              {canReverifyTask(task) && (
                                 <Button
                                   kind="subtle"
                                   onClick={() =>
@@ -2280,7 +2365,9 @@ export function App() {
                           <div className="project-card-actions">
                             <Button
                               kind="primary"
-                              onClick={() => setComposer({ project: p })}
+                              disabled={!settingsReady}
+                              disabledReason="正在读取偏好设置，请稍候"
+                              onClick={() => openComposer({ project: p })}
                             >
                               <Plus size={16} />
                               <span>新建备份</span>
@@ -2897,6 +2984,16 @@ export function App() {
                                 </span>
                               </div>
                               <TaskBadge task={t} />
+                              {t.automaticReport?.enabled &&
+                                t.automaticReport.status !== "completed" && (
+                                  <Button
+                                    kind="subtle"
+                                    onClick={() => setDetail(t.id)}
+                                  >
+                                    <Eye size={14} />
+                                    查看目的地明细
+                                  </Button>
+                                )}
                               <Button
                                 kind="subtle"
                                 onClick={() => void exportReport(t.id, "pdf")}
@@ -2977,7 +3074,11 @@ export function App() {
                 />
               )}
               {page === "help" && (
-                <HelpPage go={go} openBackup={() => setComposer({})} />
+                <HelpPage
+                  go={go}
+                  openBackup={() => openComposer()}
+                  canOpenBackup={settingsReady}
+                />
               )}
               {page === "settings" && (
                 <SettingsPage
@@ -3091,7 +3192,7 @@ export function App() {
             const task = tasks.find((t) => t.id === recoveryId);
             setRecoveryId(null);
             setDetail(null);
-            setComposer({
+            openComposer({
               source,
               project: projects.find((p) => p.id === task?.projectId),
             });
@@ -3106,7 +3207,7 @@ export function App() {
           }}
         />
       )}
-      {composer && (
+      {settingsReady && composer && (
         <Composer
           initial={composer}
           volumes={volumes}
@@ -3635,6 +3736,48 @@ export function App() {
                   )}
                 </div>
               ))}
+              {selected.automaticReport?.enabled && (
+                <section className="automatic-report-evidence">
+                  <div>
+                    <strong>首次完成校验快照</strong>
+                    <span>
+                      这是首次完成时的不可变 PDF；副本迁移后保留原始字节，旧路径不会伪装成新路径。
+                    </span>
+                  </div>
+                  <div className="automatic-report-targets">
+                    {selected.automaticReport.targets.map((target) => {
+                      const destination = selected.destinations.find(
+                        (item) => item.id === target.destinationId,
+                      );
+                      return (
+                        <div key={target.destinationId}>
+                          <span>
+                            {destination?.label || target.destinationId}
+                          </span>
+                          <code>{target.outputPath}</code>
+                          <small
+                            className={
+                              target.status === "completed"
+                                ? "green-text"
+                                : target.status === "failed"
+                                  ? "red-text"
+                                  : "muted"
+                            }
+                          >
+                            {target.status === "completed"
+                              ? "已回读确认"
+                              : target.status === "failed"
+                                ? target.error || "保存失败"
+                                : target.status === "publishing"
+                                  ? "正在安全发布"
+                                  : "等待生成"}
+                          </small>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </section>
+              )}
               <details className="log-box">
                 <summary>
                   校验日志 <span>{selected.verifyLog.length} 条最近记录</span>
@@ -3711,7 +3854,7 @@ export function App() {
                       title="删除任务记录（保留素材文件）"
                       onClick={() =>
                         setConfirm({
-                          text: "删除这条任务记录？只删除记录，不会删除任何素材或备份文件。",
+                          text: "删除这条任务记录？只删除本机记录，不会删除任何素材、备份文件或已生成的 PDF／清单。自动报告正在生成时会先阻止删除。",
                           run: async () => {
                             await api.deleteTask(selected.id);
                             await refresh();
@@ -3734,7 +3877,7 @@ export function App() {
                         检查并恢复
                       </Button>
                     )}
-                    {selected.fileRecords.length > 0 && (
+                    {canReverifyTask(selected) && (
                       <Button
                         kind="subtle"
                         onClick={() =>
@@ -5408,9 +5551,11 @@ function ExistingBaselineModal({
 function HelpPage({
   go,
   openBackup,
+  canOpenBackup,
 }: {
   go: (page: Page) => void;
   openBackup: () => void;
+  canOpenBackup: boolean;
 }) {
   const [helpQuery, setHelpQuery] = useState("");
   useEffect(() => {
@@ -5470,7 +5615,7 @@ function HelpPage({
         "普通备份保存为“源文件夹名_时间戳”；镜像备份保留所选源文件夹这一层，不添加时间戳。开始前核对每个来源的最终路径。",
         "扫描统计中的数字是各类型的文件数，不是卷数；其他／附属文件也会备份。源和目的地均支持从 Finder 拖入文件夹。",
         "选择位于不同物理磁盘的目的地并开始；紫色表示拷贝，绿色表示独立校验。",
-        "新任务默认按完整范围接收隐藏项、AppleDouble、系统元数据与空目录；完成后每个已校验目的地都会在自身 Kocpy报告 目录内保存 PDF。",
+        "新任务默认按完整范围接收隐藏项、AppleDouble、系统元数据与空目录；任务及全部目的地完成校验后，每个备份目的地会在自身 Kocpy报告 目录内保存不可变的首次完成校验快照。",
       ],
       tips: [
         "Kocpy 不会自动开始写入。",
@@ -5551,7 +5696,7 @@ function HelpPage({
         "创建项目并设置拍摄周期、设备、机位和目的地。",
         "设置收工需要的独立副本数量。",
         "每天填写实际操作人并查看日期 × 设备矩阵；确认应该有素材、当天未使用或整日休息。每次决定都会追加审计记录。",
-        "项目详情按拍摄日分组；当前日期与有风险日期保持展开，已安全日期可折叠。",
+        "项目详情按拍摄日分组；当前日期与有风险日期保持展开，未来未确认日期标为计划日并可折叠，只有没有风险和待确认项的日期才显示为安全。",
         "若同一张完整卡包含多天素材，在任务详情打开“日期归属与当日交付”；建议日期必须人工确认，完整卡始终不修改。",
         "临时航拍、录音或外部设备可指定拍摄日和机位加入当日，不会自动扩展到整个项目。",
         "修改项目安全规则后先核对逐项显示的原值和新值，再填写实际修改人；Kocpy 追加新规则版本，不改写旧素材卷和签署记录。",
@@ -5571,12 +5716,34 @@ function HelpPage({
         "交接记录冻结当时规则版本和收工摘要；之后修改项目规则不会倒改历史交接。规则记录是本地审计证据，不是第三方数字签名。",
         "项目目录补齐会先检查全部已保存目的地；存在路径冲突或离线目的地时不会先修改其他位置。补齐只创建文件夹，不移动、覆盖或删除素材。",
         "新项目默认在实际素材卷开始时才创建目录。确认未使用设备或整日休息时，仅可整理本工作站创建、无任务引用且执行时仍为空的脚手架目录；不递归、不删素材。",
+        "日期标题中的“完整卡副本达标”取自完整素材卷的备份证据；同一张完整卡可以贡献多个日期，不能把各日显示的素材卷数相加为项目唯一卡数。",
         "当日交付是从已验证完整卡派生的交付副本，不会增加任务数、素材卷数或物理独立副本数。",
         "项目模板可自定义名称、说明、设备、机位、素材卷前缀、副本标准、命名规则、检查表、制作人员和完成动作建议；应用前可逐项预览并选择覆盖范围。",
-        "任务完成只建立动作建议，不会后台生成文件、加入代理或推出磁盘。进入任务详情填写操作人并逐项确认；重复执行不会覆盖产物或重复入队。",
+        "除备份任务自身可选的“每目的地自动 PDF”外，项目和模板的完成动作只建立建议，不会后台生成交付文件、加入代理或推出磁盘。进入任务详情填写操作人并逐项确认；重复执行不会覆盖产物或重复入队。",
         "完成动作失败会保留错误和授权尝试；重启中断不会算作成功。安全推出每次都重新核对源盘身份和占用，不能永久授权。",
         "进行中和已归档项目都能从卡片右上角菜单删除内部记录。删除前必须勾选风险确认并准确输入项目名称；活动备份或代理任务会阻止删除。",
         "删除项目只清理 Kocpy 内部的项目配置、任务索引、代理记录和归档维护历史；不会删除素材、备份目录、报告、MHL 或已导出的冷归档文件。",
+      ],
+      page: "projects",
+    },
+    {
+      id: "daily-delivery",
+      icon: CalendarDays,
+      title: "完整卡日期归属与当日交付",
+      purpose:
+        "完整保留混合拍摄日素材卡，再由操作人确认日期并生成独立回读的派生交付。",
+      steps: [
+        "先完成整张素材卡备份，等待至少一个目的地通过独立回读；不要先删除或移动非本日素材。",
+        "在已完成的项目任务详情点击“日期归属与当日交付”，选择当前在线、已经校验的完整卡副本并重新分析。",
+        "逐组核对媒体内嵌日期、路径日期和修改时间建议，填写确认日期与实际操作人后保存；不能确认的组保持未分配。",
+        "选择已经确认的拍摄日和交付父目录，阅读并勾选证据边界，再开始生成；Kocpy 会复制并逐文件回读 SHA-256。",
+        "在同一窗口检查交付路径、文件与字节进度、MHL/JSON 和 PDF；中断时继续同一任务，只有报告失败时单独重试 PDF。",
+      ],
+      tips: [
+        "当日交付不会修改完整卡、原始目录或原始清单。",
+        "日期建议不是事实，未填写操作人与确认日期时不能保存归属。",
+        "当日交付是派生产物，不增加完整素材卷、Kocpy 备份任务或物理独立副本数量。",
+        "未进入当日交付的素材不等于可以删除；是否清卡仍以完整卡副本、清单和现场交接为准。",
       ],
       page: "projects",
     },
@@ -5625,7 +5792,8 @@ function HelpPage({
         "选择任务或拍摄日。",
         "选择 PDF、JSON、MHL、ASC MHL 或 Resolve CSV。",
         "项目归档包同时包含报告、数据、统计、MHL 和 SHA-256。",
-        "新任务默认为每个已校验目的地自动生成 PDF；全局默认可在设置关闭，新建备份时仍可单独调整。",
+        "新任务默认开启自动 PDF；任务及全部目的地完成校验后，才会在每个备份目的地生成首次完成校验快照。全局默认可在设置关闭，新建备份时仍可单独调整。",
+        "自动 PDF 未完成时，从报告中心点击“查看目的地明细”进入任务详情核对具体路径与错误，再只重试未完成的报告。",
       ],
       tips: [
         "PDF 可包含素材首帧缩略图。",
@@ -5792,19 +5960,20 @@ function HelpPage({
     {
       id: "nas",
       icon: HardDrive,
-      title: "NAS 与网络目标",
-      purpose: "保存已挂载 SMB/NFS 目录并进行容量、延迟与读写检查。",
+      title: "NAS、网络与归档目标",
+      purpose: "检查已挂载 SMB/NFS 目录，或把完整项目转存到其他已挂载目录。",
       steps: [
         "先在 Finder 挂载网络共享。",
         "在归档维护保存 NAS 预设。",
         "执行检查并确认写入速度达到项目要求。",
         "备份时可点击选择或直接拖入网络目录。",
-        "项目或普通备份完成后，使用“NAS 归档转存”选择整个源项目文件夹和 NAS 父目录，完成逐文件 SHA-256 与目标独立回读。",
-        "转存通过后在目标项目内的 Kocpy报告 目录生成 PDF 详细报告与高清 PNG 摘要。",
+        "项目或普通备份完成后，使用“独立归档转存（NAS / 已挂载目录）”选择整个源项目文件夹和目标父目录，完成逐文件 SHA-256 与目标独立回读。",
+        "把已校验备份盘带到另一台安装 Kocpy 的 Mac 时，也可直接选择盘内项目文件夹作为源；关联项目是可选项，只用于补充报告名称、拍摄日期和历史证据。",
+        "转存通过后在目标项目内的 Kocpy报告 目录生成 PDF 详细报告与高清 PNG 摘要；两份文件都会在发布后重新读取并记录摘要。",
       ],
       tips: [
         "网络中断目标可重试，本地健康目标继续完成。",
-        "NAS 归档是独立转存记录，不会被当作原素材卷的新备份任务，也不会删除本地源。",
+        "归档转存是独立记录，不会被当作原素材卷的新备份任务，也不会删除本地源；Kocpy 会显示文件系统和挂载点，但不把任意目录宣称为 NAS。",
         "不要在未验证的公共网络暴露局域网索引。",
       ],
       page: "maintenance",
@@ -5860,7 +6029,12 @@ function HelpPage({
             收工检查 → 导出报告 → 安全推出。
           </p>
         </div>
-        <Button kind="primary" onClick={openBackup}>
+        <Button
+          kind="primary"
+          disabled={!canOpenBackup}
+          disabledReason="正在读取偏好设置，请稍候"
+          onClick={openBackup}
+        >
           <Plus size={15} />
           开始第一份备份
         </Button>
@@ -5877,12 +6051,12 @@ function HelpPage({
       <section className="help-release-note">
         <RefreshCw size={20} />
         <div>
-          <strong>当前更新：完整接收、按日交付与 NAS 归档</strong>
+          <strong>当前更新：完整接收、按日交付与归档转存</strong>
           <p>
-            新备份默认冻结完整清单，包含隐藏项与空目录；每个校验通过的目的地默认在自身备份目录内生成 PDF，报告失败不会改写素材校验结论。
+            新备份默认冻结完整素材清单，包含隐藏项与空目录；任务及全部目的地完成校验后，每个备份目的地默认在自身目录内生成不可变的首次完成 PDF，报告失败不会改写素材校验结论。
           </p>
           <p>
-            项目详情按拍摄日分组。混合日期素材卡始终保留完整卡，人工确认日期后可生成独立回读的当日交付；交付不计入备份副本。完成项目可用独立 NAS 转存流程并产生 PDF/PNG 报告。
+            项目详情按拍摄日分组。混合日期素材卡始终保留完整卡，人工确认日期后可生成独立回读的当日交付；交付不计入备份副本。完成项目可转存到 NAS 或其他已挂载目录，并生成发布后重新核验的 PDF/PNG 报告；Kocpy 不把任意目录冒充为已确认的 NAS。
           </p>
           <strong>0.1.36：项目规则确认与大型 PDF 报告</strong>
           <p>

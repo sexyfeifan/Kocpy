@@ -117,7 +117,7 @@ describe("0.1.25 shared UI contract", () => {
     expect(appSource).toContain("KOCPY · QUICK START");
     expect(appSource).toContain("<h2>软件使用说明</h2>");
     expect(appSource).toContain(
-      "<strong>当前更新：完整接收、按日交付与 NAS 归档</strong>",
+      "<strong>当前更新：完整接收、按日交付与归档转存</strong>",
     );
     expect(appSource).toContain(
       "<strong>0.1.35：发布链与真实介质验收保护</strong>",
@@ -141,8 +141,9 @@ describe("0.1.25 shared UI contract", () => {
     expect(mainSource).toContain("automaticPdf: settings.automaticPdf !== false");
     expect(appSource).toContain("<h3>完成后自动生成 PDF</h3>");
     expect(appSource).toContain('aria-label="默认自动生成 PDF"');
+    expect(composerSource).toContain("composerDefaultsFromSettings(settings)");
     expect(composerSource).toContain(
-      "useState(settings.automaticPdf !== false)",
+      "useState(initialDefaults.automaticPdf)",
     );
     expect(composerSource).toContain("本任务不自动生成 PDF 报告");
   });
@@ -160,6 +161,15 @@ describe("0.1.25 shared UI contract", () => {
     expect(appSource).toContain("日期归属与当日交付");
     expect(dialogSource).toContain("完整素材卷和原始清单始终保持不变");
     expect(dialogSource).toContain("不替代正式备份证据");
+  });
+
+  it("offers re-verification for complete-v2 empty inventories only", () => {
+    const appSource = rendererSources.find(({ name }) => name === "App.tsx")!
+      .source;
+    expect(appSource).toContain("export const canReverifyTask");
+    expect(appSource.match(/\{canReverifyTask\([^)]*\) && \(/g)).toHaveLength(2);
+    expect(appSource).not.toContain("{task.totalFiles > 0 && (");
+    expect(appSource).not.toContain("{selected.fileRecords.length > 0 && (");
   });
 
   it("keeps native form controls named by a label or accessibility attribute", () => {

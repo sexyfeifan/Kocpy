@@ -14,6 +14,10 @@ import {
   archiveResultDigest,
   archiveTaskBaselineDigest,
 } from "./archive-evidence";
+import {
+  inspectRecordedDirectoryScope,
+  recordedInventoryBaseline,
+} from "./inventory-baseline";
 
 type Progress = (value: {
   message: string;
@@ -31,6 +35,8 @@ export function taskArchiveBaseline(task: BackupTask) {
     hashAlgorithm: task.hashAlgorithm,
     totalFiles: task.totalFiles,
     totalBytes: task.totalBytes,
+    inventoryPolicy: task.inventoryPolicy,
+    inventoryScope: task.inventoryScope,
     destinations: task.destinations.map((destination) => ({
       id: destination.id,
       path: destination.resolvedPath || destination.path,
@@ -59,21 +65,25 @@ export async function verifyArchiveTask(
   progress?: Progress,
 ) {
   const task = structuredClone(input);
-  if (
-    !task.totalFiles ||
-    task.fileRecords.length !== task.totalFiles ||
-    task.fileRecords.some((record) => !record.srcChecksum)
-  )
-    throw new Error(
-      `${task.name} 尚无完整文件哈希基线，不能建立长期复校验证据`,
-    );
+  recordedInventoryBaseline(task);
   const records = scope.relativePath
     ? task.fileRecords.filter(
         (record) => record.relativePath === scope.relativePath,
       )
     : task.fileRecords;
-  if (!records.length) throw new Error(`${task.name} 不包含所选文件`);
+  if (scope.relativePath && !records.length)
+    throw new Error(`${task.name} 不包含所选文件`);
   const selectedTop = new Set<number>();
+  if (!scope.relativePath)
+    for (const [index, destination] of task.destinations.entries()) {
+      const root = destination.resolvedPath || destination.path;
+      if (
+        !scope.volumePath ||
+        inside(root, scope.volumePath) ||
+        inside(scope.volumePath, root)
+      )
+        selectedTop.add(index);
+    }
   for (const record of records)
     for (const copy of record.destinations) {
       if (scope.volumePath && !inside(copy.path, scope.volumePath)) continue;
@@ -131,9 +141,11 @@ export async function verifyArchiveTask(
   let checkedCopies = 0,
     verifiedCopies = 0,
     missingFiles = 0,
+    missingDirectories = 0,
     damagedFiles = 0,
     bytesVerified = 0;
-  const issues: string[] = [];
+  const issues: string[] = [],
+    directoryFailures = new Set<number>();
   for (const record of records)
     for (const copy of record.destinations) {
       if (scope.volumePath && !inside(copy.path, scope.volumePath)) continue;
@@ -212,6 +224,35 @@ export async function verifyArchiveTask(
       }
     }
 
+  if (!scope.relativePath)
+    for (const index of selectedTop) {
+      if (topState.get(index)?.status !== "online") continue;
+      const destination = task.destinations[index],
+        root = destination.resolvedPath || destination.path,
+        directoryResult = await inspectRecordedDirectoryScope(task, root);
+      for (const issue of directoryResult.issues) {
+        missingDirectories++;
+        directoryFailures.add(index);
+        const note = `${issue.relativePath} 在 ${destination.label} 的目录结构缺失或无效：${issue.message}`;
+        issues.push(note);
+        changes.push({
+          id: randomUUID(),
+          projectId: context.projectId,
+          taskId: task.id,
+          runId: context.runId,
+          operator: context.operator,
+          at: Date.now(),
+          kind: "missing",
+          path: root,
+          relativePath:
+            issue.relativePath === "." ? undefined : issue.relativePath,
+          targetVolumeId: destination.volumeUuid || destination.volumeId,
+          outcome: "failed",
+          note,
+        });
+      }
+    }
+
   for (const index of selectedTop) {
     const destination = task.destinations[index],
       root = destination.resolvedPath || destination.path;
@@ -227,6 +268,7 @@ export async function verifyArchiveTask(
     } else {
       destination.verified =
         topState.get(index)?.status === "online" &&
+        !directoryFailures.has(index) &&
         task.fileRecords.every((record) =>
           record.destinations.some(
             (copy) => inside(copy.path, root) && copy.verified,
@@ -244,7 +286,10 @@ export async function verifyArchiveTask(
       ? "identity-unknown"
       : offlineCopies
         ? "offline"
-        : missingFiles || damagedFiles || verifiedCopies !== checkedCopies
+        : missingFiles ||
+            missingDirectories ||
+            damagedFiles ||
+            verifiedCopies !== checkedCopies
           ? "attention"
           : "healthy";
   for (const value of topState.values()) if (value.error) issues.push(value.error);
@@ -256,6 +301,7 @@ export async function verifyArchiveTask(
       checkedCopies,
       verifiedCopies,
       missingFiles,
+      missingDirectories,
       damagedFiles,
       offlineCopies,
       identityUnknownCopies,

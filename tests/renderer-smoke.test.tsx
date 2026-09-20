@@ -6,7 +6,8 @@ afterEach(() => vi.unstubAllGlobals());
 describe("renderer initial render (not a substitute for desktop acceptance)", () => {
   it("renders the app and independent workflow forms without crashing", async () => {
     vi.stubGlobal("window", { api: {} });
-    const { App, ProxyQueue } = await import("../src/renderer/src/App");
+    const { App, ProxyQueue, canReverifyTask } =
+      await import("../src/renderer/src/App");
     const { LifecycleControls } =
       await import("../src/renderer/src/LifecycleControls");
     const { Composer } = await import("../src/renderer/src/Composer");
@@ -65,5 +66,36 @@ describe("renderer initial render (not a substitute for desktop acceptance)", ()
     expect(composer).toContain("fieldset");
     expect(composer).toMatch(/class="mode-card selected"[^>]*>[\s\S]*?<strong>普通备份<\/strong>/);
     expect(composer).toContain("无需创建项目");
+    const policy = {
+        version: "complete-v2",
+        mode: "complete",
+        createdAt: 1,
+        includeHidden: true,
+        includeAppleDouble: true,
+        includeSystemMetadata: true,
+        includeEmptyDirectories: true,
+        symlinkPolicy: "fail",
+        specialFilePolicy: "fail",
+      },
+      completeEmpty = {
+        totalFiles: 0,
+        fileRecords: [],
+        inventoryPolicy: policy,
+        inventoryScope: {
+          policy: { ...policy },
+          includedFiles: 0,
+          includedBytes: 0,
+          includedDirectories: 0,
+          includedDirectoryPaths: [],
+          fingerprint: "a".repeat(64),
+        },
+      };
+    expect(canReverifyTask(completeEmpty as never)).toBe(true);
+    expect(
+      canReverifyTask({
+        ...completeEmpty,
+        inventoryScope: undefined,
+      } as never),
+    ).toBe(false);
   });
 });

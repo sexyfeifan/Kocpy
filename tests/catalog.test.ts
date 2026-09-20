@@ -12,7 +12,7 @@ const fixture = () => {
       relativePath: "DCIM/a.mov",
       size: 2,
       srcChecksum: "a",
-      destinations: [{ verified: true }],
+      destinations: [],
     },
     {
       name: "b.wav",
@@ -33,6 +33,7 @@ const fixture = () => {
       createdAt: 1,
       totalFiles: 2,
       totalBytes: 3,
+      destinations: [],
       fileRecords,
     } as any,
     project: { id: "p", name: "Film", devices: [], volumePrefix: "" } as any,

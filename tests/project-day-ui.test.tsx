@@ -25,6 +25,7 @@ describe("project detail date groups", () => {
     const summaries = [
       projectDaySummary(project, [], "2026-09-18", "2026-09-19"),
       projectDaySummary(project, [], "2026-09-19", "2026-09-19"),
+      projectDaySummary(project, [], "2026-09-20", "2026-09-19"),
     ];
     const html = renderToStaticMarkup(
       <ProjectDayGroups
@@ -47,6 +48,11 @@ describe("project detail date groups", () => {
     expect(html).toContain("FX3");
     expect(html).toContain("应该有素材 · 缺少备份");
     expect(html).toContain("确认未使用");
+    expect(html).toContain("20260920");
+    expect(html).toContain("计划日");
+    expect(html).toContain("展开这个未来计划日");
+    expect(html).toContain("project-day-group planned");
+    expect(html).toContain("完整卡副本达标");
   });
 
   it("uses horizontal scrolling and stable text sizes at narrow widths", () => {

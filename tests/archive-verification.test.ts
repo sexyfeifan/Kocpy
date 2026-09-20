@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { verifyArchiveTask } from "../src/main/archive-verification";
+import { completeInventoryPolicy } from "../src/main/backup/safety";
 import { volumeIdentity } from "../src/main/system";
 import type { BackupTask } from "../src/main/types";
 
@@ -73,6 +74,28 @@ const context = () => ({
   projectId: "project-1",
 });
 
+function freezeCompleteInventory(
+  task: BackupTask,
+  directoryPaths: string[],
+) {
+  const policy = completeInventoryPolicy(true, 1);
+  task.inventoryPolicy = policy;
+  task.inventoryScope = {
+    policy,
+    capturedAt: 2,
+    sourcePath: task.sourcePath,
+    fingerprint: "a".repeat(64),
+    includedFiles: task.totalFiles,
+    includedBytes: task.totalBytes,
+    includedDirectories: directoryPaths.length,
+    includedDirectoryPaths: directoryPaths,
+    excludedFiles: 0,
+    excludedDirectories: 0,
+    excludedBytes: 0,
+    exclusions: [],
+  };
+}
+
 describe("archive verification evidence", () => {
   it("fully rereads a healthy archive without mutating the input task", async () => {
     const { task } = await fixture(),
@@ -87,6 +110,69 @@ describe("archive verification evidence", () => {
     expect(verified.result.bytesVerified).toBe(8192);
     expect(verified.changes.at(-1)?.outcome).toBe("completed");
     expect(task).toEqual(original);
+  });
+
+  it("accepts empty and directory-only complete-v2 baselines and detects missing directories", async () => {
+    const empty = await fixture();
+    await fs.rm(path.dirname(empty.filePath), { recursive: true });
+    empty.task.fileRecords = [];
+    empty.task.totalFiles = 0;
+    empty.task.completedFiles = 0;
+    empty.task.totalBytes = 0;
+    empty.task.transferredBytes = 0;
+    empty.task.destinations[0].bytesWritten = 0;
+    freezeCompleteInventory(empty.task, []);
+    const emptyResult = await verifyArchiveTask(
+      empty.task,
+      { kind: "card", taskId: empty.task.id },
+      context(),
+    );
+    expect(emptyResult.result.status).toBe("healthy");
+    expect(emptyResult.result.checkedCopies).toBe(0);
+    expect(emptyResult.result.missingDirectories).toBe(0);
+
+    const directoryOnly = await fixture();
+    await fs.rm(path.dirname(directoryOnly.filePath), { recursive: true });
+    await fs.mkdir(path.join(directoryOnly.destinationRoot, "EMPTY", "NESTED"), {
+      recursive: true,
+    });
+    directoryOnly.task.fileRecords = [];
+    directoryOnly.task.totalFiles = 0;
+    directoryOnly.task.completedFiles = 0;
+    directoryOnly.task.totalBytes = 0;
+    directoryOnly.task.transferredBytes = 0;
+    directoryOnly.task.destinations[0].bytesWritten = 0;
+    freezeCompleteInventory(directoryOnly.task, ["EMPTY", "EMPTY/NESTED"]);
+    expect(
+      (
+        await verifyArchiveTask(
+          directoryOnly.task,
+          { kind: "card", taskId: directoryOnly.task.id },
+          context(),
+        )
+      ).result.status,
+    ).toBe("healthy");
+    await fs.rmdir(path.join(directoryOnly.destinationRoot, "EMPTY", "NESTED"));
+    const missing = await verifyArchiveTask(
+      directoryOnly.task,
+      { kind: "card", taskId: directoryOnly.task.id },
+      context(),
+    );
+    expect(missing.result.status).toBe("attention");
+    expect(missing.result.missingDirectories).toBe(1);
+    expect(missing.task.destinations[0].verified).toBe(false);
+  });
+
+  it("does not mark a complete-v2 file payload healthy when an empty directory is gone", async () => {
+    const { task } = await fixture();
+    freezeCompleteInventory(task, ["DCIM", "EMPTY"]);
+    const verified = await verifyArchiveTask(
+      task,
+      { kind: "project", projectId: "project-1" },
+      context(),
+    );
+    expect(verified.result.status).toBe("attention");
+    expect(verified.result.missingDirectories).toBe(1);
   });
 
   it("distinguishes changed content, missing files and an offline archive root", async () => {

@@ -30,6 +30,7 @@ import {
   normalBackupFolder,
   sourceFolderName,
 } from "../../common/backup-layout";
+import { recordedInventoryBaseline } from "../inventory-baseline";
 
 export async function hashFile(
   file: string,
@@ -603,14 +604,13 @@ export class BackupEngine extends EventEmitter {
     if (!task) throw new Error("任务不存在");
     if (this.active.size || this.queue.length)
       throw new Error("请先完成当前传输队列，再重新校验");
-    if (
-      !task.totalFiles ||
-      task.fileRecords.length !== task.totalFiles ||
-      task.fileRecords.some((record) => !record.srcChecksum)
-    )
+    try {
+      recordedInventoryBaseline(task);
+    } catch {
       throw new Error(
         "尚无完整文件哈希基线，不能标记复校验通过。请先完成备份；接管素材请建立首次基线或核对外部清单。",
       );
+    }
     const controller = new AbortController();
     this.active.set(id, controller);
     task.status = "verifying";

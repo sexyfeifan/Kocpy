@@ -353,6 +353,9 @@ export interface AutomaticReportTarget {
   bytes?: number;
   completedAt?: number;
   error?: string;
+  /** Reuse only byte-identical historical evidence after a copy path changes. */
+  rebindOnly?: true;
+  rebindSourceOutputPath?: string;
 }
 
 export interface AutomaticReportRecord {
@@ -885,6 +888,8 @@ export interface ArchiveVerificationTaskResult {
   checkedCopies: number;
   verifiedCopies: number;
   missingFiles: number;
+  /** Added in 0.1.37; absent on historical archive evidence. */
+  missingDirectories?: number;
   damagedFiles: number;
   offlineCopies: number;
   identityUnknownCopies: number;
@@ -1091,6 +1096,7 @@ export interface ArchiveChangeRecord {
     checksum?: string;
     error?: string;
     repaired?: number;
+    repairedDirectories?: number;
   }>;
   outcome?: "completed" | "partial" | "failed" | "pending-verification";
   previousDigest?: string;

@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { promises as fs } from "node:fs";
+import { constants, promises as fs } from "node:fs";
 import path from "node:path";
 import type {
   BackupTask,
@@ -264,6 +264,47 @@ export function sha256Bytes(value: Uint8Array | string) {
   return createHash("sha256").update(value).digest("hex");
 }
 
+/**
+ * Reread one newly published completion artifact from its opened file handle.
+ * A matching in-memory digest is not proof that the durable target contains the
+ * same bytes, especially on removable and network filesystems.
+ */
+export async function verifyPublishedArtifact(
+  target: string,
+  expectedSha256: string,
+) {
+  if (!path.isAbsolute(target) || !/^[a-f0-9]{64}$/.test(expectedSha256))
+    throw new Error("完成动作产物校验参数无效");
+  const handle = await fs.open(
+    target,
+    constants.O_RDONLY | (constants.O_NOFOLLOW || 0),
+  );
+  try {
+    const stat = await handle.stat();
+    if (!stat.isFile()) throw new Error("完成动作产物不是安全的普通文件");
+    const digest = createHash("sha256"),
+      buffer = Buffer.allocUnsafe(1024 * 1024);
+    let position = 0;
+    while (true) {
+      const { bytesRead } = await handle.read(
+        buffer,
+        0,
+        buffer.byteLength,
+        position,
+      );
+      if (!bytesRead) break;
+      digest.update(buffer.subarray(0, bytesRead));
+      position += bytesRead;
+    }
+    const actual = digest.digest("hex");
+    if (actual !== expectedSha256)
+      throw new Error("完成动作产物落盘后回读摘要不一致，未记录为完成");
+    return actual;
+  } finally {
+    await handle.close();
+  }
+}
+
 /** Publishes one new artifact without replacing an existing path. */
 export async function publishNewArtifact(target: string, value: Uint8Array | string) {
   await fs.mkdir(path.dirname(target), { recursive: true });
@@ -271,15 +312,40 @@ export async function publishNewArtifact(target: string, value: Uint8Array | str
     path.dirname(target),
     `.${path.basename(target)}.${process.pid}.${randomUUID()}.partial`,
   );
-  const handle = await fs.open(temporary, "wx", 0o600);
+  const handle = await fs.open(temporary, "wx", 0o644);
   try {
     await handle.writeFile(value);
+    await handle.chmod(0o644);
     await handle.sync();
   } finally {
     await handle.close();
   }
   try {
-    await fs.link(temporary, target);
+    try {
+      await fs.link(temporary, target);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (
+        ![
+          "EACCES",
+          "EINVAL",
+          "ENOTSUP",
+          "EOPNOTSUPP",
+          "EPERM",
+          "EXDEV",
+        ].includes(code || "")
+      )
+        throw error;
+      // exFAT and a number of SMB/NAS implementations do not support hard
+      // links. COPYFILE_EXCL preserves the same no-overwrite guarantee.
+      await fs.copyFile(temporary, target, constants.COPYFILE_EXCL);
+      const published = await fs.open(target, "r+");
+      try {
+        await published.sync();
+      } finally {
+        await published.close();
+      }
+    }
     const directory = await fs.open(path.dirname(target), "r");
     try {
       await directory.sync();
@@ -297,4 +363,59 @@ export async function publishNewArtifact(target: string, value: Uint8Array | str
     await fs.unlink(temporary).catch(() => undefined);
   }
   return { path: target, sha256: sha256Bytes(value) };
+}
+
+export async function syncArtifactExclusive(source: string, directory: string) {
+  const target = path.join(directory, path.basename(source));
+  if (path.resolve(target) === path.resolve(source))
+    return { path: target, reused: true };
+  const value = await fs.readFile(source),
+    expected = sha256Bytes(value),
+    existing = await fs.lstat(target).catch((error) => {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+      throw error;
+    });
+  if (existing) {
+    if (!existing.isFile() || existing.isSymbolicLink())
+      throw new Error(`同步目标不是安全的普通文件：${target}`);
+    const actual = sha256Bytes(await fs.readFile(target));
+    if (actual !== expected)
+      throw new Error(`同步目标已有不同内容，Kocpy 未覆盖：${target}`);
+    return { path: target, reused: true };
+  }
+  const published = await publishNewArtifact(target, value);
+  if (sha256Bytes(await fs.readFile(target)) !== published.sha256)
+    throw new Error("同步报告落盘后回读摘要不一致");
+  return { path: target, reused: false };
+}
+
+export async function createExclusiveArtifactDirectory(
+  parent: string,
+  name: string,
+) {
+  if (
+    !path.isAbsolute(parent) ||
+    !name ||
+    name !== path.basename(name) ||
+    name === "." ||
+    name === ".."
+  )
+    throw new Error("产物目录路径无效");
+  const target = path.join(parent, name);
+  try {
+    await fs.mkdir(target, { recursive: false, mode: 0o755 });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST")
+      throw new Error(`目标归档包已存在，Kocpy 未覆盖：${target}`);
+    throw error;
+  }
+  const directory = await fs.open(parent, "r");
+  try {
+    await directory.sync().catch((error) => {
+      if (!["EINVAL", "ENOTSUP", "EBADF"].includes(error.code || "")) throw error;
+    });
+  } finally {
+    await directory.close();
+  }
+  return target;
 }

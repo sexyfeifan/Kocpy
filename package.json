@@ -1,6 +1,6 @@
 {
   "name": "kocpy",
-  "version": "0.1.36",
+  "version": "0.1.37",
   "description": "Kocpy 专业素材工作台 · 多目的地备份、独立校验与项目归档",
   "main": "out/main/index.js",
   "productName": "Kocpy",
@@ -13,6 +13,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:report-pdf": "mkdir -p work && esbuild scripts/verify-report-pdf.ts --bundle --platform=node --format=cjs --external:electron --outfile=work/verify-report-pdf.cjs && electron work/verify-report-pdf.cjs",
+    "qa:report-artifacts": "mkdir -p work && esbuild scripts/verify-report-artifacts.ts --bundle --platform=node --format=cjs --external:electron --outfile=work/verify-report-artifacts.cjs && electron work/verify-report-artifacts.cjs",
     "verify:source": "node scripts/verify-source-tree.mjs",
     "verify:media": "node scripts/verify-media-runtime.mjs",
     "verify:release": "npm run verify:source && npm run verify:media",

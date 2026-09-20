@@ -1,7 +1,8 @@
-import { createReadStream, promises as fs } from "node:fs";
+import { constants, createReadStream, promises as fs } from "node:fs";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import type { VolumeIdentity } from "../common/volume-identity";
+import { publishNewArtifact } from "./completion-automation";
 
 export type ArchiveTransferStatus =
   | "ready"
@@ -21,6 +22,12 @@ export interface ArchiveTransferInventoryFile {
   relativePath: string;
   size: number;
   mtimeMs: number;
+  /**
+   * Added to the schema-1 preflight snapshot. 0.1.36 development builds did
+   * not record ctime, so a migrated read-only record intentionally keeps this
+   * absent instead of inventing evidence that was never captured.
+   */
+  ctimeMs?: number;
   inode: number;
   sourceSha256?: string;
   targetSha256?: string;
@@ -86,13 +93,27 @@ export interface ArchiveTransferReportAttempt {
   artifactReportId: string;
   startedAt: number;
   completedAt?: number;
-  status: "running" | "completed" | "failed";
+  status: "running" | "publishing" | "completed" | "failed";
   pdfPath?: string;
   pngPath?: string;
+  pdfSha256?: string;
+  pngSha256?: string;
+  pdfBytes?: number;
+  pngBytes?: number;
   error?: string;
 }
 
+export interface ArchiveTransferLegacyMigration {
+  sourceVersion: "0.1.36";
+  migratedAt: number;
+  originalStatus: ArchiveTransferStatus;
+  originalReportStatus: ArchiveTransferReportStatus;
+  disposition: "read-only-completed" | "restart-required";
+}
+
 export interface ArchiveTransferTask extends ArchiveTransferContext {
+  schemaVersion: 1;
+  legacyMigration?: ArchiveTransferLegacyMigration;
   id: string;
   reportId: string;
   sourcePath: string;
@@ -173,9 +194,9 @@ export interface ArchiveTransferStartInput {
   context: ArchiveTransferContext;
 }
 
-export interface ArchiveTransferReportOutput {
-  pdfPath: string;
-  pngPath: string;
+export interface ArchiveTransferRenderedReports {
+  pdf: Buffer;
+  png: Buffer;
 }
 
 export interface ArchiveTransferDependencies {
@@ -185,13 +206,20 @@ export interface ArchiveTransferDependencies {
   renderReports(
     snapshot: ArchiveTransferReportSnapshot,
     artifactReportId: string,
-  ): Promise<ArchiveTransferReportOutput>;
+  ): Promise<ArchiveTransferRenderedReports>;
   onProgress?(progress: ArchiveTransferProgress): void;
   now?(): number;
   randomId?(): string;
+  removeFile?(file: string): Promise<void>;
+}
+
+export interface ArchiveTransferLoadResult {
+  tasks: ArchiveTransferTask[];
+  migrated: boolean;
 }
 
 const SOURCE_CHANGED = "源文件夹内容已变化，已安全停止；恢复原内容后重新预检";
+const MARKER_CLEANUP_FAILED = "数据和报告已完成，但临时任务所有权标记未能安全清理";
 
 const markerPathFor = (task: Pick<ArchiveTransferTask, "id" | "destinationParent" | "finalPath">) =>
   path.join(
@@ -228,10 +256,11 @@ const digestInventory = (
   createHash("sha256")
     .update(
       JSON.stringify({
-        files: files.map(({ relativePath, size, mtimeMs, inode }) => ({
+        files: files.map(({ relativePath, size, mtimeMs, ctimeMs, inode }) => ({
           relativePath,
           size,
           mtimeMs,
+          ctimeMs,
           inode,
         })),
         directories,
@@ -266,6 +295,7 @@ async function inventoryDirectory(root: string): Promise<ArchiveTransferInventor
           relativePath: portable,
           size: stat.size,
           mtimeMs: stat.mtimeMs,
+          ctimeMs: stat.ctimeMs,
           inode: stat.ino,
         });
       else throw new Error(`归档范围包含不支持的特殊文件，已停止：${portable}`);
@@ -335,6 +365,519 @@ function safeTarget(root: string, relativePath: string) {
   return target;
 }
 
+interface BoundArchiveDirectory {
+  path: string;
+  dev: number;
+  ino: number;
+}
+
+async function bindArchiveDirectory(
+  directory: string,
+  label: string,
+): Promise<BoundArchiveDirectory> {
+  const before = await fs.lstat(directory);
+  if (!before.isDirectory() || before.isSymbolicLink())
+    throw new Error(`${label}不是安全的实际目录，已停止写入`);
+  const real = await fs.realpath(directory);
+  if (real !== directory)
+    throw new Error(`${label}通过符号链接或别名指向其他位置，已停止写入`);
+  const after = await fs.lstat(directory);
+  if (
+    !after.isDirectory() ||
+    after.isSymbolicLink() ||
+    after.dev !== before.dev ||
+    after.ino !== before.ino
+  )
+    throw new Error(`${label}在安全检查期间发生变化，已停止写入`);
+  return { path: directory, dev: after.dev, ino: after.ino };
+}
+
+async function assertBoundArchiveDirectory(
+  bound: BoundArchiveDirectory,
+  label: string,
+) {
+  const current = await bindArchiveDirectory(bound.path, label);
+  if (current.dev !== bound.dev || current.ino !== bound.ino)
+    throw new Error(`${label}在写入前被替换，已停止写入`);
+  return current;
+}
+
+/**
+ * Walk and optionally create one destination parent chain without ever using
+ * recursive mkdir. Every existing component must be a stable, canonical
+ * directory. This is deliberately stricter than a final whole-tree scan: a
+ * recovery target may have been changed while Kocpy was not running, and no
+ * byte may be written before that change is rejected.
+ */
+async function bindArchiveTargetParent(
+  root: string,
+  relativePath: string,
+  createMissing: boolean,
+) {
+  const canonicalRoot = path.resolve(root),
+    parentRelative = portableRelative(path.posix.dirname(relativePath)),
+    parts = parentRelative === "." ? [] : parentRelative.split("/");
+  let current = await bindArchiveDirectory(
+    canonicalRoot,
+    "归档目标根目录",
+  );
+  for (const part of parts) {
+    if (!part || part === "." || part === "..")
+      throw new Error(`归档目录路径无效，已停止：${relativePath}`);
+    const candidate = path.join(current.path, part);
+    if (!contained(candidate, canonicalRoot) || candidate === canonicalRoot)
+      throw new Error(`归档目录路径越界，已停止：${relativePath}`);
+    await assertBoundArchiveDirectory(current, "归档目标父目录");
+    let stat = await fs.lstat(candidate).catch((error) => {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+      throw error;
+    });
+    if (!stat) {
+      if (!createMissing)
+        throw new Error(`归档目标目录缺失，已停止：${parentRelative}`);
+      await fs.mkdir(candidate, { recursive: false, mode: 0o755 });
+      stat = await fs.lstat(candidate);
+    }
+    if (!stat.isDirectory() || stat.isSymbolicLink())
+      throw new Error(
+        `归档目标父链包含符号链接、别名或非目录条目，已停止：${parentRelative}`,
+      );
+    await assertBoundArchiveDirectory(current, "归档目标父目录");
+    current = await bindArchiveDirectory(candidate, "归档目标子目录");
+  }
+  return current;
+}
+
+async function bindArchiveTargetDirectory(
+  root: string,
+  relativeDirectory: string,
+  createMissing: boolean,
+) {
+  // Appending a sentinel lets the shared parent walker validate/create the
+  // full directory path without weakening the strict relative-path rules.
+  return bindArchiveTargetParent(
+    root,
+    `${portableRelative(relativeDirectory)}/.kocpy-directory-sentinel`,
+    createMissing,
+  );
+}
+
+async function inspectArchiveTargetFile(
+  root: string,
+  relativePath: string,
+  parent: BoundArchiveDirectory,
+) {
+  await assertBoundArchiveDirectory(parent, "归档文件目标父目录");
+  const target = safeTarget(root, relativePath),
+    stat = await fs.lstat(target).catch((error) => {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+      throw error;
+    });
+  if (stat) {
+    if (!stat.isFile() || stat.isSymbolicLink())
+      throw new Error(`归档目标不是安全的普通文件，已停止：${relativePath}`);
+    const real = await fs.realpath(target);
+    if (real !== target)
+      throw new Error(
+        `归档目标文件通过符号链接或别名指向其他位置，已停止：${relativePath}`,
+      );
+  }
+  await assertBoundArchiveDirectory(parent, "归档文件目标父目录");
+  return { target, stat };
+}
+
+const validAbsolutePath = (value: unknown) =>
+  typeof value === "string" &&
+  value.length > 0 &&
+  value.length <= 8192 &&
+  path.isAbsolute(value) &&
+  !value.includes("\0");
+
+const validRelativePath = (value: unknown) =>
+  typeof value === "string" &&
+  value.length > 0 &&
+  value.length <= 4096 &&
+  !path.isAbsolute(value) &&
+  !value.includes("\0") &&
+  !value.split(/[\\/]/).includes("..");
+
+const validSha256 = (value: unknown) =>
+  typeof value === "string" && /^[a-f0-9]{64}$/.test(value);
+
+function validateArchiveIdentity(value: unknown) {
+  const identity = value as VolumeIdentity | undefined;
+  return Boolean(
+    identity &&
+      typeof identity.id === "string" &&
+      identity.id.length > 0 &&
+      identity.id.length <= 1024 &&
+      typeof identity.name === "string" &&
+      identity.name.length <= 1024 &&
+      (identity.uuid === undefined || typeof identity.uuid === "string"),
+  );
+}
+
+function validateNormalizedArchiveTransferTasks(
+  value: unknown,
+  allowLegacyPreMigrationState = false,
+): ArchiveTransferTask[] {
+  if (!Array.isArray(value) || value.length > 10000)
+    throw new Error("归档转存记录格式无效");
+  const ids = new Set<string>();
+  for (const candidate of value) {
+    const task = candidate as ArchiveTransferTask;
+    const legacy = task?.legacyMigration;
+    if (
+      !task ||
+      task.schemaVersion !== 1 ||
+      (legacy !== undefined &&
+        (legacy.sourceVersion !== "0.1.36" ||
+          !Number.isFinite(legacy.migratedAt) ||
+          !["ready", "running", "verifying", "interrupted", "failed", "completed"].includes(
+            legacy.originalStatus,
+          ) ||
+          !["pending", "generating", "completed", "failed"].includes(
+            legacy.originalReportStatus,
+          ) ||
+          !["read-only-completed", "restart-required"].includes(
+            legacy.disposition,
+          ))) ||
+      typeof task.id !== "string" ||
+      !/^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(task.id) ||
+      ids.has(task.id) ||
+      !validAbsolutePath(task.sourcePath) ||
+      !validAbsolutePath(task.destinationParent) ||
+      !validAbsolutePath(task.finalPath) ||
+      !validAbsolutePath(task.markerPath) ||
+      path.resolve(task.finalPath) !==
+        path.join(path.resolve(task.destinationParent), path.basename(task.sourcePath)) ||
+      path.resolve(task.markerPath) !== path.resolve(markerPathFor(task)) ||
+      !validateArchiveIdentity(task.sourceIdentity) ||
+      !validateArchiveIdentity(task.destinationIdentity) ||
+      !["ready", "running", "verifying", "interrupted", "failed", "completed"].includes(
+        task.status,
+      ) ||
+      !["pending", "generating", "completed", "failed"].includes(
+        task.reportStatus,
+      ) ||
+      typeof task.targetCreated !== "boolean" ||
+      !Number.isFinite(task.createdAt) ||
+      !Number.isSafeInteger(task.completedFiles) ||
+      task.completedFiles < 0 ||
+      !Number.isSafeInteger(task.verifiedBytes) ||
+      task.verifiedBytes < 0 ||
+      !Array.isArray(task.reportAttempts) ||
+      !Array.isArray(task.recoveryEvents) ||
+      !task.inventory ||
+      !Array.isArray(task.inventory.files) ||
+      !Array.isArray(task.inventory.directories) ||
+      !Array.isArray(task.inventory.emptyDirectories)
+    )
+      throw new Error("归档转存记录包含无效任务");
+    ids.add(task.id);
+    try {
+      assertDistinctRoots(
+        path.resolve(task.sourcePath),
+        path.resolve(task.destinationParent),
+        path.resolve(task.finalPath),
+      );
+    } catch {
+      throw new Error("归档转存记录的源与目标边界无效");
+    }
+    const filePaths = new Set<string>(),
+      directoryPaths = new Set<string>();
+    let totalBytes = 0,
+      completedFiles = 0,
+      verifiedBytes = 0;
+    for (const file of task.inventory.files) {
+      if (
+        !file ||
+        !validRelativePath(file.relativePath) ||
+        filePaths.has(file.relativePath) ||
+        !Number.isSafeInteger(file.size) ||
+        file.size < 0 ||
+        !Number.isFinite(file.mtimeMs) ||
+        (legacy
+          ? file.ctimeMs !== undefined
+          : !Number.isFinite(file.ctimeMs)) ||
+        !Number.isFinite(file.inode) ||
+        file.inode < 0 ||
+        (file.sourceSha256 !== undefined && !validSha256(file.sourceSha256)) ||
+        (file.targetSha256 !== undefined && !validSha256(file.targetSha256)) ||
+        (file.verifiedAt !== undefined &&
+          (!Number.isFinite(file.verifiedAt) ||
+            !validSha256(file.sourceSha256) ||
+            !validSha256(file.targetSha256)))
+      )
+        throw new Error("归档转存文件快照无效");
+      filePaths.add(file.relativePath);
+      totalBytes += file.size;
+      if (file.verifiedAt !== undefined) {
+        completedFiles++;
+        verifiedBytes += file.size;
+      }
+    }
+    for (const directory of task.inventory.directories) {
+      if (!validRelativePath(directory) || directoryPaths.has(directory))
+        throw new Error("归档转存目录快照无效");
+      directoryPaths.add(directory);
+    }
+    if (
+      task.inventory.emptyDirectories.some(
+        (directory) =>
+          !validRelativePath(directory) ||
+          !directoryPaths.has(directory) ||
+          task.inventory.files.some((file) =>
+            file.relativePath.startsWith(directory + "/"),
+          ) ||
+          task.inventory.directories.some(
+            (child) => child !== directory && child.startsWith(directory + "/"),
+          ),
+      ) ||
+      [...filePaths].some((file) => directoryPaths.has(file)) ||
+      task.inventory.totalFiles !== task.inventory.files.length ||
+      task.inventory.totalBytes !== totalBytes ||
+      task.inventory.digest !==
+        digestInventory(task.inventory.files, task.inventory.directories) ||
+      task.inventory.existingPdfFiles !==
+        task.inventory.files.filter((file) =>
+          file.relativePath.toLowerCase().endsWith(".pdf"),
+        ).length ||
+      task.inventory.existingManifestFiles !==
+        task.inventory.files.filter((file) =>
+          /\.(?:mhl|xml)$/i.test(file.relativePath),
+        ).length ||
+      task.completedFiles !== completedFiles ||
+      task.verifiedBytes !== verifiedBytes ||
+      (task.currentFile !== undefined && !filePaths.has(task.currentFile)) ||
+      (task.status === "completed" &&
+        (completedFiles !== task.inventory.files.length || !task.reportSnapshot)) ||
+      (task.status !== "completed" && Boolean(task.reportSnapshot)) ||
+      (task.reportStatus !== "pending" && task.status !== "completed") ||
+      (!allowLegacyPreMigrationState &&
+        legacy?.disposition === "read-only-completed" &&
+        task.status !== "completed") ||
+      (!allowLegacyPreMigrationState &&
+        legacy?.disposition === "restart-required" &&
+        task.status !== "failed")
+    )
+      throw new Error("归档转存快照汇总或状态不一致");
+    const reportRoot = path.join(path.resolve(task.finalPath), "Kocpy报告");
+    for (const [index, attempt] of task.reportAttempts.entries()) {
+      const expectedPdf = path.join(
+          reportRoot,
+          `Kocpy_NAS归档_${attempt.artifactReportId}.pdf`,
+        ),
+        expectedPng = path.join(
+          reportRoot,
+          `Kocpy_NAS归档_${attempt.artifactReportId}.png`,
+        ),
+        hasPublicationEvidence =
+          attempt.pdfPath !== undefined ||
+          attempt.pngPath !== undefined ||
+          attempt.pdfSha256 !== undefined ||
+          attempt.pngSha256 !== undefined ||
+          attempt.pdfBytes !== undefined ||
+          attempt.pngBytes !== undefined,
+        hasCompletePublicationEvidence =
+          validAbsolutePath(attempt.pdfPath) &&
+          validAbsolutePath(attempt.pngPath) &&
+          validSha256(attempt.pdfSha256) &&
+          validSha256(attempt.pngSha256) &&
+          Number.isSafeInteger(attempt.pdfBytes) &&
+          attempt.pdfBytes! > 0 &&
+          Number.isSafeInteger(attempt.pngBytes) &&
+          attempt.pngBytes! > 0;
+      if (
+        !attempt ||
+        attempt.attempt !== index + 1 ||
+        typeof attempt.artifactReportId !== "string" ||
+        !/^KAT-[A-Z0-9TZ-]+(?:-R\d+)?$/.test(attempt.artifactReportId) ||
+        !Number.isFinite(attempt.startedAt) ||
+        !["running", "publishing", "completed", "failed"].includes(
+          attempt.status,
+        ) ||
+        (attempt.completedAt !== undefined && !Number.isFinite(attempt.completedAt)) ||
+        (attempt.pdfPath !== undefined &&
+          (!validAbsolutePath(attempt.pdfPath) ||
+            path.resolve(attempt.pdfPath) !== expectedPdf)) ||
+        (attempt.pngPath !== undefined &&
+          (!validAbsolutePath(attempt.pngPath) ||
+            path.resolve(attempt.pngPath) !== expectedPng)) ||
+        (!legacy &&
+          hasPublicationEvidence &&
+          !hasCompletePublicationEvidence) ||
+        (!legacy &&
+          ["publishing", "completed"].includes(attempt.status) &&
+          !hasCompletePublicationEvidence) ||
+        (attempt.status === "completed" &&
+          (!attempt.completedAt || !attempt.pdfPath || !attempt.pngPath))
+      )
+        throw new Error("归档转存报告尝试记录无效");
+    }
+    if (
+      (!legacy &&
+        task.reportStatus === "pending" &&
+        task.reportAttempts.length > 0) ||
+      (task.reportStatus === "generating" &&
+        !["running", "publishing"].includes(
+          task.reportAttempts.at(-1)?.status || "",
+        )) ||
+      (task.reportStatus === "completed" &&
+        task.reportAttempts.at(-1)?.status !== "completed") ||
+      (!legacy &&
+        task.reportStatus === "failed" &&
+        task.reportAttempts.at(-1)?.status !== "failed")
+    )
+      throw new Error("归档转存报告状态不一致");
+    if (task.reportSnapshot) {
+      const snapshot = task.reportSnapshot;
+      if (
+        snapshot.schemaVersion !== 1 ||
+        snapshot.reportId !== task.reportId ||
+        snapshot.transferId !== task.id ||
+        snapshot.archiveName !== task.archiveName ||
+        snapshot.payloadFileCount !== task.inventory.totalFiles ||
+        snapshot.payloadBytes !== task.inventory.totalBytes ||
+        snapshot.payloadEmptyDirectories !== task.inventory.emptyDirectories.length ||
+        snapshot.sourcePath !== task.sourcePath ||
+        snapshot.finalPath !== task.finalPath ||
+        snapshot.hashAlgorithm !== "SHA-256" ||
+        snapshot.verificationConclusion !== "通过" ||
+        snapshot.inventoryDigest !== task.inventory.digest ||
+        !Number.isFinite(snapshot.startedAt) ||
+        !Number.isFinite(snapshot.completedAt)
+      )
+        throw new Error("归档转存报告快照无效");
+    }
+    if (
+      task.recoveryEvents.length > 100000 ||
+      task.recoveryEvents.some(
+        (event) =>
+          !event ||
+          !Number.isFinite(event.at) ||
+          typeof event.action !== "string" ||
+          !event.action ||
+          (event.relativePath !== undefined &&
+            !validRelativePath(event.relativePath)),
+      )
+    )
+      throw new Error("归档转存恢复记录无效");
+    if (!allowLegacyPreMigrationState && legacy) {
+      const migrationEvents = task.recoveryEvents.filter(
+          (event) => event.action === "legacy-0.1.36-record-migrated-read-only",
+        ),
+        expectedReportStatus =
+          legacy.originalReportStatus === "generating"
+            ? "failed"
+            : legacy.originalReportStatus;
+      if (
+        (legacy.originalStatus === "completed") !==
+          (legacy.disposition === "read-only-completed") ||
+        task.reportStatus !== expectedReportStatus ||
+        migrationEvents.length !== 1 ||
+        migrationEvents[0].at !== legacy.migratedAt ||
+        (legacy.disposition === "restart-required" &&
+          (typeof task.error !== "string" || !task.error.includes("重新预检")))
+      )
+        throw new Error("归档转存旧记录迁移证据无效");
+    }
+  }
+  return structuredClone(value as ArchiveTransferTask[]);
+}
+
+export function validateArchiveTransferTasks(
+  value: unknown,
+): ArchiveTransferTask[] {
+  return validateNormalizedArchiveTransferTasks(value);
+}
+
+/**
+ * Reads both the current schema and the short-lived 0.1.36 archive-transfer
+ * state. Legacy records are validated with their original inventory digest
+ * before being normalized. They remain read-only because ctime was not part of
+ * the original preflight evidence and therefore cannot be reconstructed safely.
+ */
+export function loadArchiveTransferTasks(
+  value: unknown,
+  migratedAt = Date.now(),
+): ArchiveTransferLoadResult {
+  if (!Array.isArray(value) || value.length > 10000)
+    throw new Error("归档转存记录格式无效");
+  const prepared = structuredClone(value) as Array<Record<string, unknown>>;
+  const newlyMigratedIds = new Set<string>();
+  for (const candidate of prepared) {
+    if (!candidate || typeof candidate !== "object")
+      throw new Error("归档转存记录包含无效任务");
+    if ("schemaVersion" in candidate) continue;
+    if ("legacyMigration" in candidate)
+      throw new Error("归档转存旧记录迁移标记无效");
+    const status = candidate.status as ArchiveTransferStatus,
+      reportStatus = candidate.reportStatus as ArchiveTransferReportStatus;
+    if (
+      !["ready", "running", "verifying", "interrupted", "failed", "completed"].includes(
+        status,
+      ) ||
+      !["pending", "generating", "completed", "failed"].includes(reportStatus)
+    )
+      throw new Error("归档转存旧记录状态无效");
+    candidate.schemaVersion = 1;
+    candidate.legacyMigration = {
+      sourceVersion: "0.1.36",
+      migratedAt,
+      originalStatus: status,
+      originalReportStatus: reportStatus,
+      disposition:
+        status === "completed" ? "read-only-completed" : "restart-required",
+    } satisfies ArchiveTransferLegacyMigration;
+    if (typeof candidate.id === "string") newlyMigratedIds.add(candidate.id);
+  }
+
+  // Validate the unmodified legacy status first. This prevents migration from
+  // laundering a malformed running/reporting state into a harmless-looking
+  // failed record.
+  const validated = validateNormalizedArchiveTransferTasks(prepared, true);
+  if (!newlyMigratedIds.size)
+    return {
+      tasks: validateNormalizedArchiveTransferTasks(validated),
+      migrated: false,
+    };
+
+  for (const task of validated) {
+    const migration = task.legacyMigration;
+    if (!migration || !newlyMigratedIds.has(task.id)) continue;
+    if (migration.disposition === "restart-required") {
+      task.status = "failed";
+      task.error =
+        "此任务来自早期 0.1.37 候选的旧格式快照，未记录 ctime，无法安全恢复。请重新选择源与归档目标，重新预检并开始新任务；旧记录与已写入内容不会被改动。";
+    }
+    if (task.reportStatus === "generating") {
+      task.reportStatus = "failed";
+      const lastAttempt = task.reportAttempts.at(-1);
+      if (
+        lastAttempt &&
+        ["running", "publishing"].includes(lastAttempt.status)
+      ) {
+        lastAttempt.status = "failed";
+        lastAttempt.completedAt = migratedAt;
+        lastAttempt.error = "旧版报告生成状态无法安全续接，已保留为只读记录";
+      }
+    }
+    task.recoveryEvents.push({
+      at: migratedAt,
+      action: "legacy-0.1.36-record-migrated-read-only",
+      detail:
+        migration.disposition === "read-only-completed"
+          ? "已完成记录保留为只读证据；未补写缺失的 ctime"
+          : "未完成记录已安全终止；必须重新预检并创建新任务",
+    });
+  }
+  return {
+    tasks: validateNormalizedArchiveTransferTasks(validated),
+    migrated: true,
+  };
+}
+
 async function fileSha256(file: string) {
   const hash = createHash("sha256");
   await new Promise<void>((resolve, reject) => {
@@ -346,26 +889,169 @@ async function fileSha256(file: string) {
   return hash.digest("hex");
 }
 
+function archiveReportPaths(
+  task: Pick<ArchiveTransferTask, "finalPath">,
+  artifactReportId: string,
+) {
+  const reportRoot = path.join(task.finalPath, "Kocpy报告");
+  return {
+    reportRoot,
+    pdfPath: path.join(
+      reportRoot,
+      `Kocpy_NAS归档_${artifactReportId}.pdf`,
+    ),
+    pngPath: path.join(
+      reportRoot,
+      `Kocpy_NAS归档_${artifactReportId}.png`,
+    ),
+  };
+}
+
+async function readArchiveReportEvidence(file: string) {
+  const pathBefore = await fs.lstat(file);
+  if (!pathBefore.isFile() || pathBefore.isSymbolicLink())
+    throw new Error(`报告产物不是安全的普通文件：${file}`);
+  const handle = await fs.open(
+    file,
+    constants.O_RDONLY | (constants.O_NOFOLLOW || 0),
+  );
+  try {
+    const stat = await handle.stat();
+    if (
+      !stat.isFile() ||
+      stat.dev !== pathBefore.dev ||
+      stat.ino !== pathBefore.ino
+    )
+      throw new Error(`报告产物路径在打开前发生变化：${file}`);
+    const hash = createHash("sha256"),
+      buffer = Buffer.allocUnsafe(1024 * 1024);
+    let position = 0;
+    while (true) {
+      const { bytesRead } = await handle.read(
+        buffer,
+        0,
+        buffer.byteLength,
+        position,
+      );
+      if (!bytesRead) break;
+      hash.update(buffer.subarray(0, bytesRead));
+      position += bytesRead;
+    }
+    const after = await handle.stat(),
+      pathAfter = await fs.lstat(file);
+    if (
+      after.size !== stat.size ||
+      after.ino !== stat.ino ||
+      after.mtimeMs !== stat.mtimeMs ||
+      after.ctimeMs !== stat.ctimeMs ||
+      !pathAfter.isFile() ||
+      pathAfter.isSymbolicLink() ||
+      pathAfter.dev !== stat.dev ||
+      pathAfter.ino !== stat.ino
+    )
+      throw new Error(`报告产物在回读期间发生变化：${file}`);
+    return { bytes: stat.size, sha256: hash.digest("hex") };
+  } finally {
+    await handle.close();
+  }
+}
+
+async function readArchiveMarker(file: string) {
+  const pathBefore = await fs.lstat(file);
+  if (!pathBefore.isFile() || pathBefore.isSymbolicLink())
+    throw new Error("恢复标记不是安全的普通文件，Kocpy 不会继续写入");
+  const handle = await fs.open(
+    file,
+    constants.O_RDONLY | (constants.O_NOFOLLOW || 0),
+  );
+  try {
+    const before = await handle.stat();
+    if (
+      !before.isFile() ||
+      before.size <= 0 ||
+      before.size > 128 * 1024 ||
+      before.dev !== pathBefore.dev ||
+      before.ino !== pathBefore.ino
+    )
+      throw new Error("恢复标记内容或路径无效，Kocpy 不会继续写入");
+    const content = await handle.readFile("utf8"),
+      after = await handle.stat(),
+      pathAfter = await fs.lstat(file);
+    if (
+      after.size !== before.size ||
+      after.ino !== before.ino ||
+      after.mtimeMs !== before.mtimeMs ||
+      after.ctimeMs !== before.ctimeMs ||
+      !pathAfter.isFile() ||
+      pathAfter.isSymbolicLink() ||
+      pathAfter.dev !== before.dev ||
+      pathAfter.ino !== before.ino
+    )
+      throw new Error("恢复标记在读取期间发生变化，Kocpy 不会继续写入");
+    try {
+      return JSON.parse(content) as Record<string, unknown>;
+    } catch {
+      throw new Error("恢复标记内容无效，Kocpy 不会继续写入");
+    }
+  } finally {
+    await handle.close();
+  }
+}
+
 async function exclusiveCopyWithHash(
   source: string,
   destination: string,
   expected: ArchiveTransferInventoryFile,
+  destinationParent: BoundArchiveDirectory,
 ) {
-  const sourceHandle = await fs.open(source, "r");
+  await assertBoundArchiveDirectory(
+    destinationParent,
+    "归档文件目标父目录",
+  );
+  const sourceHandle = await fs.open(
+    source,
+    constants.O_RDONLY | (constants.O_NOFOLLOW || 0),
+  );
   let destinationHandle: Awaited<ReturnType<typeof fs.open>> | undefined;
+  let destinationIdentity: { dev: number; ino: number } | undefined;
   const hash = createHash("sha256"),
     buffer = Buffer.allocUnsafe(4 * 1024 * 1024);
   let completed = false;
   try {
-    destinationHandle = await fs.open(destination, "wx", 0o644);
     const before = await sourceHandle.stat();
     if (
       !before.isFile() ||
       before.size !== expected.size ||
       before.mtimeMs !== expected.mtimeMs ||
+      before.ctimeMs !== expected.ctimeMs ||
       before.ino !== expected.inode
     )
       throw new Error(SOURCE_CHANGED);
+    await assertBoundArchiveDirectory(
+      destinationParent,
+      "归档文件目标父目录",
+    );
+    destinationHandle = await fs.open(
+      destination,
+      constants.O_WRONLY |
+        constants.O_CREAT |
+        constants.O_EXCL |
+        (constants.O_NOFOLLOW || 0),
+      0o644,
+    );
+    const destinationStat = await destinationHandle.stat();
+    if (!destinationStat.isFile())
+      throw new Error("归档目标不是安全的普通文件，已停止写入");
+    destinationIdentity = {
+      dev: destinationStat.dev,
+      ino: destinationStat.ino,
+    };
+    // The path walk and file creation are separate syscalls. Bind the parent
+    // before opening and re-check it before the first payload byte.
+    await assertBoundArchiveDirectory(
+      destinationParent,
+      "归档文件目标父目录",
+    );
     let offset = 0;
     while (offset < before.size) {
       const { bytesRead } = await sourceHandle.read(
@@ -393,16 +1079,50 @@ async function exclusiveCopyWithHash(
     if (
       after.size !== before.size ||
       after.mtimeMs !== before.mtimeMs ||
+      after.ctimeMs !== before.ctimeMs ||
       after.ino !== before.ino
     )
       throw new Error(SOURCE_CHANGED);
     await destinationHandle.sync();
+    await assertBoundArchiveDirectory(
+      destinationParent,
+      "归档文件目标父目录",
+    );
+    const published = await fs.lstat(destination);
+    if (
+      !published.isFile() ||
+      published.isSymbolicLink() ||
+      published.dev !== destinationIdentity.dev ||
+      published.ino !== destinationIdentity.ino
+    )
+      throw new Error("归档目标文件路径在写入期间发生变化，已停止");
     completed = true;
     return hash.digest("hex");
   } finally {
     await sourceHandle.close().catch(() => undefined);
     await destinationHandle?.close().catch(() => undefined);
-    if (!completed) await fs.unlink(destination).catch(() => undefined);
+    if (!completed && destinationIdentity) {
+      // Do not unlink through a parent chain that no longer matches the one
+      // bound before creation. Preserving a partial is safer than deleting a
+      // path that may now name another location.
+      const parentStillBound = await assertBoundArchiveDirectory(
+        destinationParent,
+        "归档文件目标父目录",
+      ).then(
+        () => true,
+        () => false,
+      );
+      if (parentStillBound) {
+        const current = await fs.lstat(destination).catch(() => undefined);
+        if (
+          current?.isFile() &&
+          !current.isSymbolicLink() &&
+          current.dev === destinationIdentity.dev &&
+          current.ino === destinationIdentity.ino
+        )
+          await fs.unlink(destination).catch(() => undefined);
+      }
+    }
   }
 }
 
@@ -413,11 +1133,12 @@ export class ArchiveTransferManager {
   private tasks: ArchiveTransferTask[] = [];
   private running = new Set<string>();
   private checkpointFiles = new Map<string, number>();
+  private stateCommitTail: Promise<void> = Promise.resolve();
 
   constructor(private readonly dependencies: ArchiveTransferDependencies) {}
 
   async initialize(tasks: ArchiveTransferTask[]) {
-    this.tasks = structuredClone(tasks || []);
+    this.tasks = validateArchiveTransferTasks(tasks || []);
     let changed = false;
     for (const task of this.tasks) {
       if (["ready", "running", "verifying"].includes(task.status)) {
@@ -431,17 +1152,33 @@ export class ArchiveTransferManager {
         changed = true;
       }
       if (task.reportStatus === "generating") {
-        task.reportStatus = "failed";
         const lastAttempt = task.reportAttempts.at(-1);
-        if (lastAttempt) {
-          lastAttempt.status = "failed";
-          lastAttempt.error = "上次报告生成被中断，可单独重试";
+        if (lastAttempt?.status === "publishing") {
+          await this.reconcilePublishingReport(task, lastAttempt);
+        } else {
+          task.reportStatus = "failed";
+          if (lastAttempt) {
+            lastAttempt.status = "failed";
+            lastAttempt.completedAt = this.now();
+            lastAttempt.error = "上次报告生成在发布检查点前中断，可单独重试";
+          }
+          task.error = "数据已校验，上次报告生成被中断，可单独重试";
         }
-        task.error = "数据已校验，上次报告生成被中断，可单独重试";
+        if (lastAttempt?.status === "failed" && !lastAttempt.completedAt) {
+          lastAttempt.completedAt = this.now();
+          lastAttempt.status = "failed";
+        }
         changed = true;
       }
     }
     if (changed) await this.persist();
+    for (const task of this.tasks)
+      if (
+        !task.legacyMigration &&
+        task.status === "completed" &&
+        task.reportStatus === "completed"
+      )
+        await this.finalizeCompletedMarker(task);
     return this.list();
   }
 
@@ -465,7 +1202,7 @@ export class ArchiveTransferManager {
     context?: Partial<ArchiveTransferContext>,
   ): Promise<ArchiveTransferPreview> {
     const source = await canonicalDirectory(sourcePath, "源文件夹"),
-      parent = await canonicalDirectory(destinationParent, "NAS 目标父目录"),
+      parent = await canonicalDirectory(destinationParent, "归档目标父目录"),
       folderName = path.basename(source);
     if (!folderName || source === path.parse(source).root)
       throw new Error("请选择项目文件夹，不要直接选择磁盘根目录");
@@ -488,7 +1225,7 @@ export class ArchiveTransferManager {
       inventory.totalBytes + Math.max(64 * 1024 * 1024, Math.ceil(inventory.totalBytes * 0.01));
     if (availableBytes < requiredBytes)
       throw new Error(
-        `NAS 可用空间不足：需要至少 ${humanArchiveBytes(requiredBytes)}，当前 ${humanArchiveBytes(availableBytes)}`,
+        `归档目标可用空间不足：需要至少 ${humanArchiveBytes(requiredBytes)}，当前 ${humanArchiveBytes(availableBytes)}`,
       );
     const archiveName = context?.archiveName?.trim() || folderName,
       nameSource = context?.archiveName?.trim() ? context.archiveNameSource || "project" : "folder";
@@ -515,7 +1252,7 @@ export class ArchiveTransferManager {
           : []),
       ],
       evidenceBoundary:
-        "本次结论只证明预检快照内的相对路径、文件内容、精确字节数与空目录在实际 NAS 目标一致；不验证磁盘占用、ACL、扩展属性、权限及创建/修改时间戳，不证明历史拍摄没有遗漏，也不改变既有清单的异常结论。",
+        "本次结论只证明预检快照内的相对路径、文件内容、精确字节数与空目录在实际归档目标一致；Kocpy 只确认目标是当前可访问的已挂载目录，不确认它一定是 NAS，也不验证服务器内部磁盘拓扑；不验证磁盘占用、ACL、扩展属性、权限及创建/修改时间戳，不证明历史拍摄没有遗漏，也不改变既有清单的异常结论。",
     };
   }
 
@@ -530,6 +1267,7 @@ export class ArchiveTransferManager {
     const at = this.now(),
       id = this.id(),
       task: ArchiveTransferTask = {
+        schemaVersion: 1,
         id,
         reportId: nowIsoId(at, id),
         sourcePath: preview.sourcePath,
@@ -552,10 +1290,38 @@ export class ArchiveTransferManager {
         verifiedBytes: 0,
         targetCreated: false,
         recoveryEvents: [{ at, action: "task-created" }],
-      };
+    };
     task.markerPath = markerPathFor(task);
-    this.tasks.push(task);
-    await this.persist();
+    await this.withStateCommit(async () => {
+      for (const existing of this.tasks) {
+        if (path.resolve(existing.finalPath) !== task.finalPath) continue;
+        let claimsTarget =
+          ["ready", "running", "verifying", "interrupted"].includes(
+            existing.status,
+          ) ||
+          (existing.status === "failed" && existing.targetCreated);
+        if (existing.status === "completed" && !existing.legacyMigration) {
+          const marker = await fs.lstat(existing.markerPath).catch((error) => {
+            if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+            throw error;
+          });
+          // Current-schema tasks retain their marker until report publication
+          // is complete. A markerless early-candidate record is pure history:
+          // it cannot retry reports, but it also must not reserve an empty path
+          // forever.
+          claimsTarget = Boolean(marker);
+        }
+        if (claimsTarget)
+          throw new Error("同一归档目标已经有登记任务，Kocpy 不会重复写入");
+      }
+      const nextTasks = [...this.tasks, task];
+      // The durable candidate must succeed before it becomes the in-memory
+      // authority. Registration shares the same short commit lock as later
+      // checkpoints, so concurrent starts cannot replace the complete task
+      // table with a stale snapshot.
+      await this.dependencies.persist(structuredClone(nextTasks));
+      this.tasks = nextTasks;
+    });
     try {
       await this.createOwnedTarget(task);
       return await this.execute(task);
@@ -567,6 +1333,10 @@ export class ArchiveTransferManager {
 
   async resume(id: string) {
     const task = this.requireTask(id);
+    if (task.legacyMigration)
+      throw new Error(
+        "升级前旧格式归档任务缺少 ctime 预检证据，不能安全恢复。请保留旧记录，并重新选择源与归档目标、重新预检后开始新任务。",
+      );
     if (!["interrupted", "failed"].includes(task.status))
       throw new Error("该归档转存不处于可恢复状态");
     if (!task.targetCreated) await this.recoverUncommittedTarget(task);
@@ -581,10 +1351,22 @@ export class ArchiveTransferManager {
 
   async retryReports(id: string) {
     const task = this.requireTask(id);
+    if (task.legacyMigration)
+      throw new Error(
+        "升级前旧格式归档记录仅作为只读证据保留，不能继续写入或重试报告；请重新预检并开始新任务。",
+      );
     if (task.status !== "completed" || !task.reportSnapshot)
       throw new Error("只有数据校验已通过的归档转存才能重试报告");
-    if (task.reportStatus === "completed") throw new Error("该归档报告已经生成完成");
+    if (task.reportStatus === "generating")
+      throw new Error("归档报告正在生成或恢复，请等待当前操作完成");
+    if (task.reportStatus === "completed") {
+      await this.finalizeCompletedMarker(task);
+      throw new Error("该归档报告已经生成完成");
+    }
+    await this.assertCompletedTargetOwnership(task);
     await this.generateReports(task);
+    if (task.reportAttempts.at(-1)?.status === "completed")
+      await this.finalizeCompletedMarker(task);
     return structuredClone(task);
   }
 
@@ -623,7 +1405,7 @@ export class ArchiveTransferManager {
         .filter((item) => !item.verifiedAt)
         .reduce((sum, item) => sum + item.size, 0);
       if ((await this.dependencies.availableBytes(task.destinationParent)) < remaining)
-        throw new Error("NAS 可用空间不足，已停止；释放空间后可恢复同一任务");
+        throw new Error("归档目标可用空间不足，已停止；释放空间后可恢复同一任务");
       task.status = "running";
       task.startedAt ||= this.now();
       task.error = undefined;
@@ -633,12 +1415,22 @@ export class ArchiveTransferManager {
       this.checkpointFiles.set(task.id, task.completedFiles);
 
       for (const directory of task.inventory.directories)
-        await fs.mkdir(safeTarget(task.finalPath, directory), { recursive: true });
+        await bindArchiveTargetDirectory(task.finalPath, directory, true);
 
       for (const file of task.inventory.files) {
         await this.assertLiveIdentities(task);
         const source = safeTarget(task.sourcePath, file.relativePath),
-          target = safeTarget(task.finalPath, file.relativePath);
+          targetParent = await bindArchiveTargetParent(
+            task.finalPath,
+            file.relativePath,
+            true,
+          ),
+          inspectedTarget = await inspectArchiveTargetFile(
+            task.finalPath,
+            file.relativePath,
+            targetParent,
+          ),
+          target = inspectedTarget.target;
         task.currentFile = file.relativePath;
         this.progress(task);
         if (file.verifiedAt) {
@@ -652,16 +1444,10 @@ export class ArchiveTransferManager {
             throw new Error(`恢复核对发现已完成文件变化，已停止：${file.relativePath}`);
           continue;
         }
-        await fs.mkdir(path.dirname(target), { recursive: true });
-        const existing = await fs.lstat(target).catch((error) => {
-          if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-          throw error;
-        });
+        const existing = inspectedTarget.stat;
         if (existing) {
           if (!recovering)
             throw new Error(`目标出现未由本任务登记的同名文件，已停止：${file.relativePath}`);
-          if (!existing.isFile())
-            throw new Error(`目标同名项目不是普通文件，已停止：${file.relativePath}`);
           const [sourceHash, targetHash] = await Promise.all([
             fileSha256(source),
             fileSha256(target),
@@ -679,14 +1465,16 @@ export class ArchiveTransferManager {
             await this.checkpoint(task);
             continue;
           }
-          await fs.unlink(target);
-          task.recoveryEvents.push({
-            at: this.now(),
-            action: "removed-owned-incomplete-file",
-            relativePath: file.relativePath,
-          });
+          throw new Error(
+            `目标出现无法证明归属或内容不完整的同名文件，Kocpy 未删除：${file.relativePath}。请人工核对并移走该文件后再恢复`,
+          );
         }
-        const sourceHash = await exclusiveCopyWithHash(source, target, file),
+        const sourceHash = await exclusiveCopyWithHash(
+            source,
+            target,
+            file,
+            targetParent,
+          ),
           targetHash = await fileSha256(target);
         if (sourceHash !== targetHash)
           throw new Error(`SHA-256 回读不一致，已停止：${file.relativePath}`);
@@ -736,9 +1524,10 @@ export class ArchiveTransferManager {
         detail: `${task.inventory.totalFiles} files / ${task.inventory.totalBytes} bytes`,
       });
       await this.persist();
-      await fs.unlink(task.markerPath).catch(() => undefined);
       this.progress(task);
       await this.generateReports(task);
+      if (task.reportStatus === "completed")
+        await this.finalizeCompletedMarker(task);
       return structuredClone(task);
     } finally {
       this.running.delete(task.id);
@@ -783,7 +1572,18 @@ export class ArchiveTransferManager {
     for (const file of task.inventory.files) {
       await this.assertLiveIdentities(task);
       const source = safeTarget(task.sourcePath, file.relativePath),
-        target = safeTarget(task.finalPath, file.relativePath),
+        targetParent = await bindArchiveTargetParent(
+          task.finalPath,
+          file.relativePath,
+          false,
+        ),
+        target = (
+          await inspectArchiveTargetFile(
+            task.finalPath,
+            file.relativePath,
+            targetParent,
+          )
+        ).target,
         [sourceHash, targetHash] = await Promise.all([
           fileSha256(source),
           fileSha256(target),
@@ -824,21 +1624,133 @@ export class ArchiveTransferManager {
       throw new Error("归档任务路径或恢复标记无效，Kocpy 不会继续写入");
     const [sourceReal, parentReal] = await Promise.all([
       canonicalDirectory(task.sourcePath, "原源文件夹"),
-      canonicalDirectory(task.destinationParent, "原 NAS 目标"),
+      canonicalDirectory(task.destinationParent, "原归档目标"),
     ]);
     if (sourceReal !== task.sourcePath || parentReal !== task.destinationParent)
       throw new Error("路径已通过别名或重挂载发生变化，已安全停止");
     assertDistinctRoots(sourceReal, parentReal, task.finalPath);
     await this.assertLiveIdentities(task);
-    const marker = JSON.parse(await fs.readFile(task.markerPath, "utf8").catch(() => {
-      throw new Error("恢复标记不存在，无法证明目标属于原中断任务；Kocpy 不会覆盖");
-    }));
+    await this.assertOwnedMarker(task).catch((error) => {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT")
+        throw new Error("恢复标记不存在，无法证明目标属于原中断任务；Kocpy 不会覆盖");
+      throw error;
+    });
+  }
+
+  private async assertOwnedMarker(task: ArchiveTransferTask) {
+    const marker = await readArchiveMarker(task.markerPath);
     if (
+      marker.schemaVersion !== 1 ||
       marker.taskId !== task.id ||
+      marker.sourcePath !== task.sourcePath ||
       marker.finalPath !== task.finalPath ||
-      marker.inventoryDigest !== task.inventory.digest
+      marker.inventoryDigest !== task.inventory.digest ||
+      !validateArchiveIdentity(marker.destinationIdentity) ||
+      !sameIdentity(
+        task.destinationIdentity,
+        marker.destinationIdentity as VolumeIdentity,
+      )
     )
       throw new Error("恢复标记与任务范围不一致，Kocpy 不会继续写入");
+    return marker;
+  }
+
+  private async assertCompletedTargetOwnership(task: ArchiveTransferTask) {
+    const [parentReal, targetReal] = await Promise.all([
+      canonicalDirectory(task.destinationParent, "原归档目标"),
+      canonicalDirectory(task.finalPath, "已校验归档目录"),
+    ]);
+    if (parentReal !== task.destinationParent || targetReal !== task.finalPath)
+      throw new Error("归档目录已移动或通过别名指向其他位置，不能写入旧报告");
+    assertDistinctRoots(task.sourcePath, parentReal, targetReal);
+    const current = await this.dependencies.identifyVolume(parentReal).catch((error) => {
+      throw new Error(`归档目标已离线，不能重试报告：${errorMessage(error)}`);
+    });
+    if (!sameIdentity(task.destinationIdentity, current))
+      throw new Error("归档目标卷身份与原任务不一致，不能重试报告");
+    await this.assertOwnedMarker(task).catch((error) => {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT")
+        throw new Error(
+          "原任务所有权标记不存在，无法证明当前目录仍属于该任务；为避免写错位置，Kocpy 不会重试报告",
+        );
+      throw error;
+    });
+  }
+
+  private async releaseOwnedMarker(task: ArchiveTransferTask) {
+    if (task.status !== "completed" || task.reportStatus !== "completed")
+      throw new Error("归档数据和报告尚未全部完成，不能释放任务所有权标记");
+    await this.assertMarkerParentIdentity(task);
+    await this.assertOwnedMarker(task);
+    await (this.dependencies.removeFile || fs.unlink)(task.markerPath);
+  }
+
+  private async assertMarkerParentIdentity(task: ArchiveTransferTask) {
+    const parentReal = await canonicalDirectory(
+      task.destinationParent,
+      "原归档目标",
+    );
+    if (parentReal !== task.destinationParent)
+      throw new Error("归档目标通过别名或重挂载发生变化，不能清理任务标记");
+    const current = await this.dependencies.identifyVolume(parentReal).catch((error) => {
+      throw new Error(`归档目标已离线，不能清理任务标记：${errorMessage(error)}`);
+    });
+    if (!sameIdentity(task.destinationIdentity, current))
+      throw new Error("归档目标卷身份与原任务不一致，不能清理任务标记");
+  }
+
+  private async finalizeCompletedMarker(task: ArchiveTransferTask) {
+    let marker: Awaited<ReturnType<typeof fs.lstat>> | undefined;
+    try {
+      // Only interpret ENOENT as "already released" after proving that the
+      // original parent is online, canonical and still the recorded volume.
+      await this.assertMarkerParentIdentity(task);
+      marker = await fs.lstat(task.markerPath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        await this.deferCompletedMarkerCleanup(task, error);
+        return;
+      }
+    }
+    if (!marker) {
+      if (task.error?.startsWith(MARKER_CLEANUP_FAILED)) {
+        task.error = undefined;
+        task.recoveryEvents.push({
+          at: this.now(),
+          action: "completed-target-marker-cleanup-confirmed",
+        });
+        await this.persist();
+      }
+      return;
+    }
+    try {
+      await this.releaseOwnedMarker(task);
+      if (task.error?.startsWith(MARKER_CLEANUP_FAILED)) {
+        task.error = undefined;
+        task.recoveryEvents.push({
+          at: this.now(),
+          action: "completed-target-marker-cleanup-recovered",
+        });
+        await this.persist();
+      }
+    } catch (error) {
+      await this.deferCompletedMarkerCleanup(task, error);
+    }
+  }
+
+  private async deferCompletedMarkerCleanup(
+    task: ArchiveTransferTask,
+    error: unknown,
+  ) {
+    const message = `${MARKER_CLEANUP_FAILED}：${errorMessage(error)}。Kocpy 会在下次启动时重试；数据与报告的校验结论不受影响。`;
+    if (task.error === message) return;
+    task.error = message;
+    task.recoveryEvents.push({
+      at: this.now(),
+      action: "completed-target-marker-cleanup-deferred",
+      detail: errorMessage(error),
+    });
+    await this.persist();
   }
 
   private async assertPlannedIdentity(task: ArchiveTransferTask) {
@@ -850,7 +1762,7 @@ export class ArchiveTransferManager {
       throw new Error("归档任务目标范围无效，已停止");
     const [sourceReal, parentReal] = await Promise.all([
       canonicalDirectory(task.sourcePath, "源文件夹"),
-      canonicalDirectory(task.destinationParent, "NAS 目标父目录"),
+      canonicalDirectory(task.destinationParent, "归档目标父目录"),
     ]);
     if (sourceReal !== task.sourcePath || parentReal !== task.destinationParent)
       throw new Error("预检后路径通过别名或重挂载发生变化，已安全停止");
@@ -865,6 +1777,22 @@ export class ArchiveTransferManager {
   }
 
   private async recoverUncommittedTarget(task: ArchiveTransferTask) {
+    const marker = await fs.lstat(task.markerPath).catch((error) => {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+      throw error;
+    });
+    if (!marker) {
+      // Registration is already durable, but no external path was claimed.
+      // Re-run the same identity and exclusivity checks used by a fresh start;
+      // this keeps the original task ID while refusing any newly occupied path.
+      await this.createOwnedTarget(task);
+      task.recoveryEvents.push({
+        at: this.now(),
+        action: "recovered-before-target-creation",
+      });
+      await this.persist();
+      return;
+    }
     await this.assertBaseIdentityAndMarker(task);
     const existing = await fs.lstat(task.finalPath).catch((error) => {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
@@ -897,28 +1825,137 @@ export class ArchiveTransferManager {
     if (!sameIdentity(task.sourceIdentity, source))
       throw new Error("源卷身份与预检记录不一致，已安全停止");
     if (!sameIdentity(task.destinationIdentity, destination))
-      throw new Error("NAS 卷身份与预检记录不一致，可能是同名重挂载，已安全停止");
+      throw new Error("归档目标卷身份与预检记录不一致，可能是同名重挂载，已安全停止");
   }
 
   private async assertReportDestination(task: ArchiveTransferTask) {
     const parentReal = await canonicalDirectory(
       task.destinationParent,
-      "原 NAS 目标",
+      "原归档目标",
     );
     if (parentReal !== task.destinationParent)
-      throw new Error("NAS 目标通过别名或重挂载发生变化，报告未写入");
+      throw new Error("归档目标通过别名或重挂载发生变化，报告未写入");
     const current = await this.dependencies
       .identifyVolume(task.destinationParent)
       .catch((error) => {
-        throw new Error(`NAS 已离线，报告未写入：${errorMessage(error)}`);
+        throw new Error(`归档目标已离线，报告未写入：${errorMessage(error)}`);
       });
     if (!sameIdentity(task.destinationIdentity, current))
-      throw new Error("NAS 卷身份与转存记录不一致，报告未写入");
+      throw new Error("归档目标卷身份与转存记录不一致，报告未写入");
     const targetReal = await fs.realpath(task.finalPath).catch(() => {
-      throw new Error("已校验的 NAS 目标当前不可访问，报告未写入");
+      throw new Error("已校验的归档目标当前不可访问，报告未写入");
     });
     if (targetReal !== task.finalPath)
-      throw new Error("已校验的 NAS 目标现在指向其他位置，报告未写入");
+      throw new Error("已校验的归档目标现在指向其他位置，报告未写入");
+  }
+
+  private async prepareReportDirectory(
+    task: ArchiveTransferTask,
+    artifactReportId: string,
+  ) {
+    await this.assertReportDestination(task);
+    const paths = archiveReportPaths(task, artifactReportId),
+      existing = await fs.lstat(paths.reportRoot).catch((error) => {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+        throw error;
+      });
+    if (existing && (!existing.isDirectory() || existing.isSymbolicLink()))
+      throw new Error("Kocpy报告 位置不是安全的普通目录，报告未写入");
+    if (!existing)
+      await fs.mkdir(paths.reportRoot, { recursive: false, mode: 0o755 });
+    await this.assertReportDirectory(task);
+    return paths;
+  }
+
+  private async assertReportDirectory(task: ArchiveTransferTask) {
+    await this.assertReportDestination(task);
+    const reportRoot = archiveReportPaths(task, task.reportId).reportRoot,
+      before = await fs.lstat(reportRoot).catch((error) => {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT")
+          throw new Error("Kocpy报告 目录不存在，报告未写入或接纳");
+        throw error;
+      });
+    if (!before.isDirectory() || before.isSymbolicLink())
+      throw new Error("Kocpy报告 位置不是安全的普通目录，报告未写入或接纳");
+    if ((await fs.realpath(reportRoot)) !== reportRoot)
+      throw new Error("Kocpy报告 目录通过别名指向其他位置，报告未写入或接纳");
+    const after = await fs.lstat(reportRoot);
+    if (
+      !after.isDirectory() ||
+      after.isSymbolicLink() ||
+      after.dev !== before.dev ||
+      after.ino !== before.ino
+    )
+      throw new Error("Kocpy报告 目录在安全检查期间发生变化");
+    await this.assertReportDestination(task);
+    return { dev: after.dev, ino: after.ino };
+  }
+
+  private async verifyReportAttempt(
+    task: ArchiveTransferTask,
+    attempt: ArchiveTransferReportAttempt,
+  ) {
+    if (
+      !attempt.pdfPath ||
+      !attempt.pngPath ||
+      !validSha256(attempt.pdfSha256) ||
+      !validSha256(attempt.pngSha256) ||
+      !Number.isSafeInteger(attempt.pdfBytes) ||
+      attempt.pdfBytes! <= 0 ||
+      !Number.isSafeInteger(attempt.pngBytes) ||
+      attempt.pngBytes! <= 0
+    )
+      throw new Error("报告发布检查点缺少完整的路径或摘要证据");
+    const expected = archiveReportPaths(task, attempt.artifactReportId);
+    if (
+      path.resolve(attempt.pdfPath) !== expected.pdfPath ||
+      path.resolve(attempt.pngPath) !== expected.pngPath
+    )
+      throw new Error("报告发布检查点的目标路径无效");
+    const directoryBefore = await this.assertReportDirectory(task);
+    const [pdf, png] = await Promise.all([
+      readArchiveReportEvidence(attempt.pdfPath),
+      readArchiveReportEvidence(attempt.pngPath),
+    ]);
+    if (
+      pdf.bytes !== attempt.pdfBytes ||
+      png.bytes !== attempt.pngBytes ||
+      pdf.sha256 !== attempt.pdfSha256 ||
+      png.sha256 !== attempt.pngSha256
+    )
+      throw new Error("报告落盘回读与发布检查点不一致，未记录为完成");
+    const directoryAfter = await this.assertReportDirectory(task);
+    if (
+      directoryAfter.dev !== directoryBefore.dev ||
+      directoryAfter.ino !== directoryBefore.ino
+    )
+      throw new Error("Kocpy报告 目录在回读期间发生变化");
+  }
+
+  private async reconcilePublishingReport(
+    task: ArchiveTransferTask,
+    attempt: ArchiveTransferReportAttempt,
+  ) {
+    try {
+      await this.assertCompletedTargetOwnership(task);
+      await this.verifyReportAttempt(task, attempt);
+      attempt.status = "completed";
+      attempt.completedAt = this.now();
+      attempt.error = undefined;
+      task.reportStatus = "completed";
+      task.error = undefined;
+      task.recoveryEvents.push({
+        at: this.now(),
+        action: "report-publishing-checkpoint-recovered",
+        detail: attempt.artifactReportId,
+      });
+    } catch (error) {
+      attempt.status = "failed";
+      attempt.completedAt = this.now();
+      attempt.error = `上次报告发布检查点未通过回读：${errorMessage(error)}`;
+      task.reportStatus = "failed";
+      task.error = `数据已校验，${attempt.error}。Kocpy 未覆盖任何现有文件，可显式重试并生成新的报告编号。`;
+    }
   }
 
   private async generateReports(task: ArchiveTransferTask) {
@@ -937,12 +1974,37 @@ export class ArchiveTransferManager {
     await this.persist();
     try {
       await this.assertReportDestination(task);
-      const output = await this.dependencies.renderReports(snapshot, artifactReportId);
+      const rendered = await this.dependencies.renderReports(
+          snapshot,
+          artifactReportId,
+        ),
+        paths = archiveReportPaths(task, artifactReportId);
+      if (
+        !Buffer.isBuffer(rendered.pdf) ||
+        !rendered.pdf.byteLength ||
+        !Buffer.isBuffer(rendered.png) ||
+        !rendered.png.byteLength
+      )
+        throw new Error("报告生成器没有返回完整的 PDF/PNG 字节");
       Object.assign(attempt, {
-        ...output,
-        status: "completed" as const,
-        completedAt: this.now(),
+        pdfPath: paths.pdfPath,
+        pngPath: paths.pngPath,
+        pdfSha256: createHash("sha256").update(rendered.pdf).digest("hex"),
+        pngSha256: createHash("sha256").update(rendered.png).digest("hex"),
+        pdfBytes: rendered.pdf.byteLength,
+        pngBytes: rendered.png.byteLength,
+        status: "publishing" as const,
       });
+      // Freeze exact targets and digests before the first external write. If
+      // the process stops after publication, initialize() can adopt this same
+      // attempt instead of producing an unreferenced R1 plus duplicate R2.
+      await this.persist();
+      const prepared = await this.prepareReportDirectory(task, artifactReportId);
+      await publishNewArtifact(prepared.pdfPath, rendered.pdf);
+      await publishNewArtifact(prepared.pngPath, rendered.png);
+      await this.verifyReportAttempt(task, attempt);
+      attempt.status = "completed";
+      attempt.completedAt = this.now();
       task.reportStatus = "completed";
       task.error = undefined;
       task.recoveryEvents.push({
@@ -957,6 +2019,8 @@ export class ArchiveTransferManager {
       task.reportStatus = "failed";
       task.error = `数据已校验，报告保存失败，可重试：${attempt.error}`;
     }
+    // Deliberately outside the generation catch: if this exact final commit
+    // fails, the preceding durable `publishing` checkpoint is recoverable.
     await this.persist();
   }
 
@@ -1006,7 +2070,23 @@ export class ArchiveTransferManager {
   }
 
   private async persist() {
-    await this.dependencies.persist(structuredClone(this.tasks));
+    await this.withStateCommit(async () => {
+      await this.dependencies.persist(structuredClone(this.tasks));
+    });
+  }
+
+  private async withStateCommit<T>(operation: () => Promise<T>): Promise<T> {
+    const previous = this.stateCommitTail;
+    let release!: () => void;
+    this.stateCommitTail = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await previous;
+    try {
+      return await operation();
+    } finally {
+      release();
+    }
   }
 
   private now() {

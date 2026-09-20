@@ -153,6 +153,9 @@ function assertArchiveEvidence(value: ArchiveEvidenceInput) {
           result.checkedCopies,
           result.verifiedCopies,
           result.missingFiles,
+          ...(result.missingDirectories === undefined
+            ? []
+            : [result.missingDirectories]),
           result.damagedFiles,
           result.offlineCopies,
           result.identityUnknownCopies,

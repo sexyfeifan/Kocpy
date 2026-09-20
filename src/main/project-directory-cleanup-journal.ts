@@ -12,6 +12,59 @@ import type { ProjectDirectoryCleanupJournal } from "./project-directory-cleanup
 export const PROJECT_DIRECTORY_CLEANUP_JOURNAL =
   "project-directory-cleanup-recovery.json";
 
+let projectDirectoryCleanupMutationInFlight: Promise<unknown> | undefined;
+
+/**
+ * The recovery journal is process-global, so its complete mutation transaction
+ * must also be process-global. This lock is independent from UI/maintenance
+ * orchestration: future callers cannot enter the journal/write/rmdir window in
+ * parallel and replace or clear another project's sole recovery authority.
+ */
+export async function withProjectDirectoryCleanupMutation<T>(
+  action: () => Promise<T>,
+): Promise<T> {
+  if (projectDirectoryCleanupMutationInFlight)
+    throw new Error(
+      "另一个项目的空目录整理正在执行；请等待完成后重新预览，以免覆盖恢复记录。",
+    );
+  const current = Promise.resolve().then(action);
+  projectDirectoryCleanupMutationInFlight = current;
+  try {
+    return await current;
+  } finally {
+    if (projectDirectoryCleanupMutationInFlight === current)
+      projectDirectoryCleanupMutationInFlight = undefined;
+  }
+}
+
+/**
+ * The cleanup recovery journal is a single global file. A new cleanup must
+ * therefore wait for any prior project's journal to be reconciled; otherwise
+ * the second cleanup could replace the only durable evidence for the first.
+ * Non-cleanup project operations may keep their narrower, project-local gate.
+ */
+export function assertProjectDirectoryCleanupJournalIdle(
+  journal: ProjectDirectoryCleanupJournal | undefined,
+  recoveryError: string | undefined,
+  projectId: string,
+  scope: "project" | "global" = "project",
+) {
+  if (!recoveryError && !journal) return;
+  if (
+    !recoveryError &&
+    scope === "project" &&
+    journal?.projectId !== projectId
+  )
+    return;
+  const anotherProject = journal && journal.projectId !== projectId;
+  throw new Error(
+    recoveryError ||
+      (anotherProject
+        ? "另一个项目有一次空目录整理等待恢复调和。请重启 Kocpy 完成调和；在此之前不会开始新的空目录整理，以免覆盖恢复记录。"
+        : "该项目有一次空目录整理等待恢复调和。请重启 Kocpy 完成调和；在此之前不会补目录、重复整理或删除项目。"),
+  );
+}
+
 function validated(value: unknown): ProjectDirectoryCleanupJournal | undefined {
   if (value === undefined) return undefined;
   const journal = value as Partial<ProjectDirectoryCleanupJournal>;

@@ -21,6 +21,7 @@ import {
   projectDeviceCells,
   verifiedPhysicalCopyCount,
 } from "../src/main/project-closeout";
+import { APP_VERSION } from "../src/common/version";
 describe("Persistence and reports", () => {
   it("serializes concurrent writes and recovers the previous valid snapshot", async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "kocpy-store-"));
@@ -364,8 +365,36 @@ describe("Persistence and reports", () => {
     ];
     const mhl = generateMhl(t);
     expect(mhl).toContain('<mhl version="1.1">');
+    expect(mhl).toContain(`<version>${APP_VERSION}</version>`);
+    expect(mhl).not.toContain("<version>0.1.14</version>");
     expect(mhl).toContain("A/a&amp;b.mov");
     expect(mhl).toContain("<sha256>abc</sha256>");
+  });
+  it("records the running Kocpy version in both MHL creator formats", () => {
+    const task = new BackupEngine().createTask({
+      name: "creator-version",
+      namingTemplate: "creator-version",
+      sourcePath: "/tmp/source",
+      destinationPaths: ["/tmp/dest"],
+      devices: [],
+      hashAlgorithm: "sha256",
+      shootingDate: "",
+    });
+    task.fileRecords = [
+      {
+        name: "clip.mov",
+        relativePath: "clip.mov",
+        size: 0,
+        srcChecksum:
+          "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        ascMhlMd5: "d41d8cd98f00b204e9800998ecf8427e",
+        destinations: [],
+      },
+    ];
+    expect(generateMhl(task)).toContain(`<version>${APP_VERSION}</version>`);
+    expect(generateAscMhl(task)).toContain(
+      `<tool version="${APP_VERSION}">Kocpy</tool>`,
+    );
   });
   it("exports the verified destination path when duplicate handling renamed a file", () => {
     const t = new BackupEngine().createTask({

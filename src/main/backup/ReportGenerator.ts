@@ -208,6 +208,7 @@ export async function generateReport(
   }
   .header h1 { font-size: 28px; font-weight: 700; letter-spacing: -1px; }
   .header p { font-size: 11px; color: #888; margin-top: 4px; }
+  .snapshot-note { margin:-8px 0 16px;padding:12px 14px;border:1px solid #d9d3e5;border-radius:10px;background:#fbf9ff;color:#5e5668;line-height:1.6; }
   .badge {
     padding: 6px 14px;
     border-radius: 6px;
@@ -290,11 +291,13 @@ export async function generateReport(
 <div class="header">
   <div>
     <h1>Kocpy</h1>
-    <p>VERIFIED MEDIA TRANSFER REPORT · v${APP_VERSION}</p>
+    <p>VERIFIED MEDIA TRANSFER SNAPSHOT · v${APP_VERSION}</p>
     <p style="margin-top:8px;font-size:12px;color:#aaa">生成时间：${new Date(generatedAt).toLocaleString("zh-CN")}</p>
   </div>
   <div class="badge">${statusLabel}</div>
 </div>
+
+<div class="snapshot-note"><strong>首次完成时的不可变校验快照</strong> · 下列路径与副本列表记录任务首次完成时的状态；若副本以后迁移或新增，Kocpy 会保留这份原始字节，并在归档变化记录中追踪当前位置，不会把旧路径改写成新路径。</div>
 
 <div class="summary">
   <div><strong>${task.totalFiles}</strong><span>FILES / 文件</span></div>

@@ -44,6 +44,16 @@ interface Source {
   scan?: Scan;
 }
 const CAMERA_POSITIONS = ["A", "B", "C", "D", "E"];
+
+export function composerDefaultsFromSettings(settings: Settings) {
+  return {
+    algorithm: settings.defaultHash,
+    duplicate: settings.defaultDuplicateStrategy,
+    includeHidden: settings.includeHidden,
+    automaticPdf: settings.automaticPdf !== false,
+  } as const;
+}
+
 export function Composer({
   initial,
   volumes,
@@ -61,6 +71,12 @@ export function Composer({
   onCreated: () => Promise<void>;
   onCreateProject: () => void;
 }) {
+  // A composer is an editable draft. Capture the loaded defaults once when it
+  // opens so an unrelated settings refresh cannot overwrite choices the user
+  // has already changed in this dialog.
+  const [initialDefaults] = useState(() =>
+    composerDefaultsFromSettings(settings),
+  );
   const [nasPresets, setNasPresets] = useState<import("./api").NasPreset[]>([]);
   useEffect(() => {
     void api
@@ -98,12 +114,12 @@ export function Composer({
       ]?.[0] || "A",
     ),
     [name, setName] = useState(""),
-    [algorithm, setAlgorithm] = useState(settings.defaultHash),
-    [duplicate, setDuplicate] = useState(settings.defaultDuplicateStrategy),
-    [hidden, setHidden] = useState(settings.includeHidden),
+    [algorithm, setAlgorithm] = useState(initialDefaults.algorithm),
+    [duplicate, setDuplicate] = useState(initialDefaults.duplicate),
+    [hidden, setHidden] = useState(initialDefaults.includeHidden),
     [mirror, setMirror] = useState(false),
     [priority, setPriority] = useState(false),
-    [automaticPdf, setAutomaticPdf] = useState(settings.automaticPdf !== false);
+    [automaticPdf, setAutomaticPdf] = useState(initialDefaults.automaticPdf);
   const [clock, setClock] = useState(Date.now());
   const [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
@@ -1339,7 +1355,7 @@ export function Composer({
                       <span>
                         完成后自动生成 PDF
                         <small>
-                          每个已校验素材卷都会保存到 Kocpy报告 目录
+                          全部目的地完成校验后，每个备份目的地都会保存到 Kocpy报告 目录
                         </small>
                       </span>
                     </label>
@@ -1352,7 +1368,10 @@ export function Composer({
                     </div>
                     <small className="muted">
                       隐藏文件：{hidden ? "包含" : "排除"}
-                      （跟随偏好设置）；完整模式会保留 AppleDouble、已有报告和清单。
+                      （跟随偏好设置）；
+                      {hidden
+                        ? "当前会保留 AppleDouble、已有报告和清单。"
+                        : "当前隐藏项会进入明确排除清单，本任务不属于未过滤的完整素材范围。"}
                     </small>
                   </div>
                 </details>

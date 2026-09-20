@@ -1,22 +1,26 @@
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   beginCompletionAction,
   completionActionKey,
+  createExclusiveArtifactDirectory,
   ensureCompletionActionPlan,
   failCompletionAction,
   finishCompletionAction,
   publishNewArtifact,
   recoverInterruptedCompletionActions,
   skipCompletionAction,
+  syncArtifactExclusive,
+  verifyPublishedArtifact,
   validateCompletionActionRecords,
 } from "../src/main/completion-automation";
 import type { BackupTask, ProjectConfig } from "../src/main/types";
 
 const roots: string[] = [];
 afterEach(async () => {
+  vi.restoreAllMocks();
   await Promise.all(roots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true })));
 });
 
@@ -158,8 +162,92 @@ describe("safe completion automation", () => {
     const target = path.join(root, "report.json");
     const first = await publishNewArtifact(target, "first");
     expect(first.sha256).toMatch(/^[a-f0-9]{64}$/);
+    expect((await fs.stat(target)).mode & 0o777).toBe(0o644);
     await expect(publishNewArtifact(target, "second")).rejects.toThrow(/未覆盖/);
     expect(await fs.readFile(target, "utf8")).toBe("first");
     expect((await fs.readdir(root)).filter((name) => name.endsWith(".partial"))).toEqual([]);
+  });
+
+  it("falls back to an exclusive copy when the destination filesystem has no hard links", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "kocpy-completion-no-link-"));
+    roots.push(root);
+    const target = path.join(root, "report.pdf"),
+      unsupported = Object.assign(new Error("hard links unsupported"), {
+        code: "ENOTSUP",
+      });
+    vi.spyOn(fs, "link").mockRejectedValue(unsupported);
+    const published = await publishNewArtifact(target, "portable report");
+    expect(await fs.readFile(target, "utf8")).toBe("portable report");
+    expect(published.sha256).toMatch(/^[a-f0-9]{64}$/);
+    await expect(publishNewArtifact(target, "preserve existing")).rejects.toThrow(
+      /未覆盖/,
+    );
+    expect(await fs.readFile(target, "utf8")).toBe("portable report");
+    expect((await fs.readdir(root)).filter((name) => name.endsWith(".partial"))).toEqual([]);
+  });
+
+  it("rereads completion artifacts before success and leaves mismatched content failed without overwriting it", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "kocpy-completion-verify-")),
+      target = path.join(root, "report.pdf"),
+      expectedValue = Buffer.from("expected report");
+    roots.push(root);
+    const digest = (await publishNewArtifact(target, expectedValue)).sha256;
+    await expect(verifyPublishedArtifact(target, digest)).resolves.toBe(digest);
+
+    await fs.writeFile(target, "post-publication mismatch");
+    const value = task();
+    ensureCompletionActionPlan(value, project(), 10);
+    const running = beginCompletionAction(value, "report", "DIT Li", 20).record;
+    try {
+      await verifyPublishedArtifact(target, digest);
+      finishCompletionAction(running, { result: "must not complete", at: 30 });
+    } catch (error) {
+      failCompletionAction(running, error, 30);
+    }
+    expect(running.status).toBe("failed");
+    expect(running.error).toContain("回读摘要不一致");
+    await expect(publishNewArtifact(target, expectedValue)).rejects.toThrow(/未覆盖/);
+    expect(await fs.readFile(target, "utf8")).toBe("post-publication mismatch");
+  });
+
+  it("syncs identical reports idempotently and never overwrites a conflicting report", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "kocpy-report-sync-")),
+      sourceDirectory = path.join(root, "source"),
+      syncDirectory = path.join(root, "sync"),
+      source = path.join(sourceDirectory, "report.pdf"),
+      target = path.join(syncDirectory, "report.pdf");
+    roots.push(root);
+    await fs.mkdir(sourceDirectory);
+    await fs.writeFile(source, "verified report");
+    await expect(syncArtifactExclusive(source, syncDirectory)).resolves.toMatchObject({
+      path: target,
+      reused: false,
+    });
+    await expect(syncArtifactExclusive(source, syncDirectory)).resolves.toMatchObject({
+      path: target,
+      reused: true,
+    });
+    await fs.writeFile(target, "do not overwrite");
+    await expect(syncArtifactExclusive(source, syncDirectory)).rejects.toThrow(
+      /未覆盖/,
+    );
+    expect(await fs.readFile(target, "utf8")).toBe("do not overwrite");
+  });
+
+  it("creates project artifact directories exclusively", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "kocpy-project-bundle-")),
+      name = "Kocpy_Film_项目归档包_1",
+      target = path.join(root, name);
+    roots.push(root);
+    await expect(createExclusiveArtifactDirectory(root, name)).resolves.toBe(
+      target,
+    );
+    await fs.writeFile(path.join(target, "preserve.txt"), "preserve");
+    await expect(createExclusiveArtifactDirectory(root, name)).rejects.toThrow(
+      /未覆盖/,
+    );
+    expect(await fs.readFile(path.join(target, "preserve.txt"), "utf8")).toBe(
+      "preserve",
+    );
   });
 });

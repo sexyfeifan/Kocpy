@@ -1,0 +1,177 @@
+[
+  {
+    "id": "12345678-abcd-4000-8000-123456789abc",
+    "reportId": "KAT-20260905T100000Z-12345678",
+    "sourcePath": "/Volumes/Kocpy Source/Project A",
+    "destinationParent": "/Volumes/Kocpy NAS/Archive",
+    "finalPath": "/Volumes/Kocpy NAS/Archive/Project A",
+    "markerPath": "/Volumes/Kocpy NAS/Archive/.Project A.kocpy-transfer-12345678-abcd-4000-8000-123456789abc.json",
+    "sourceIdentity": {
+      "id": "source-volume-1",
+      "uuid": "SOURCE-UUID-1",
+      "name": "Kocpy Source",
+      "device": "901",
+      "mountPoint": "/Volumes/Kocpy Source",
+      "fileSystem": "apfs"
+    },
+    "destinationIdentity": {
+      "id": "nas-volume-1",
+      "uuid": "NAS-UUID-1",
+      "name": "Kocpy NAS",
+      "device": "902",
+      "mountPoint": "/Volumes/Kocpy NAS",
+      "fileSystem": "smbfs",
+      "mountSourceDigest": "sanitized-server-share-digest"
+    },
+    "inventory": {
+      "files": [
+        {
+          "relativePath": "Day01/A001.mov",
+          "size": 4,
+          "mtimeMs": 1770000000000,
+          "inode": 101,
+          "sourceSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "targetSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "verifiedAt": 1770000010000
+        },
+        {
+          "relativePath": "Day01/metadata.xml",
+          "size": 2,
+          "mtimeMs": 1770000001000,
+          "inode": 102,
+          "sourceSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "targetSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "verifiedAt": 1770000011000
+        }
+      ],
+      "directories": ["Day01", "Day01/empty"],
+      "emptyDirectories": ["Day01/empty"],
+      "totalFiles": 2,
+      "totalBytes": 6,
+      "digest": "591bc34148825ed7e8837a91c51a1a30c2b880608513d03444d8b6259f771ae5",
+      "existingPdfFiles": 0,
+      "existingManifestFiles": 1
+    },
+    "archiveName": "Project A",
+    "archiveNameSource": "folder",
+    "shootingDate": "2026-09-05",
+    "historicalEvidence": [],
+    "status": "completed",
+    "reportStatus": "completed",
+    "reportAttempts": [
+      {
+        "attempt": 1,
+        "artifactReportId": "KAT-20260905T100000Z-12345678",
+        "startedAt": 1770000021000,
+        "completedAt": 1770000022000,
+        "status": "completed",
+        "pdfPath": "/Volumes/Kocpy NAS/Archive/Project A/Kocpy报告/Kocpy_NAS归档_KAT-20260905T100000Z-12345678.pdf",
+        "pngPath": "/Volumes/Kocpy NAS/Archive/Project A/Kocpy报告/Kocpy_NAS归档_KAT-20260905T100000Z-12345678.png"
+      }
+    ],
+    "reportSnapshot": {
+      "schemaVersion": 1,
+      "reportId": "KAT-20260905T100000Z-12345678",
+      "transferId": "12345678-abcd-4000-8000-123456789abc",
+      "archiveName": "Project A",
+      "archiveNameSource": "folder",
+      "shootingDate": "2026-09-05",
+      "payloadFileCount": 2,
+      "payloadBytes": 6,
+      "payloadHumanBytes": "6 B",
+      "payloadEmptyDirectories": 1,
+      "sourcePath": "/Volumes/Kocpy Source/Project A",
+      "finalPath": "/Volumes/Kocpy NAS/Archive/Project A",
+      "startedAt": 1770000005000,
+      "completedAt": 1770000020000,
+      "hashAlgorithm": "SHA-256",
+      "verificationConclusion": "通过",
+      "inventoryDigest": "591bc34148825ed7e8837a91c51a1a30c2b880608513d03444d8b6259f771ae5",
+      "historicalEvidence": [],
+      "evidenceBoundary": "0.1.36 归档转存完成记录（脱敏测试夹具）"
+    },
+    "createdAt": 1770000000000,
+    "startedAt": 1770000005000,
+    "completedAt": 1770000020000,
+    "completedFiles": 2,
+    "verifiedBytes": 6,
+    "targetCreated": true,
+    "recoveryEvents": [
+      { "at": 1770000000000, "action": "task-created" },
+      { "at": 1770000020000, "action": "payload-independently-verified" }
+    ]
+  },
+  {
+    "id": "87654321-abcd-4000-8000-123456789abc",
+    "reportId": "KAT-20260905T110000Z-87654321",
+    "sourcePath": "/Volumes/Kocpy Source/Project B",
+    "destinationParent": "/Volumes/Kocpy NAS/Archive",
+    "finalPath": "/Volumes/Kocpy NAS/Archive/Project B",
+    "markerPath": "/Volumes/Kocpy NAS/Archive/.Project B.kocpy-transfer-87654321-abcd-4000-8000-123456789abc.json",
+    "sourceIdentity": {
+      "id": "source-volume-1",
+      "uuid": "SOURCE-UUID-1",
+      "name": "Kocpy Source",
+      "device": "901",
+      "mountPoint": "/Volumes/Kocpy Source",
+      "fileSystem": "apfs"
+    },
+    "destinationIdentity": {
+      "id": "nas-volume-1",
+      "uuid": "NAS-UUID-1",
+      "name": "Kocpy NAS",
+      "device": "902",
+      "mountPoint": "/Volumes/Kocpy NAS",
+      "fileSystem": "smbfs",
+      "mountSourceDigest": "sanitized-server-share-digest"
+    },
+    "inventory": {
+      "files": [
+        {
+          "relativePath": "Day01/A001.mov",
+          "size": 4,
+          "mtimeMs": 1770000000000,
+          "inode": 101,
+          "sourceSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "targetSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "verifiedAt": 1770000010000
+        },
+        {
+          "relativePath": "Day01/metadata.xml",
+          "size": 2,
+          "mtimeMs": 1770000001000,
+          "inode": 102
+        }
+      ],
+      "directories": ["Day01", "Day01/empty"],
+      "emptyDirectories": ["Day01/empty"],
+      "totalFiles": 2,
+      "totalBytes": 6,
+      "digest": "591bc34148825ed7e8837a91c51a1a30c2b880608513d03444d8b6259f771ae5",
+      "existingPdfFiles": 0,
+      "existingManifestFiles": 1
+    },
+    "archiveName": "Project B",
+    "archiveNameSource": "folder",
+    "shootingDate": "2026-09-05",
+    "historicalEvidence": [],
+    "status": "interrupted",
+    "reportStatus": "pending",
+    "reportAttempts": [],
+    "createdAt": 1770003600000,
+    "startedAt": 1770003605000,
+    "currentFile": "Day01/metadata.xml",
+    "completedFiles": 1,
+    "verifiedBytes": 4,
+    "targetCreated": true,
+    "error": "NAS connection interrupted",
+    "recoveryEvents": [
+      { "at": 1770003600000, "action": "task-created" },
+      {
+        "at": 1770003610000,
+        "action": "transfer-stopped",
+        "relativePath": "Day01/metadata.xml"
+      }
+    ]
+  }
+]

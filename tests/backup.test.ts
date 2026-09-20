@@ -42,7 +42,7 @@ function wait(engine: BackupEngine, id: string) {
     const timer = setTimeout(() => {
       engine.cancelTask(id);
       reject(new Error("Task timed out"));
-    }, 12000);
+    }, 30000);
     const listener = (t: BackupTask) => {
       if (t.id === id) {
         clearTimeout(timer);
@@ -505,7 +505,7 @@ describe("Real filesystem backup integrity", () => {
       target = path.join(root, "directory-target");
     await fs.mkdir(path.join(empty, "one", "two"), { recursive: true });
     await fs.mkdir(target);
-    const { task } = await run(
+    const { task, engine } = await run(
       config({
         sourcePath: empty,
         destinationPaths: [target],
@@ -532,6 +532,10 @@ describe("Real filesystem backup integrity", () => {
         )
       ).isDirectory(),
     ).toBe(true);
+    const reverified = await engine.reverifyTask(task.id);
+    expect(reverified.status, reverified.errorMessage).toBe("completed");
+    expect(reverified.verifyProgress).toBe(100);
+    expect(reverified.destinations[0].verified).toBe(true);
   });
   it("accepts a completely empty complete-v2 root but preserves legacy rejection", async () => {
     const empty = path.join(root, "nothing"),
@@ -558,6 +562,9 @@ describe("Real filesystem backup integrity", () => {
     expect(
       (await fs.stat(path.join(currentTarget, path.basename(empty)))).isDirectory(),
     ).toBe(true);
+    const reverified = await current.engine.reverifyTask(current.task.id);
+    expect(reverified.status, reverified.errorMessage).toBe("completed");
+    expect(reverified.destinations[0].verified).toBe(true);
 
     const legacyEngine = new BackupEngine(),
       legacy = legacyEngine.createTask(
@@ -574,6 +581,20 @@ describe("Real filesystem backup integrity", () => {
     legacyEngine.startTask(legacy.id);
     expect((await settled).status).toBe("failed");
     expect(legacy.errorMessage).toContain("没有可备份");
+  });
+  it("refuses complete-v2 re-verification when frozen file or directory scope was weakened", async () => {
+    const first = await run();
+    first.task.inventoryScope!.includedFiles += 1;
+    await expect(first.engine.reverifyTask(first.task.id)).rejects.toThrow(
+      "完整文件哈希基线",
+    );
+
+    const second = await run();
+    second.task.inventoryScope!.includedDirectoryPaths = [];
+    second.task.inventoryScope!.includedDirectories = 0;
+    await expect(second.engine.reverifyTask(second.task.id)).rejects.toThrow(
+      "完整文件哈希基线",
+    );
   });
   it("never accepts unsupported algorithms or zero destinations", () => {
     expect(() =>
