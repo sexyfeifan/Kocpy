@@ -37,7 +37,7 @@
 
 普通备份有两种目录组织方式：
 
-- **按次保存**：创建 `源文件夹名_时间戳`，内部文件名与子目录保持不变。
+- **按次保存**：创建 `源文件夹名_时间戳`；无同名冲突时，内部文件名与子目录保持不变。
 - **保留源文件夹（镜像备份）**：保留所选源文件夹这一层，不添加时间戳或随机码。它不是删除式同步，不删除目的地额外文件，也不静默覆盖冲突内容。
 
 例如：源为 `/Volumes/CARD/拍摄素材`，目的地选择 `/Volumes/BACKUP/交付`，镜像备份落点就是 `/Volumes/BACKUP/交付/拍摄素材`。
@@ -56,9 +56,9 @@
 | 清单差异处理 | 缺失／额外／大小／哈希差异明细；Finder 定位；健康副本修复；重要确认后的经审计 MHL 修订 |
 | 素材库 | 缩略图与媒体信息、分页搜索、Finder／播放入口；移动目录后通过完整哈希重新定位或关联健康副本 |
 | 代理与交付 | H.264／ProRes Proxy；预设与自定义参数；依赖、暂停、恢复、重试；源与输出哈希证据；交付前重新校验 |
-| 报告与清单 | 新任务默认在每个已校验目的地自动保存 PDF；任务／拍摄日／项目 PDF、JSON、CSV、MHL／ASC MHL；Resolve／Premiere／Final Cut 媒体清单；附 SHA-256 的项目归档包 |
+| 报告与清单 | 新任务及全部目的地完成校验后，默认在每个备份目的地自动保存 PDF；任务／拍摄日／项目 PDF、JSON、CSV、MHL／ASC MHL；Resolve／Premiere／Final Cut 媒体清单；附 SHA-256 的项目归档包 |
 | 完整卡与每日交付 | 完整素材卡保持不可变；素材日期建议与人工分配；从已校验完整卡生成、独立回读并报告的每日交付；派生产物不增加独立副本计数 |
-| NAS 归档转存 | 普通文件夹或项目文件夹独立转存到已挂载 NAS；不覆盖、可恢复、逐文件 SHA-256 回读；最终目录内 PDF 与高清 PNG 事实报告 |
+| NAS／已挂载目录归档转存 | 普通文件夹或项目文件夹独立转存到 NAS、网络共享、外置盘或其他已挂载目录；显示文件系统与挂载点，不把任意目录冒充为已确认 NAS；不覆盖、可恢复、逐文件 SHA-256 回读；最终目录内 PDF 与高清 PNG 事实报告 |
 | 长期归档 | 按盘、项目、拍摄日、素材卷或单文件复校验；健康历史、位置变化、周期提醒、保留损坏原件的副本修复 |
 | 工作站协作 | 元数据包导出、只读预检、逐项冲突决定、可恢复合并与审计；同包同决定重复导入不重复写入；可选只读局域网索引 |
 | 安全自动化 | 历史素材卡与疑似重复建议；完成后报告／代理／交付／推出建议；用户逐项确认后执行并保留结果 |
@@ -74,7 +74,7 @@
 - **没有文件夹 ≠ 当天未使用设备。** 项目空白单元保持待确认；休息或未使用标记不能掩盖已记录素材的风险。
 - **刷新记录 ≠ 重新校验。** 刷新修正识别与重复统计，不重新读取全部内容哈希。
 - **历史通过 ≠ 永久健康。** 长期保存需要重新读取归档盘校验；报告只代表其记录时点。
-- **完整范围 ≠ 磁盘占用字节相同。** 新任务默认按路径、内容、精确文件字节与空目录保证冻结清单一致；文件系统分配、ACL、扩展属性和时间戳不在内容校验结论内。主动排除隐藏项时会留下明确排除清单。
+- **完整范围 ≠ 目的地目录集合绝对相等。** 新任务保证冻结源素材范围的每一项都有已记录的目标映射，目标内容、精确文件字节与冻结空目录经过核对；冲突后缀模式会记录改名后的真实映射。Kocpy 不删除或否定目的地既有额外项，校验完成后写入的 `Kocpy报告` 也是带独立摘要的管理产物，不属于源卡素材范围。文件系统分配、ACL、扩展属性和时间戳不在内容校验结论内；主动排除隐藏项时会留下明确排除清单。
 - **每日交付 ≠ 新的完整备份。** 它从已校验完整卡派生并重新校验，但不增加素材卡、任务或物理独立副本数量。
 
 普通备份按只读原则处理素材源。修复副本、修订 MHL 等维护写入必须经过明确确认；MHL 修订保留原始清单与审计，不删除素材，也不允许豁免大小或哈希异常。删除项目只清理 Kocpy 内部记录，不删除磁盘素材、报告或清单。
@@ -82,9 +82,9 @@
 ### 0.1.37 更新重点
 
 1. **完整接收和每日交付分离**：整张卡先完整备份；混合日期仅给出建议并由操作人确认，可生成独立校验的当日交付，但不增加素材卡或物理独立副本计数。
-2. **新任务默认 A=B 完整范围**：隐藏项、AppleDouble、既有报告／清单和空目录纳入冻结清单；主动关闭隐藏项时逐项记录排除，旧任务继续沿用历史策略。
+2. **新任务默认完整素材范围**：隐藏项、AppleDouble、既有报告／清单和空目录纳入冻结清单；逐项记录源到目标的真实映射，主动关闭隐藏项时记录全部排除，旧任务继续沿用历史策略。
 3. **项目日视图与目录治理**：项目详情按日分组；新项目默认按需创建目录，确认未使用／休息后只在逐路径预览、再次授权和安全证明全部通过时整理空脚手架。
-4. **自动报告与 NAS 归档**：每个已校验目的地默认保存 PDF，可在设置改变新任务默认值、在开始前单独关闭或在失败后单独重试；新增独立 NAS 转存、逐文件回读和 PDF／PNG 报告流程。
+4. **自动报告与独立归档**：任务及全部目的地完成校验后，每个备份目的地默认保存不可变的首次完成 PDF，可在设置改变新任务默认值、在开始前单独关闭或在失败后单独重试；新增 NAS／已挂载目录独立转存、逐文件回读和发布后重新核验的 PDF／PNG 报告流程。
 
 [完整更新说明](docs/RELEASE_NOTES_0.1.37.md) · [历史正式发布](https://github.com/sexyfeifan/Kocpy/releases)
 
@@ -146,7 +146,7 @@ Kocpy is a local-first macOS workspace for verified media offload and production
 
 Project mode adds shooting days, cameras and positions, logical card volumes, closeout requirements, versioned rules, editable templates and handoff records. Existing backups can be adopted against MHL/SHA manifests, read into a first baseline, or imported as unverified structure. A first baseline does not prove historical completeness, and different volume UUIDs alone do not prove physical independence.
 
-Current features also include recovery, media relinking, evidence-backed H.264/ProRes proxies, delivery manifests, archive reverification, audited metadata exchange between workstations, opt-in completion actions, diagnostics, light/dark themes and reduced motion. Release **0.1.37** groups project detail by shooting day, freezes a complete inventory for new tasks, creates per-destination automatic PDFs by default, keeps full mixed-day cards immutable while producing separately verified daily deliveries, and adds a standalone verified NAS archive-transfer flow with PDF/PNG reports. Daily deliveries are derivatives and never increase independent-copy counts.
+Current features also include recovery, media relinking, evidence-backed H.264/ProRes proxies, delivery manifests, archive reverification, audited metadata exchange between workstations, opt-in completion actions, diagnostics, light/dark themes and reduced motion. Release **0.1.37** groups project detail by shooting day, freezes a complete inventory for new tasks, creates per-destination automatic PDFs after the task and all destinations are verified, keeps full mixed-day cards immutable while producing separately verified daily deliveries, and adds a standalone verified archive-transfer flow for NAS or other mounted directories with PDF/PNG reports. Kocpy displays mount evidence but does not label an arbitrary directory as a confirmed NAS. Daily deliveries are derivatives and never increase independent-copy counts.
 
 [Download](https://github.com/sexyfeifan/Kocpy/releases/latest) · [Installation](docs/INSTALLATION.md) · [Guide (Chinese)](docs/USER_GUIDE.md) · [Verification scope](docs/VERIFICATION.md)
 
@@ -158,7 +158,7 @@ Kocpy は macOS 向けのローカル優先メディアバックアップ／プ�
 
 プロジェクトモードでは撮影日、カメラ／位置、素材巻、必要コピー数、ルール履歴、テンプレート、引き継ぎを管理できます。既存素材の取り込み、MHL／SHA 比較、復旧、プロキシ、納品リスト、長期再検証、監査付きメタデータ交換にも対応します。初回基準は取り込み以前の完全性を証明せず、異なる UUID だけでは物理的に独立したコピーと認定しません。
 
-現行版 **0.1.37** は、撮影日ごとのプロジェクト表示、新規タスクの完全な対象スナップショット、保存先ごとの自動 PDF、完全カードを変更しない日別納品、独立した NAS アーカイブ転送と PDF／PNG レポートを追加します。日別納品は派生成果物であり、独立コピー数には加算されません。
+現行版 **0.1.37** は、撮影日ごとのプロジェクト表示、新規タスクの完全な対象スナップショット、タスクと全保存先の検証完了後に作成する保存先ごとの自動 PDF、完全カードを変更しない日別納品、NAS またはその他のマウント済みディレクトリへの独立アーカイブ転送と PDF／PNG レポートを追加します。Kocpy は任意のディレクトリを確認済み NAS とは表示しません。日別納品は派生成果物であり、独立コピー数には加算されません。
 
 [ダウンロード](https://github.com/sexyfeifan/Kocpy/releases/latest) · [インストール（中国語）](docs/INSTALLATION.md) · [使用手冊（中国語）](docs/USER_GUIDE.md) · [検証範囲](docs/VERIFICATION.md)
 
