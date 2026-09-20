@@ -1,6 +1,6 @@
 # 验证记录
 
-## 0.1.37 发布前候选验收（安全补丁后重新验收中，2026-09-20）
+## 0.1.37 正式发布验收（已完成，2026-09-20）
 
 - 本版把完整素材卡接收与按日交付拆成两个独立、可追溯的流程；项目详情按拍摄日分组。新任务冻结 `complete-v2` 文件与空目录范围，默认在任务和全部目的地完成回读校验后，把首次完成快照 PDF 分别写入每个素材卷目录。新项目默认按需建立实际目录；空框架整理必须有本机创建证明、卷身份、空目录和无任务引用的复核，并以可恢复检查点记录逐目标结果。
 - 当日交付只从已校验完整卡副本读取，使用操作人确认的日期归属生成独立目录、JSON／MHL 和 PDF，再逐文件 SHA-256 回读；它不修改完整卡，也不计入素材卷或物理独立副本。独立归档转存冻结源目录范围，保留源根目录名，不覆盖同名目标；目标完成回读后生成带精确字节和摘要证据的 PDF／PNG。界面只显示实际挂载点和文件系统，不把任意已挂载目录冒充为已经确认的 NAS。
@@ -18,8 +18,10 @@
 - 候选工作流 [35481530272](https://github.com/sexyfeifan/Kocpy/actions/runs/35481530272) 在安全复审时主动取消；它没有完成安全补丁后的双架构验收，没有创建标签或 Release，**不计作通过**。
 - 提交 `4e146e5b6e5725faf9d80c6e21174de8712d54c0` 的安全补丁后候选流水线 [35487676154](https://github.com/sexyfeifan/Kocpy/actions/runs/35487676154) 已通过：原生 Apple Silicon 与原生 Intel 均完成源码／类型／511 项回归、4 项条件跳过、大型 PDF、四类报告图像、ad-hoc DMG、严格深层签名及六组包内隔离运行时专项；分支上的标签专用暂存任务按设计跳过，没有创建 Release。
 - 两份 CI 候选已从 GitHub Artifact 原样回下载。arm64 DMG SHA-256 为 `bfa3d9ec380ee5cf7d68d5911d49b70796693ce6eb784a2c2bb817a2c7d0412d`，x64 为 `3584817bc2b503b6b4354c8333274ae92d51ba7be11b85f067ceaffce7e9bba3`；两包 `app.asar` 同为 `c730057ae3994bc05b41c0fa63a022e8a0d73396fcb0f4a6fa53c4be9ae06ff7`。两份 DMG 均通过 `hdiutil verify`、只读挂载、0.1.37 版本、正确主程序架构、唯一同架构 FFmpeg、所需 entitlement 和 `codesign --verify --deep --strict`；首次 x64 ZIP 网络截断被完整性检查拒绝并隔离，验收只使用重新完整下载且 ZIP 自检通过的附件。
-- 安全补丁后正式 arm64 DMG SHA-256：**待最终构建／回下载填入**。安全补丁后正式 x64 DMG SHA-256：**待最终构建／回下载填入**。只能在标签流水线完成、GitHub 附件完整回下载，且 `SHA256SUMS.txt`、GitHub 附件摘要与本地重算三方一致后填入，不预填候选值。
-- 安全补丁前 arm64 候选的隔离 GUI 结果仅保留为过程证据，不代替当前 `3692837` 的最终附件验收。发布前仍需完成原生 Apple Silicon／Intel CI、标签构建、草稿附件回下载、实际 GUI 与公开后更新检查。真实外置物理双盘、真实 NAS／SMB 网络中断与重挂载、拔盘、睡眠、空间耗尽、ACL／扩展属性及全部相机格式未在本轮重新验证；当前仅为 ad-hoc 签名，无 Developer ID 签名与 Apple 公证，不构成 Apple 身份认证。
+- 最终冻结提交 `7d0143d9afb7609d381e7544b6aefe1604e24207` 的候选流水线 [35488712722](https://github.com/sexyfeifan/Kocpy/actions/runs/35488712722) 再次通过原生 Apple Silicon／Intel 全部门禁；从冻结到创建标签之间没有改动任何跟踪文件。annotated tag `v0.1.37` 的 peeled commit 已核对为该提交；正式发布后的 `main` 只允许继续接收说明文档等非发布附件变更，不移动该标签。
+- 标签流水线 [35489071745](https://github.com/sexyfeifan/Kocpy/actions/runs/35489071745) 的 arm64、原生 Intel 与发布暂存任务全部通过。四项草稿附件从 GitHub 原样回下载后，`SHA256SUMS.txt`、GitHub 资产摘要和本地重算三方一致：arm64 DMG 为 `bfad3b03ac99fcb810772295675fbd47035f2da6562622481fcaeeda0956f8af`，x64 为 `3986cd14d4b71494e11cc36880b863128785e57e3b262813950b40c548bbbca6`，对应源码包为 `0fa1f78fce29f66a3ffa2b26634b58cd3f46641a4286bc0081e3946131cc618c`，`SHA256SUMS.txt` 自身为 `4fcbe4f069bbabd28347f9ad2f3432b1ec26e23497708be458ebde6e0b5d6738`。
+- 两份正式 DMG 均通过镜像、只读挂载、0.1.37 版本、主程序架构、唯一同架构 FFmpeg、所需 entitlement 和严格深层签名核对；两包 `app.asar` 同为 `c730057ae3994bc05b41c0fa63a022e8a0d73396fcb0f4a6fa53c4be9ae06ff7`。从回下载的两份正式 DMG 直接执行传输／恢复、媒体、代理交付、归档证据、完成自动化和工作站交换六组专项，arm64 原生与本机 x64 Rosetta 均通过；原生 Intel 结论只取自 Intel runner。
+- 安全补丁后的提交没有改动已经实际检查过的 `src/renderer`、`src/preload`、`resources` 或包配置；正式附件复核时桌面处于锁定状态，未重复进行最终包的人工点击检查，因此不把它记录为新一次 GUI 通过。Release 已公开并成为 latest。真实外置物理双盘、真实 NAS／SMB 网络中断与重挂载、拔盘、睡眠、空间耗尽、ACL／扩展属性及全部相机格式未在本轮重新验证；当前仅为 ad-hoc 签名，无 Developer ID 签名与 Apple 公证，不构成 Apple 身份认证。
 
 ## 0.1.36 正式发布验收（已完成，2026-09-08）
 

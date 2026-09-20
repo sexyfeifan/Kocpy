@@ -52,13 +52,13 @@
 - [SHA256SUMS.txt](https://github.com/sexyfeifan/Kocpy/releases/download/v0.1.37/SHA256SUMS.txt)
 - [FFmpeg／x264 对应源码包](https://github.com/sexyfeifan/Kocpy/releases/download/v0.1.37/Kocpy-0.1.37-media-corresponding-source.tar.gz)
 
-安全补丁后的正式 DMG SHA-256：Apple Silicon **待最终构建／回下载填入**；Intel **待最终构建／回下载填入**。安全补丁前候选包不可发布，旧摘要不是正式下载校验值。
+正式附件已回下载并完成三方摘要核对：Apple Silicon DMG SHA-256 为 `bfad3b03ac99fcb810772295675fbd47035f2da6562622481fcaeeda0956f8af`；Intel DMG 为 `3986cd14d4b71494e11cc36880b863128785e57e3b262813950b40c548bbbca6`；FFmpeg／x264 对应源码包为 `0fa1f78fce29f66a3ffa2b26634b58cd3f46641a4286bc0081e3946131cc618c`。
 
-正式附件完整回下载并验收后，先结束当前操作、导出本地数据备份并正常退出，再替换“应用程序”中的 Kocpy。完整步骤见[安装与升级](https://github.com/sexyfeifan/Kocpy/blob/v0.1.37/docs/INSTALLATION.md)。
+升级前先结束当前操作、导出本地数据备份并正常退出，再替换“应用程序”中的 Kocpy。完整步骤见[安装与升级](https://github.com/sexyfeifan/Kocpy/blob/v0.1.37/docs/INSTALLATION.md)。
 
 ## 验证与已知限制
 
-安全补丁后源码全量回归为 **511 项通过、4 项跳过**，混合日期／当日交付专项 **53/53**。工作流 [35481530272](https://github.com/sexyfeifan/Kocpy/actions/runs/35481530272) 在安全复审时主动取消，没有创建 Release，不计作通过；随后精确候选提交的原生 Apple Silicon／Intel 流水线 [35487676154](https://github.com/sexyfeifan/Kocpy/actions/runs/35487676154) 已通过并完成候选附件回下载核验。标签构建、正式附件和最终桌面验收证据以[验证记录](https://github.com/sexyfeifan/Kocpy/blob/v0.1.37/docs/VERIFICATION.md)和同版 GitHub Release 为准。
+安全补丁后源码全量回归为 **511 项通过、4 项跳过**，混合日期／当日交付专项 **53/53**。工作流 [35481530272](https://github.com/sexyfeifan/Kocpy/actions/runs/35481530272) 在安全复审时主动取消，没有创建 Release，不计作通过；随后候选流水线 [35487676154](https://github.com/sexyfeifan/Kocpy/actions/runs/35487676154)、最终冻结候选 [35488712722](https://github.com/sexyfeifan/Kocpy/actions/runs/35488712722) 和标签流水线 [35489071745](https://github.com/sexyfeifan/Kocpy/actions/runs/35489071745) 均通过原生 Apple Silicon／Intel 门禁。四项正式附件均已回下载并完成摘要核对，其中两份 DMG 另完成镜像、架构、签名和包内运行核验；完整证据见[验证记录](https://github.com/sexyfeifan/Kocpy/blob/main/docs/VERIFICATION.md)和同版 GitHub Release。
 
 当前仍**没有 Developer ID 签名或 Apple 公证**；安装包仅采用 ad-hoc 签名，Release 的 SHA-256 仅用于下载完整性核对，两者都不构成 Apple 身份认证或公证。自动测试、磁盘映像或同一物理盘上的多个目录不能代替真实现场介质。本版没有在真实 NAS／SMB 设备上复验网络中断、重挂载或吞吐，也不宣称已经覆盖真实双外置物理盘、拔盘、睡眠、空间耗尽、ACL／扩展属性或全部相机格式。“10k”结果仅是恢复元数据的结构与容量估算，不是 10,000 个真实文件的复制、哈希、恢复或性能测试。投入生产前请用非生产数据和自己的存储链路验收。
 
