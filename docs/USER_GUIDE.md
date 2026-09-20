@@ -1,6 +1,6 @@
 # Kocpy 使用手册
 
-适用版本：**0.1.38**。下载安装以 [GitHub 正式 Release](https://github.com/sexyfeifan/Kocpy/releases/latest) 的附件与 `SHA256SUMS.txt` 为准。[返回文档导航](README.md) · [本版更新](RELEASE_NOTES_0.1.38.md) · [安装与升级](INSTALLATION.md)
+适用版本：**0.1.39**。下载安装以 [GitHub 正式 Release](https://github.com/sexyfeifan/Kocpy/releases/latest) 的附件与 `SHA256SUMS.txt` 为准。[返回文档导航](README.md) · [本版更新](RELEASE_NOTES_0.1.39.md) · [安装与升级](INSTALLATION.md)
 
 本手册按当前操作流程组织；历史变化详见各版发布说明，不需要先阅读全部更新记录才能开始。软件内说明标题不带版本号，模块默认折叠；点击侧栏“使用说明”或顶栏问号才展开帮助，不自动占用工作区。GitHub 文档的整理不会替换已经安装的软件包。
 

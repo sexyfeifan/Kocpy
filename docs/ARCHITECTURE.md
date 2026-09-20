@@ -1,4 +1,4 @@
-# Kocpy 0.1.38 architecture
+# Kocpy 0.1.39 architecture
 
 ## Frozen complete inventory and compatibility boundary
 

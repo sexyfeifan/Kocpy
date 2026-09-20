@@ -116,16 +116,34 @@ describe("0.1.25 shared UI contract", () => {
       .source;
     expect(appSource).toContain("KOCPY · QUICK START");
     expect(appSource).toContain("<h2>软件使用说明</h2>");
-    expect(appSource).toContain(
-      "<strong>当前更新：后台任务与项目归档联动</strong>",
-    );
-    expect(appSource).toContain(
-      "<strong>0.1.37：完整接收、按日交付与归档转存</strong>",
-    );
-    expect(appSource).toContain(
-      "<strong>0.1.35：发布链与真实介质验收保护</strong>",
+    expect(appSource).toContain('version: "0.1.39"');
+    expect(appSource).toContain('title: "界面边界与折叠更新记录"');
+    expect(appSource).toContain('version: "0.1.38"');
+    expect(appSource).toContain('version: "0.1.31"');
+    expect(appSource).toContain('<details className="help-release-item"');
+    expect(appSource).not.toMatch(
+      /<details className="help-release-item"[^>]*\bopen\b/,
     );
     expect(appSource).not.toContain("KOCPY {APP_VERSION} · QUICK START");
+  });
+
+  it("keeps settings feedback and card selectors inside visible boundaries", () => {
+    const appSource = rendererSources.find(({ name }) => name === "App.tsx")!
+        .source,
+      composerSource = rendererSources.find(
+        ({ name }) => name === "Composer.tsx",
+      )!.source;
+    expect(appSource).toContain('className="settings-panel-meta"');
+    expect(appSource).toContain('className="settings-save-status" role="status"');
+    expect(composerSource).toContain('className="mode-card-icon"');
+    expect(composerSource).toContain('className="selection-indicator"');
+    expect(composerSource).toContain("card-action-icon");
+    expect(css).toMatch(
+      /\.manual-path \.btn\.icon\s*\{[^}]*border-color:\s*var\(--border\)/s,
+    );
+    expect(css).toMatch(
+      /\.card-action-icon\s*\{[^}]*width:\s*28px[^}]*height:\s*28px/s,
+    );
   });
 
   it("keeps template management collapsed by default and open while editing", () => {

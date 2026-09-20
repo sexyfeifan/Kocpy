@@ -554,10 +554,19 @@ export function Composer({
                         disabled={busy}
                         onClick={() => setMode(id as typeof mode)}
                       >
-                        <I size={20} />
+                        <span className="mode-card-icon" aria-hidden="true">
+                          <I size={18} />
+                        </span>
                         <strong>{String(title)}</strong>
                         <span>{String(desc)}</span>
-                        {mode === id && <Check size={13} />}
+                        {mode === id && (
+                          <span
+                            className="selection-indicator"
+                            aria-hidden="true"
+                          >
+                            <Check size={13} />
+                          </span>
+                        )}
                       </button>
                     );
                   })}
@@ -728,11 +737,16 @@ export function Composer({
                                 {bytes(volume.free)}
                               </em>
                             </span>
-                            {selected ? (
-                              <Check size={14} />
-                            ) : (
-                              <Plus size={14} />
-                            )}
+                            <span
+                              className={`card-action-icon ${selected ? "selected" : ""}`}
+                              aria-hidden="true"
+                            >
+                              {selected ? (
+                                <Check size={14} />
+                              ) : (
+                                <Plus size={14} />
+                              )}
+                            </span>
                           </button>
                         );
                       })}
