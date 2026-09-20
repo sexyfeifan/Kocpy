@@ -10,6 +10,15 @@
 - 可从确认后的日期归属生成独立“当日交付副本”。交付再次进行 SHA-256 读取校验，并保存自己的 MHL／JSON 与 PDF 报告；中断后可继续，报告失败可单独重试。
 - 当日交付是完整卡的派生产物，**不计作新的素材卡、备份任务或物理独立副本**，也不表示未选择的素材可以从完整卡删除。
 
+## 当日交付的恢复与安全发布
+
+- 可恢复交付在交付根目录保存隐藏的 `.kocpy-daily-delivery.journal.ndjson`。它位于 `Media` 之外，是 Kocpy 管理的恢复证据，不属于交付素材。日志事件以 SHA-256 前后链接；已完整落盘的事件被修改、缺失或与持久化游标不一致时会安全停止，不会猜测继续。
+- 恢复同时绑定源卷、目标卷的完整身份，以及目标父目录、最终目录、`Media`、报告目录和逐层父目录的 `dev/ino`。无 UUID 的 NAS／挂载只有在已记录的挂载来源摘要、文件系统、挂载点和目录身份全部一致时才能恢复；同名重挂载只要身份变化就会停止。
+- 安全文件读写使用 `O_NOFOLLOW` 并复核打开前后的 inode、链接数和时间信息；符号链接、额外硬链接或中途替换都会停止。成品只以排他方式不覆盖发布；文件系统不支持硬链接时，回退为 `O_CREAT | O_EXCL | O_NOFOLLOW` 的排他复制，不放宽安全边界。
+- 复制完成后会对所有交付文件做一次终态全量 SHA-256，再发布 JSON／MHL；清单发布后还会重新核对 `Media` 目录的精确文件集、文件身份和清单摘要。PDF 报告发布后同样会回读 SHA-256，再按记录的报告清单重新授权和复核。
+- 恢复日志的硬上限为 **128 MiB**。开始复制素材前会根据冻结清单估算日志上界；预计超限时在任何交付素材写入前停止，要求缩小单次范围。高延迟 NAS 上的关键边界同步落盘可能降低速度；当前没有真实 SMB／NAS 吞吐基准。
+- 安全补丁前的 0.1.37 候选任务若缺少完整卷身份，记录仍可读，但不能安全续传或重写报告。Kocpy 会保留已有内容并停止；请重新预检并新建交付任务。
+
 ## 新任务的完整清单与自动 PDF
 
 - 0.1.37 新建任务冻结 `complete-v2` 清单策略。默认把隐藏项、AppleDouble、已有 MHL／XML／PDF 和空目录纳入复制范围，目标按相同范围验证；符号链接或特殊文件会明确停止，不会静默漏过。
@@ -36,19 +45,21 @@
 - 早期 0.1.37 候选保存的旧格式转存记录会先验证再迁移：已完成记录只读保留；未完成或正在生成报告的记录会安全终止，必须重新选择源与目标并预检，不能续传。迁移不补写旧版未采集证据，也不会把旧记录误记为完成。
 - 该结论不自动判断目标是不是 NAS，也不验证服务器内部磁盘拓扑、磁盘占用、ACL、扩展属性、权限或创建／修改时间，不证明历史拍摄从未漏项；既有 MHL／PDF 作为 payload 原样复制，不会被自动解释或改写。
 
-## 下载与升级
+## 正式发布后的下载与升级
 
 - [Apple Silicon：Kocpy-0.1.37-arm64.dmg](https://github.com/sexyfeifan/Kocpy/releases/download/v0.1.37/Kocpy-0.1.37-arm64.dmg)
 - [Intel：Kocpy-0.1.37-x64.dmg](https://github.com/sexyfeifan/Kocpy/releases/download/v0.1.37/Kocpy-0.1.37-x64.dmg)
 - [SHA256SUMS.txt](https://github.com/sexyfeifan/Kocpy/releases/download/v0.1.37/SHA256SUMS.txt)
 - [FFmpeg／x264 对应源码包](https://github.com/sexyfeifan/Kocpy/releases/download/v0.1.37/Kocpy-0.1.37-media-corresponding-source.tar.gz)
 
-先结束当前操作、导出本地数据备份并正常退出，再替换“应用程序”中的 Kocpy。完整步骤见[安装与升级](https://github.com/sexyfeifan/Kocpy/blob/v0.1.37/docs/INSTALLATION.md)。
+安全补丁后的正式 DMG SHA-256：Apple Silicon **待最终构建／回下载填入**；Intel **待最终构建／回下载填入**。安全补丁前候选包不可发布，旧摘要不是正式下载校验值。
+
+正式附件完整回下载并验收后，先结束当前操作、导出本地数据备份并正常退出，再替换“应用程序”中的 Kocpy。完整步骤见[安装与升级](https://github.com/sexyfeifan/Kocpy/blob/v0.1.37/docs/INSTALLATION.md)。
 
 ## 验证与已知限制
 
-完整清单、空目录、自动报告、混合日期分配、当日交付、目录整理和归档转存均使用隔离合成数据进行自动回归；最终安装包的精确测试数量、架构与桌面验收证据以[验证记录](https://github.com/sexyfeifan/Kocpy/blob/v0.1.37/docs/VERIFICATION.md)和同版 GitHub Release 为准。
+安全补丁后源码全量回归为 **511 项通过、4 项跳过**，混合日期／当日交付专项 **53/53**。工作流 [35481530272](https://github.com/sexyfeifan/Kocpy/actions/runs/35481530272) 在安全复审时主动取消，没有创建 Release，不计作通过；安全补丁后最终安装包的双架构、标签、桌面与回下载验收证据以[验证记录](https://github.com/sexyfeifan/Kocpy/blob/v0.1.37/docs/VERIFICATION.md)和同版 GitHub Release 为准。
 
-当前仍**没有 Developer ID 签名或 Apple 公证**；ad-hoc 签名不等于 Apple 来源认证。自动测试、磁盘映像或同一物理盘上的多个目录不能代替真实现场介质。本版不宣称已经覆盖所有 NAS、真实双外置物理盘、网络中断／重挂载、拔盘、睡眠、空间耗尽、ACL／扩展属性或全部相机格式；投入生产前请用非生产数据和自己的存储链路验收。
+当前仍**没有 Developer ID 签名或 Apple 公证**；安装包仅采用 ad-hoc 签名，Release 的 SHA-256 仅用于下载完整性核对，两者都不构成 Apple 身份认证或公证。自动测试、磁盘映像或同一物理盘上的多个目录不能代替真实现场介质。本版没有在真实 NAS／SMB 设备上复验网络中断、重挂载或吞吐，也不宣称已经覆盖真实双外置物理盘、拔盘、睡眠、空间耗尽、ACL／扩展属性或全部相机格式。“10k”结果仅是恢复元数据的结构与容量估算，不是 10,000 个真实文件的复制、哈希、恢复或性能测试。投入生产前请用非生产数据和自己的存储链路验收。
 
 [完整使用手册](https://github.com/sexyfeifan/Kocpy/blob/v0.1.37/docs/USER_GUIDE.md) · [文档导航](https://github.com/sexyfeifan/Kocpy/blob/v0.1.37/docs/README.md)
