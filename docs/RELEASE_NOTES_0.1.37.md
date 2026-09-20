@@ -58,7 +58,7 @@
 
 ## 验证与已知限制
 
-安全补丁后源码全量回归为 **511 项通过、4 项跳过**，混合日期／当日交付专项 **53/53**。工作流 [35481530272](https://github.com/sexyfeifan/Kocpy/actions/runs/35481530272) 在安全复审时主动取消，没有创建 Release，不计作通过；安全补丁后最终安装包的双架构、标签、桌面与回下载验收证据以[验证记录](https://github.com/sexyfeifan/Kocpy/blob/v0.1.37/docs/VERIFICATION.md)和同版 GitHub Release 为准。
+安全补丁后源码全量回归为 **511 项通过、4 项跳过**，混合日期／当日交付专项 **53/53**。工作流 [35481530272](https://github.com/sexyfeifan/Kocpy/actions/runs/35481530272) 在安全复审时主动取消，没有创建 Release，不计作通过；随后精确候选提交的原生 Apple Silicon／Intel 流水线 [35487676154](https://github.com/sexyfeifan/Kocpy/actions/runs/35487676154) 已通过并完成候选附件回下载核验。标签构建、正式附件和最终桌面验收证据以[验证记录](https://github.com/sexyfeifan/Kocpy/blob/v0.1.37/docs/VERIFICATION.md)和同版 GitHub Release 为准。
 
 当前仍**没有 Developer ID 签名或 Apple 公证**；安装包仅采用 ad-hoc 签名，Release 的 SHA-256 仅用于下载完整性核对，两者都不构成 Apple 身份认证或公证。自动测试、磁盘映像或同一物理盘上的多个目录不能代替真实现场介质。本版没有在真实 NAS／SMB 设备上复验网络中断、重挂载或吞吐，也不宣称已经覆盖真实双外置物理盘、拔盘、睡眠、空间耗尽、ACL／扩展属性或全部相机格式。“10k”结果仅是恢复元数据的结构与容量估算，不是 10,000 个真实文件的复制、哈希、恢复或性能测试。投入生产前请用非生产数据和自己的存储链路验收。
 
