@@ -68,7 +68,7 @@ export function parseMediaProbe(stderr: string) {
   const rotationMatch = inputProbe.match(
     /(?:rotation\s*:\s*|rotation of\s*)(-?\d+(?:\.\d+)?)/i,
   );
-  const rotation = rotationMatch ? Number(rotationMatch[1]) : undefined;
+  const rotation = rotationMatch ? Number(rotationMatch[1]) : videoLine ? 0 : undefined;
   const probeRecognized = Boolean(duration || videoLine);
   return {
     duration,

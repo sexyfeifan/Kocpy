@@ -6,7 +6,7 @@
 
 <p align="center"><a href="#中文">中文</a> · <a href="#english">English</a> · <a href="#日本語">日本語</a></p>
 
-当前正式版：**0.1.41** · [下载](https://github.com/sexyfeifan/Kocpy/releases/latest) · [使用手册](docs/USER_GUIDE.md) · [文档导航](docs/README.md) · [0.1.41 更新](docs/RELEASE_NOTES_0.1.41.md)
+当前正式版：**0.1.42** · [下载](https://github.com/sexyfeifan/Kocpy/releases/latest) · [使用手册](docs/USER_GUIDE.md) · [文档导航](docs/README.md) · [0.1.42 更新](docs/RELEASE_NOTES_0.1.42.md)
 
 ![Kocpy 工作台](docs/screenshots/dashboard.png)
 

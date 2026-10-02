@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { ffmpegPath } from "../src/main/ffmpeg";
 import { makeProxy } from "../src/main/proxy";
+import { freezeProxyAdvanced } from "../src/main/proxy-advanced";
 import { inspectMedia } from "../src/main/media";
 import { hashFile } from "../src/main/backup/BackupEngine";
 import {
@@ -76,8 +77,8 @@ async function createJob(
   );
   const outputMedia = await inspectMedia(result.outputPath, path.join(outputDirectory, "cache"));
   job.outputPath = result.outputPath;
-  job.outputEvidence = await captureProxyOutput(result.outputPath, outputMedia);
-  job.validation = compareProxyMedia(sourceMedia, job.outputEvidence);
+  job.outputEvidence = { ...await captureProxyOutput(result.outputPath, outputMedia), encoder: result.encoder, encoderFallback: result.encoderFallback };
+  job.validation = compareProxyMedia(sourceMedia, job.outputEvidence, parameters);
   job.status = "completed";
   job.stage = "ready";
   job.progress = 100;
@@ -109,6 +110,8 @@ async function main() {
       "timecode=01:00:00:00",
       "-c:v",
       "libx264",
+      "-x264-params",
+      "colorprim=bt709:transfer=bt709:colormatrix=bt709",
       "-pix_fmt",
       "yuv420p",
       "-color_primaries",
@@ -133,6 +136,28 @@ async function main() {
       resolution: inspected.resolution,
     };
     const jobs = [];
+    const advancedResults = [];
+    const lutPath = path.join(root, "identity.cube");
+    await fs.writeFile(lutPath, "LUT_3D_SIZE 2\n" + ["0 0 0", "1 0 0", "0 1 0", "1 1 0", "0 0 1", "1 0 1", "0 1 1", "1 1 1"].join("\n"));
+    for (const advanced of [
+      { encoder: "software", frameRate: "24", audioMode: "first", timecodeMode: "custom", timecode: "02:00:00:00", rotation: "90", aspect: "fit", colorMode: "bt709", lutPath },
+      { encoder: "auto", audioMode: "none", timecodeMode: "drop", aspect: "crop" },
+    ] as import("../src/main/types").ProxyAdvanced[]) {
+      const parameters: ProxyParameterSnapshot = { purpose: "review", format: "h264", resolution: "640x360", container: "mov", namingTemplate: "{name}_advanced", advanced: await freezeProxyAdvanced(advanced) };
+      const job = await createJob(source, outputs, sourceMedia, parameters);
+      const check = checkProxyDelivery(job);
+      if (check.state === "blocked") throw new Error(`Advanced conversion blocked: ${check.blockers.join("; ")}`);
+      if (job.outputEvidence?.resolution !== "640x360") throw new Error("Explicit dimension mismatch");
+      advancedResults.push({ encoder: job.outputEvidence.encoder, fallback: job.outputEvidence.encoderFallback, validation: job.validation });
+    }
+    const lt = await createJob(source, outputs, sourceMedia, { purpose: "editorial", format: "prores", container: "mov", resolution: "720p", namingTemplate: "{name}_lt", advanced: await freezeProxyAdvanced({ proresProfile: 1 }) });
+    if (checkProxyDelivery(lt).state === "blocked" || lt.outputEvidence?.encoder !== "prores_ks") throw new Error("ProRes LT conversion failed");
+    const frozenLut = await freezeProxyAdvanced({ lutPath });
+    await fs.appendFile(lutPath, "\n# altered");
+    let rejected = false;
+    try { await makeProxy(source, outputs, "h264", "720p", { advanced: frozenLut }); }
+    catch (error) { rejected = /LUT 内容已改变/.test(String(error)); }
+    if (!rejected) throw new Error("Changed LUT was not rejected");
     for (const parameters of [
       {
         purpose: "review",
@@ -180,6 +205,7 @@ async function main() {
       delivery,
       media,
       readiness: jobs.map((job) => job.validation?.readiness),
+      advancedResults,
     };
     console.log(JSON.stringify(result));
     if (process.env.KOCPY_KEEP_PROXY_DELIVERY === "1") return;

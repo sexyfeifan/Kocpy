@@ -98,7 +98,7 @@ export function generateDeliveryManifest(
             job.outputEvidence?.sha256,
             job.deliveryCheck?.state || job.validation?.readiness || "unknown",
             job.validation?.notes.join("; ") || "OK",
-            JSON.stringify({ check: job.deliveryCheck, approval: job.deliveryApproval }),
+            JSON.stringify({ check: job.deliveryCheck, approval: job.deliveryApproval, parameters: job.parameterSnapshot, encoder: job.outputEvidence?.encoder, encoderFallback: job.outputEvidence?.encoderFallback }),
           ]
             .map(csv)
             .join(","),
@@ -122,7 +122,7 @@ export function generateDeliveryManifest(
             job.outputEvidence?.sha256,
             job.deliveryCheck?.state || job.validation?.readiness || "unknown",
             job.validation?.notes.join("; ") || "OK",
-            JSON.stringify({ check: job.deliveryCheck, approval: job.deliveryApproval }),
+            JSON.stringify({ check: job.deliveryCheck, approval: job.deliveryApproval, parameters: job.parameterSnapshot, encoder: job.outputEvidence?.encoder, encoderFallback: job.outputEvidence?.encoderFallback }),
           ]
             .map(csv)
             .join(","),
@@ -144,7 +144,7 @@ export function generateDeliveryManifest(
       return clip;
     })
     .join("");
-  const audit = xml(JSON.stringify(rows.map((job) => ({ jobId: job.id, check: job.deliveryCheck, approval: job.deliveryApproval })))).replaceAll("--", "&#45;&#45;");
+  const audit = xml(JSON.stringify(rows.map((job) => ({ jobId: job.id, check: job.deliveryCheck, approval: job.deliveryApproval, parameters: job.parameterSnapshot, encoder: job.outputEvidence?.encoder, encoderFallback: job.outputEvidence?.encoderFallback })))).replaceAll("--", "&#45;&#45;");
   return `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE fcpxml>\n<fcpxml version="1.10"><!-- Kocpy Delivery Audit: ${audit} --><resources>${formats}${rows
     .map(
       (job, index) =>

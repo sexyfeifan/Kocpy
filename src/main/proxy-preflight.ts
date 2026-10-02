@@ -4,8 +4,10 @@ import { canonical, inside } from "./backup/safety";
 import { existingProxyOutputAncestor } from "./proxy-resources";
 import { validateProxyParameters } from "./proxy-evidence";
 import type { ProxyMediaSnapshot, ProxyParameterSnapshot } from "./types";
+import { proxyFrameRate } from "./proxy-advanced";
 
 export interface ProxyPreflight {
+  advanced?: import("./types").ProxyAdvanced;
   outputDir: string;
   destinationDevice: number;
   estimatedBytes: number;
@@ -17,16 +19,19 @@ export interface ProxyPreflight {
 export function estimateProxyBytes(media: ProxyMediaSnapshot, parameters: ProxyParameterSnapshot) {
   const parts = (media.duration || "").split(":").map(Number);
   const duration = parts.length === 3 ? parts[0] * 3600 + parts[1] * 60 + parts[2] : Number(media.duration);
-  const frameRate = Number(media.frameRate);
+  const frameRate = parameters.advanced?.frameRate && parameters.advanced.frameRate !== "source" ? proxyFrameRate(parameters.advanced.frameRate) : Number(media.frameRate);
   const dimensions = /^(\d+)x(\d+)$/i.exec(media.resolution || "");
   if (!(duration > 0) || !Number.isFinite(duration) || !(frameRate > 0) || !Number.isFinite(frameRate) || !dimensions)
     throw new Error("缺少有效视频时长、帧率或尺寸；请检查素材兼容性");
-  const sourceW = Number(dimensions[1]), sourceH = Number(dimensions[2]);
+  let sourceW = Number(dimensions[1]), sourceH = Number(dimensions[2]);
+  if (["90", "-90"].includes(parameters.advanced?.rotation || "") || (parameters.advanced?.rotation === "auto" && Math.abs(media.rotation || 0) % 180 === 90)) [sourceW, sourceH] = [sourceH, sourceW];
+  if (parameters.advanced?.timecodeMode === "custom" && Number(parameters.advanced.timecode!.split(/[:;]/).at(-1)) >= Math.ceil(frameRate)) throw new Error("时间码帧号超出目标帧率");
+  if (parameters.advanced?.timecodeMode === "custom" && parameters.advanced.timecode!.includes(";") && ![30000 / 1001, 60000 / 1001].some(rate => Math.abs(rate - frameRate) < 0.02)) throw new Error("丢帧时间码仅支持 29.97 或 59.94 fps");
   if (!(sourceW > 0 && sourceH > 0)) throw new Error("无效源视频尺寸");
   const target = parameters.resolution.includes("x") ? parameters.resolution.split("x").map(Number) :
     [sourceW * Math.min(1, Number(parameters.resolution.slice(0, -1)) / sourceH), Math.min(sourceH, Number(parameters.resolution.slice(0, -1)))];
   const factor = target[0] * target[1] / (1920 * 1080) * frameRate / 25;
-  const mbps = parameters.bitrateMbps || (parameters.format === "prores" ? 50 : 16) * Math.max(0.25, factor);
+  const mbps = parameters.bitrateMbps || (parameters.format === "prores" ? [50, 115, 170, 250][parameters.advanced?.proresProfile || 0] : parameters.advanced?.crf === 0 ? 100 : 16) * Math.max(0.25, factor);
   const bytes = Math.ceil(duration * (mbps + Math.max(1, media.audioTracks || 0) * 2) * 1_000_000 / 8 * 1.25);
   if (!Number.isSafeInteger(bytes) || bytes <= 0) throw new Error("代理大小超出可估算范围");
   return bytes;

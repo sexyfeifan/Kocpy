@@ -38,6 +38,7 @@ export interface ProxySourceEvidence {
   media: ProxyMediaSnapshot;
 }
 export interface ProxyParameterSnapshot {
+  advanced?: ProxyAdvanced;
   purpose: ProxyPreset;
   format: "h264" | "prores";
   resolution: string;
@@ -45,13 +46,36 @@ export interface ProxyParameterSnapshot {
   container: "mp4" | "mov" | "mkv";
   namingTemplate: string;
 }
+export interface ProxyAdvanced {
+  encoder?: "software" | "auto" | "hardware";
+  frameRate?: "source" | "24000/1001" | "24" | "25" | "30000/1001" | "30" | "50" | "60000/1001" | "60";
+  audioMode?: "all" | "first" | "none";
+  audioCodec?: "auto" | "aac" | "pcm_s16le";
+  audioSampleRate?: 44100 | 48000;
+  audioChannels?: 1 | 2;
+  timecodeMode?: "keep" | "custom" | "drop";
+  timecode?: string;
+  colorMode?: "keep" | "bt709";
+  lutPath?: string;
+  lutEvidence?: { sha256: string; bytes: number };
+  rotation?: "auto" | "metadata" | "90" | "-90" | "180";
+  aspect?: "fit" | "stretch" | "crop";
+  crf?: number;
+  speed?: "fast" | "medium" | "slow";
+  gop?: number;
+  h264Profile?: "baseline" | "main" | "high";
+  proresProfile?: 0 | 1 | 2 | 3;
+}
 export interface ProxyOutputEvidence extends ProxyMediaSnapshot {
+  encoder?: string;
+  encoderFallback?: string;
   path: string;
   bytes: number;
   sha256: string;
   checkedAt: number;
 }
 export interface SavedProxyPreset {
+  advanced?: ProxyAdvanced;
   id: string;
   name: string;
   format: "h264" | "prores";

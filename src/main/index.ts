@@ -45,6 +45,7 @@ import { assessProxyResources } from "./proxy-resources";
 import { preflightProxyGeneration, estimateProxyBytes } from "./proxy-preflight";
 import { existingProxyOutputAncestor } from "./proxy-resources";
 import { orderedPendingProxies, mutateProxyQueue, reprioritizeProxy } from "./proxy-queue";
+import { freezeProxyAdvanced } from "./proxy-advanced";
 import { mainWindowLayout } from "./window-layout";
 import { installMainWindowConstraints } from "./window-constraints";
 import { withTemporaryReportHtml } from "./report-html";
@@ -1588,6 +1589,7 @@ async function runProxyJob(job: ProxyJob, proxyController: AbortController) {
       parameters.format,
       parameters.resolution,
       {
+        ...parameters,
         signal: proxyController.signal,
         namingTemplate: parameters.namingTemplate,
         bitrateMbps: parameters.bitrateMbps,
@@ -1619,7 +1621,9 @@ async function runProxyJob(job: ProxyJob, proxyController: AbortController) {
         },
         proxyController.signal,
       ),
-      validation = compareProxyMedia(job.sourceEvidence!.media, outputEvidence);
+      validation = compareProxyMedia(job.sourceEvidence!.media, outputEvidence, parameters);
+    outputEvidence.encoder = result.encoder;
+    outputEvidence.encoderFallback = result.encoderFallback;
     Object.assign(job, {
       status: "completed",
       stage: "ready",
@@ -6954,6 +6958,10 @@ app.whenReady().then(async () => {
     return approval;
   });
   handle("proxy:presets", () => savedProxyPresets);
+  handle("proxy:select-lut", async () => {
+    const result = await dialog.showOpenDialog(main!, { properties: ["openFile"], filters: [{ name: "3D LUT", extensions: ["cube"] }] });
+    return result.canceled ? null : result.filePaths[0] || null;
+  });
   handle(
     "proxy:save-preset",
     async (value: Partial<SavedProxyPreset> & { name: string }) => {
@@ -6970,6 +6978,7 @@ app.whenReady().then(async () => {
         format = value.format === "prores" ? "prores" : "h264",
         container = value.container || (format === "prores" ? "mov" : "mp4"),
         parameters = validateProxyParameters({
+          advanced: await freezeProxyAdvanced(value.advanced),
           purpose: value.purpose || "review",
           format,
           resolution,
@@ -7013,6 +7022,7 @@ app.whenReady().then(async () => {
         dependsOn?: string[];
         chain?: boolean;
         concurrency?: import("./types").ProxyConcurrency;
+        advanced?: import("./types").ProxyAdvanced;
       } = {},
     ) => {
       if (!Array.isArray(inputs) || !inputs.length || inputs.length > 1000 || new Set(inputs).size !== inputs.length) throw new Error("请选择 1–1000 个不同的视频");
@@ -7020,6 +7030,7 @@ app.whenReady().then(async () => {
       const concurrency = validateProxyConcurrency(options.concurrency ?? (await readSettings()).proxyConcurrency);
       const batchId = randomUUID();
       const parameters = validateProxyParameters({
+        advanced: await freezeProxyAdvanced(options.advanced),
         purpose:
           options.preset || (format === "prores" ? "editorial" : "review"),
         format,
@@ -7129,7 +7140,10 @@ app.whenReady().then(async () => {
       for (const job of jobs) job.preflight = { ...preflight, estimatedBytes: estimateProxyBytes(job.sourceEvidence!.media, job.parameterSnapshot!) };
       return { jobs, preflight };
     };
-  handle("proxy:preflight", async (...args: Parameters<typeof prepareProxyBatch>) => (await prepareProxyBatch(...args)).preflight);
+  handle("proxy:preflight", async (...args: Parameters<typeof prepareProxyBatch>) => {
+    const batch = await prepareProxyBatch(...args);
+    return { ...batch.preflight, advanced: batch.jobs[0]?.parameterSnapshot?.advanced };
+  });
   handle("proxy:enqueue", async (...args: Parameters<typeof prepareProxyBatch>) => {
       const { jobs } = await prepareProxyBatch(...args);
       proxyJobs.push(...jobs);

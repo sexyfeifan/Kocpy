@@ -142,6 +142,7 @@ contextBridge.exposeInMainWorld("api", {
   getProxyJobs: call("proxy:list"),
   getProxyQueuePolicy: call("proxy:queue-policy"),
   preflightProxy: call("proxy:preflight"),
+  selectProxyLut: call("proxy:select-lut"),
   batchProxy: call("proxy:batch"),
   prioritizeProxy: call("proxy:priority"),
   retryProxyPersistence: call("proxy:retry-persistence"),

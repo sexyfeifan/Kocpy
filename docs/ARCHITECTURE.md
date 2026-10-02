@@ -1,4 +1,8 @@
-# Kocpy 0.1.42 architecture
+# Kocpy 0.1.43 architecture
+
+## Frozen advanced proxy transforms
+
+`proxy-advanced.ts` validates parameters and captures bounded LUT bytes/hash. Preflight returns frozen LUT evidence; enqueue and execution recheck it. Workers use their owned staged LUT and a fixed filter filename, then exclusively publish output. Source/LUT files never change. `proxy-encoder.ts` probes VideoToolbox with software fallback disabled; automatic mode retries only encoder compatibility failures, never disk, permission, corrupt-input or cancellation errors. Actual encoder/fallback is recorded in evidence and exports. Delivery compares frozen intentional transforms while preserving source evidence and unexpected-change gates.
 
 ## Proxy generation preflight and queue scope
 

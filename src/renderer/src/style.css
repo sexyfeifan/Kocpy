@@ -6935,3 +6935,6 @@ small {
     grid-template-columns: 1fr;
   }
 }
+ .proxy-advanced { min-width: 0; border: 1px solid var(--border); border-radius: 12px; padding: 12px; }
+ .proxy-advanced summary { cursor: pointer; }
+ .proxy-advanced .form-grid { margin: 12px 0; }

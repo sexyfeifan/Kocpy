@@ -1,6 +1,7 @@
 import { promises as fs } from "node:fs";
 import { createHash } from "node:crypto";
 import { hashFile } from "./backup/BackupEngine";
+import { validateProxyAdvanced, proxyExpectedMedia } from "./proxy-advanced";
 import type {
   ProxyJob,
   ProxyMediaSnapshot,
@@ -57,12 +58,14 @@ export function checkProxyDelivery(job: ProxyJob): NonNullable<ProxyJob["deliver
     if (!/^[1-9]\d*x[1-9]\d*$/i.test(output.resolution || "")) blockers.push("缺少有效输出分辨率");
   }
   if (source && output) {
-    const validation = compareProxyMedia(source, output);
+    const validation = compareProxyMedia(source, output, job.parameterSnapshot);
+    const expected = job.parameterSnapshot ? proxyExpectedMedia(source, job.parameterSnapshot) : source;
     if (validation.audio === "missing") blockers.push("源音轨在代理中缺失");
     if (validation.duration === "changed") blockers.push("代理时长与源素材不符");
     if (validation.frameRate === "changed") blockers.push("代理帧率与源素材不符");
     const editorial = job.parameterSnapshot?.purpose === "editorial";
-    if (editorial && source.timecode && source.timecode !== output.timecode)
+    if (job.parameterSnapshot?.resolution.includes("x") && output.resolution !== job.parameterSnapshot.resolution) blockers.push("代理尺寸与冻结参数不符");
+    if (editorial && expected.timecode && expected.timecode !== output.timecode)
       blockers.push("剪辑代理时间码丢失或变化");
     if (editorial && validation.audioTracks === "changed") blockers.push("剪辑代理音轨数量变化");
     warnings.push(...validation.notes);
@@ -101,6 +104,7 @@ export function requireProxyDelivery(job: ProxyJob) {
 }
 
 export function validateProxyParameters(value: ProxyParameterSnapshot) {
+  validateProxyAdvanced(value);
   if (!["review", "editorial", "offline"].includes(value.purpose)) throw new Error("无效代理用途");
   if (!["h264", "prores"].includes(value.format))
     throw new Error("不支持的代理编码");
@@ -108,6 +112,8 @@ export function validateProxyParameters(value: ProxyParameterSnapshot) {
     throw new Error("分辨率格式无效");
   if (!["mp4", "mov", "mkv"].includes(value.container))
     throw new Error("不支持的代理封装");
+  const dimensions = value.resolution.includes("x") ? value.resolution.split("x").map(Number) : [Number(value.resolution.slice(0, -1))];
+  if (dimensions.some(number => number < 100 || number > 8192 || number % 2)) throw new Error("输出尺寸须为 100–8192 的偶数");
   if (value.format === "prores" && value.container !== "mov")
     throw new Error("ProRes Proxy 仅允许 MOV 封装");
   if (typeof value.namingTemplate !== "string" || !value.namingTemplate.includes("{name}"))
@@ -157,15 +163,18 @@ export async function captureProxyOutput(
 export function compareProxyMedia(
   source: ProxyMediaSnapshot,
   output: ProxyMediaSnapshot,
+  parameters?: ProxyParameterSnapshot,
 ): NonNullable<ProxyJob["validation"]> {
+  if (parameters) source = proxyExpectedMedia(source, parameters);
   const notes: string[] = [];
   const frameRate = sameNumber(
     source.frameRate ? Number(source.frameRate) : undefined,
     output.frameRate ? Number(output.frameRate) : undefined,
     0.02,
   );
-  const timecode =
-    !source.timecode || !output.timecode
+  const timecode = parameters?.advanced?.timecodeMode === "drop"
+    ? output.timecode ? "changed" : "match"
+    : !source.timecode || !output.timecode
       ? "unknown"
       : source.timecode === output.timecode
         ? "match"

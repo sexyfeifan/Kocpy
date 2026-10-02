@@ -1,4 +1,6 @@
 import { RecoveryDialog } from "./RecoveryDialog";
+import { ProxyAdvancedSettings } from "./ProxyAdvancedSettings";
+import type { ProxyAdvanced } from "../../main/types";
 import { recoveryAdvice } from "../../common/recovery";
 import { LifecycleControls } from "./LifecycleControls";
 import { useModalStack } from "./Interaction";
@@ -6175,6 +6177,15 @@ function HelpPage({
   ];
   const releaseNotes = [
     {
+      version: "0.1.43",
+      title: "折叠高级代理设置与实际编码证据",
+      paragraphs: [
+        "H.264 软件／自动／仅硬件模式通过实际 VideoToolbox 探测，自动仅对编码器兼容性失败回退；显示实际编码器。ProRes 支持软件 Proxy、LT、422、HQ。",
+        "默认折叠高级设置：帧率、音轨、音频、时间码、旋转、尺寸比例与 H.264 质量／速度／GOP／Profile；BT.709 需已知源色彩，不是 HDR 色调映射。",
+        "3D .cube LUT 限制 16 MiB，预检冻结哈希，入队与执行前复核；明确转换纳入交付比较与审计，保留原始证据及意外变化阻断。",
+      ],
+    },
+    {
       version: "0.1.42",
       title: "代理预检与批量队列操作",
       paragraphs: [
@@ -7806,7 +7817,8 @@ export function ProxyQueue({
                       ? "离线剪辑"
                       : "通用审片"}{" "}
                   · {job.format.toUpperCase()} · {job.resolution}
-                  {job.timecode ? ` · TC ${job.timecode}` : ""}
+                  {(job.outputEvidence ? job.outputEvidence.timecode : job.parameterSnapshot?.advanced?.timecodeMode === "custom" ? job.parameterSnapshot.advanced.timecode : job.parameterSnapshot?.advanced?.timecodeMode === "drop" ? undefined : job.timecode) ? ` · TC ${job.outputEvidence ? job.outputEvidence.timecode : job.parameterSnapshot?.advanced?.timecode || job.timecode}` : ""}
+                  {job.outputEvidence?.frameRate && ` · ${job.outputEvidence.frameRate} fps`}
                 </p>
                 <p className="small">
                   并行策略：{job.concurrency === "auto" ? "自动" : `${job.concurrency || 1} 个`} · {job.resourceReason || "启动前检查磁盘"}
@@ -7843,6 +7855,7 @@ export function ProxyQueue({
                 {!!job.dependsOn?.length && (
                   <p className="small">等待依赖：{job.dependsOn.join("、")}</p>
                 )}
+                {job.outputEvidence?.encoder && <p className="small">实际编码器：{job.outputEvidence.encoder}{job.outputEvidence.encoderFallback && ` · ${job.outputEvidence.encoderFallback}`}</p>}
                 {job.validation && (
                   <small
                     className={
@@ -8367,13 +8380,23 @@ function ProxyDialog({
     [result, setResult] = useState(""),
     [error, setError] = useState("");
   const [concurrency, setConcurrency] = useState<"auto" | 1 | 2 | 3>(1);
+  const [advanced, setAdvanced] = useState<ProxyAdvanced>({ encoder: "software", frameRate: "source", audioMode: "all", timecodeMode: "keep", colorMode: "keep", rotation: "auto", aspect: "fit" });
+  const effectiveAdvanced: ProxyAdvanced = { ...advanced };
+  if (format === "prores") {
+    effectiveAdvanced.encoder = "software";
+    for (const key of ["crf", "speed", "gop", "h264Profile"] as const) delete effectiveAdvanced[key];
+  } else {
+    delete effectiveAdvanced.proresProfile;
+    if (effectiveAdvanced.encoder !== "software" || bitrate) delete effectiveAdvanced.crf;
+    if (effectiveAdvanced.encoder !== "software") delete effectiveAdvanced.speed;
+  }
   const [preview, setPreview] = useState<{ key: string; report: import("../../main/proxy-preflight").ProxyPreflight }>();
-  const previewKey = JSON.stringify([file.paths || [file.path], out, format, res, concurrency, preset, namingTemplate, bitrate, container]);
+  const previewKey = JSON.stringify([file.paths || [file.path], out, format, res, concurrency, preset, namingTemplate, bitrate, container, effectiveAdvanced]);
   const currentPreview = preview?.key === previewKey ? preview.report : undefined;
   async function preflight() {
     setBusy(true); setError("");
     try {
-      const report = await api.preflightProxy(file.paths || [file.path], out, format, res, { concurrency, preset, namingTemplate, bitrateMbps: bitrate || undefined, container });
+      const report = await api.preflightProxy(file.paths || [file.path], out, format, res, { concurrency, preset, namingTemplate, bitrateMbps: bitrate || undefined, container, advanced: effectiveAdvanced });
       setPreview({ key: previewKey, report });
     } catch (error) { setError(String(error)); setPreview(undefined); }
     finally { setBusy(false); }
@@ -8400,6 +8423,7 @@ function ProxyDialog({
     setBitrate(value.bitrateMbps || 0);
     setContainer(value.format === "prores" ? "mov" : value.container);
     setNamingTemplate(value.namingTemplate);
+    setAdvanced(value.advanced || { encoder: "software", frameRate: "source", audioMode: "all", timecodeMode: "keep", colorMode: "keep", rotation: "auto", aspect: "fit" });
   }
   async function savePreset() {
     try {
@@ -8413,6 +8437,7 @@ function ProxyDialog({
           container,
           namingTemplate,
           purpose: preset,
+          advanced: effectiveAdvanced,
         }),
       );
       setSavedPresetId("");
@@ -8427,6 +8452,7 @@ function ProxyDialog({
     setError("");
     try {
       await api.enqueueProxy(file.paths || [file.path], out, format, res, {
+        advanced: currentPreview?.advanced || effectiveAdvanced,
         concurrency,
         preset,
         namingTemplate,
@@ -8661,6 +8687,7 @@ function ProxyDialog({
               ；始终追加唯一短码且不覆盖已有文件。
             </span>
           </label>
+          <ProxyAdvancedSettings value={effectiveAdvanced} onChange={setAdvanced} format={format} purpose={preset} bitrate={bitrate} onError={setError} />
           <label>
             输出文件夹
             <div className="path-input">
@@ -8687,7 +8714,7 @@ function ProxyDialog({
             </div>
           </label>
           <p className="muted small">
-            保持原始宽高比、不放大小尺寸素材。生成期间请保持应用运行。编解码支持取决于内置
+            常用尺寸保持原始宽高比且不放大小尺寸素材；自定义尺寸按高级比例设置处理。生成期间请保持应用运行。编解码支持取决于内置
             FFmpeg，不保证专有 RAW 格式。
           </p>
           {currentPreview && <div className="notice" role="status">
