@@ -6177,6 +6177,11 @@ function HelpPage({
   ];
   const releaseNotes = [
     {
+      version: "0.1.44",
+      title: "代理专项验证与故障覆盖",
+      paragraphs: ["新增准确安装包专项命令与双音轨合成样本，可保留样本供 NLE 手动导入；结果不覆盖已有文件。", "补充编码器回退及空间／权限／I/O／损坏输入故障注入，既有输出保持不变。工具与格式检查不代表实际 NAS、拔盘或新增 NLE 高级组合认证。"],
+    },
+    {
       version: "0.1.43",
       title: "折叠高级代理设置与实际编码证据",
       paragraphs: [
@@ -8490,7 +8495,8 @@ function ProxyDialog({
             <X size={20} />
           </Button>
         </div>
-        <fieldset className="form-body" disabled={busy || !!result} style={{ border: 0, margin: 0, minWidth: 0 }}>
+        <div className="form-body proxy-form-scroll">
+        <fieldset disabled={busy || !!result} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
           <div className="notice">
             <ShieldCheck size={17} />
             从已校验的备份副本读取，原始素材保持不变。
@@ -8732,6 +8738,7 @@ function ProxyDialog({
             </div>
           )}
         </fieldset>
+        </div>
         <div className="modal-footer">
           <span className="small muted">唯一文件名 · 不覆盖已有文件</span>
           <Button disabled={busy || !out || !!result} onClick={() => void preflight()}>检查容量与参数</Button>

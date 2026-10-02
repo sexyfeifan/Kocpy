@@ -31,7 +31,7 @@ export function ProxyAdvancedSettings({ value, onChange, format, purpose, bitrat
       </>}
     </div>
     <label>3D .cube LUT<input readOnly value={value.lutPath || "未选择"} /></label>
-    <div className="inline-actions"><button type="button" onClick={() => void api.selectProxyLut().then(lutPath => { if (lutPath) onChange({ ...value, lutPath, lutEvidence: undefined }); }).catch(error => onError(String(error)))}>选择 LUT</button><button type="button" disabled={!value.lutPath} onClick={() => onChange({ ...value, lutPath: undefined, lutEvidence: undefined })}>移除 LUT</button></div>
+    <div className="inline-actions"><button className="btn" type="button" onClick={() => void api.selectProxyLut().then(lutPath => { if (lutPath) onChange({ ...value, lutPath, lutEvidence: undefined }); }).catch(error => onError(String(error)))}>选择 LUT</button><button className="btn" type="button" disabled={!value.lutPath} onClick={() => onChange({ ...value, lutPath: undefined, lutEvidence: undefined })}>移除 LUT</button></div>
     <small>预检记录 LUT 哈希；入队与转码前检查内容是否变化。仅自动模式在编码器兼容性错误时重试软件编码，磁盘和权限错误不回退。</small>
   </details>;
 }

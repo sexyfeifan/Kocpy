@@ -1,5 +1,7 @@
 # Mounted-volume verification
 
+Proxy-specific exact-package commands, fault injection and NLE/manual boundaries are documented in [Proxy acceptance](PROXY_ACCEPTANCE.md). No disposable volume is inferred from a connected drive; physical/NAS destructive exercises require an explicitly chosen disposable target. An injected ENOSPC or virtual filesystem result is not physical disk exhaustion evidence.
+
 Kocpy includes an opt-in generated-data suite for disposable mounted exFAT/APFS/HFS+ volumes and SMB/NFS shares. It creates a 256 MiB camera-like file plus 1,500 small files, copies them through the production engine, and requires every destination to pass an independent SHA-256 readback. Never select a production media card or the only copy of any material.
 
 ```bash

@@ -77,7 +77,8 @@ async function createJob(
   );
   const outputMedia = await inspectMedia(result.outputPath, path.join(outputDirectory, "cache"));
   job.outputPath = result.outputPath;
-  job.outputEvidence = { ...await captureProxyOutput(result.outputPath, outputMedia), encoder: result.encoder, encoderFallback: result.encoderFallback };
+  const snapshot: ProxyMediaSnapshot = { duration: outputMedia.duration, frameRate: outputMedia.frameRate, timecode: outputMedia.timecode, audio: outputMedia.audio, audioTracks: outputMedia.audioTracks, rotation: outputMedia.rotation, colorSpace: outputMedia.colorSpace, resolution: outputMedia.resolution };
+  job.outputEvidence = { ...await captureProxyOutput(result.outputPath, snapshot), encoder: result.encoder, encoderFallback: result.encoderFallback };
   job.validation = compareProxyMedia(sourceMedia, job.outputEvidence, parameters);
   job.status = "completed";
   job.stage = "ready";
@@ -104,6 +105,8 @@ async function main() {
       "lavfi",
       "-i",
       "sine=frequency=1000:sample_rate=48000",
+      "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000",
+      "-map", "0:v:0", "-map", "1:a:0", "-map", "2:a:0",
       "-t",
       "2",
       "-metadata",
@@ -148,10 +151,11 @@ async function main() {
       const check = checkProxyDelivery(job);
       if (check.state === "blocked") throw new Error(`Advanced conversion blocked: ${check.blockers.join("; ")}`);
       if (job.outputEvidence?.resolution !== "640x360") throw new Error("Explicit dimension mismatch");
-      advancedResults.push({ encoder: job.outputEvidence.encoder, fallback: job.outputEvidence.encoderFallback, validation: job.validation });
+      advancedResults.push({ parameters, output: job.outputEvidence, validation: job.validation });
     }
     const lt = await createJob(source, outputs, sourceMedia, { purpose: "editorial", format: "prores", container: "mov", resolution: "720p", namingTemplate: "{name}_lt", advanced: await freezeProxyAdvanced({ proresProfile: 1 }) });
     if (checkProxyDelivery(lt).state === "blocked" || lt.outputEvidence?.encoder !== "prores_ks") throw new Error("ProRes LT conversion failed");
+    advancedResults.push({ parameters: lt.parameterSnapshot!, output: lt.outputEvidence!, validation: lt.validation });
     const frozenLut = await freezeProxyAdvanced({ lutPath });
     await fs.appendFile(lutPath, "\n# altered");
     let rejected = false;
@@ -201,6 +205,7 @@ async function main() {
     if (media.length !== 2) throw new Error("Delivery media is incomplete");
     const result = {
       arch: process.arch,
+      electron: process.versions.electron,
       passed: true,
       delivery,
       media,
