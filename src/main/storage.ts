@@ -133,4 +133,5 @@ export const defaultSettings = {
   reportSyncPath: "",
   thumbnailCacheGiB: 2,
   notificationSound: true,
+  proxyConcurrency: "auto" as import("./types").ProxyConcurrency,
 };

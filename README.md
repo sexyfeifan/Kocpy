@@ -6,7 +6,7 @@
 
 <p align="center"><a href="#中文">中文</a> · <a href="#english">English</a> · <a href="#日本語">日本語</a></p>
 
-当前正式版：**0.1.39** · [下载](https://github.com/sexyfeifan/Kocpy/releases/latest) · [使用手册](docs/USER_GUIDE.md) · [文档导航](docs/README.md) · [0.1.39 更新](docs/RELEASE_NOTES_0.1.39.md)
+当前正式版：**0.1.40** · [下载](https://github.com/sexyfeifan/Kocpy/releases/latest) · [使用手册](docs/USER_GUIDE.md) · [文档导航](docs/README.md) · [0.1.40 更新](docs/RELEASE_NOTES_0.1.40.md)
 
 ![Kocpy 工作台](docs/screenshots/dashboard.png)
 
@@ -16,12 +16,12 @@
 
 ### 下载与安装
 
-| 你的 Mac | 0.1.39 安装包 |
+| 你的 Mac | 0.1.40 安装包 |
 | --- | --- |
-| Apple Silicon（M 系列） | [下载 arm64 DMG](https://github.com/sexyfeifan/Kocpy/releases/download/v0.1.39/Kocpy-0.1.39-arm64.dmg) |
-| Intel | [下载 x64 DMG](https://github.com/sexyfeifan/Kocpy/releases/download/v0.1.39/Kocpy-0.1.39-x64.dmg) |
+| Apple Silicon（M 系列） | [下载 arm64 DMG](https://github.com/sexyfeifan/Kocpy/releases/download/v0.1.40/Kocpy-0.1.40-arm64.dmg) |
+| Intel | [下载 x64 DMG](https://github.com/sexyfeifan/Kocpy/releases/download/v0.1.40/Kocpy-0.1.40-x64.dmg) |
 
-下载后先核对同一 Release 的 [SHA256SUMS.txt](https://github.com/sexyfeifan/Kocpy/releases/download/v0.1.39/SHA256SUMS.txt)，再打开 DMG，将 Kocpy 拖入“应用程序”。候选包不能用其摘要校验正式附件。
+下载后先核对同一 Release 的 [SHA256SUMS.txt](https://github.com/sexyfeifan/Kocpy/releases/download/v0.1.40/SHA256SUMS.txt)，再打开 DMG，将 Kocpy 拖入“应用程序”。候选包不能用其摘要校验正式附件。
 
 **当前没有 Developer ID 签名或 Apple 公证。** 安装包仅采用 ad-hoc 签名；同版 Release 提供的 SHA-256 用于下载完整性核对。两者都不构成 Apple 身份认证或 Apple 公证。遇到系统阻止、架构不符或“已损坏”提示，请按[安装、升级与排查说明](docs/INSTALLATION.md)处理，不要直接关闭系统安全防护。
 
@@ -80,22 +80,21 @@
 
 普通备份按只读原则处理素材源。修复副本、修订 MHL 等维护写入必须经过明确确认；MHL 修订保留原始清单与审计，不删除素材，也不允许豁免大小或哈希异常。删除项目只清理 Kocpy 内部记录，不删除磁盘素材、报告或清单。
 
-### 0.1.39 更新重点
+### 0.1.40 更新重点
 
-1. **设置反馈归位**：保存状态位于卡片标题区，不再压住分隔线或越出内容边界。
-2. **卡片选择边界**：普通备份与项目备份选择卡统一图标容器、选中标记、悬停和键盘焦点状态。
-3. **添加入口可见**：手动路径与素材卷卡片的添加／已选操作使用明确的按钮和图标边界。
-4. **更新历史折叠**：软件使用说明按版本显示折叠栏，默认收起，按需展开具体更新内容。
-5. **安全语义不变**：本版不改变素材复制、校验、恢复、归档或报告规则。
+1. **严格代理交付**：主进程从证据重算，音轨丢失、时长／帧率异常与剪辑时间码异常禁止交付。
+2. **有审计的例外**：元数据警告须填写原因；记录操作人、时间和证据摘要，参数或证据改变会失效。
+3. **不可豁免哈希**：清单和正式交付目录仍核对实际输出完整哈希。
+4. **工具链补丁**：更新兼容的构建依赖安全补丁；界面版本历史继续按版本折叠。
 
-[完整更新说明](docs/RELEASE_NOTES_0.1.39.md) · [历史正式发布](https://github.com/sexyfeifan/Kocpy/releases)
+[完整更新说明](docs/RELEASE_NOTES_0.1.40.md) · [历史正式发布](https://github.com/sexyfeifan/Kocpy/releases)
 
 ### 验证范围与已知限制
 
-0.1.39 的精确自动测试、架构、候选包与正式附件验收范围见[验证记录](docs/VERIFICATION.md)和同版 Release；任何未执行项目不会计作通过。当前源码全量回归为 **519 项通过、4 项跳过**。
+0.1.40 的精确自动测试、架构、候选包与正式附件验收范围见[验证记录](docs/VERIFICATION.md)和同版 Release；任何未执行项目不会计作通过。当前源码全量回归为 **521 项通过、4 项跳过**。
 
 - 没有 Developer ID／Apple 公证，不宣称通过 App Store 审核。
-- 原生 Apple Silicon／Intel 候选与正式标签流水线、正式附件摘要和回下载核验以[验证记录](docs/VERIFICATION.md)中的 0.1.39 章节为准；候选成功不等同于正式附件通过。
+- 原生 Apple Silicon／Intel 候选与正式标签流水线、正式附件摘要和回下载核验以[验证记录](docs/VERIFICATION.md)中的 0.1.40 章节为准；候选成功不等同于正式附件通过。
 - 历史硬件或双机结果不能泛化成当前版本在所有设备上通过；真实外置双盘、NAS／SMB 网络中断／重挂载、拔盘、睡眠与空间耗尽的本版复验边界仍明确保留；当前没有真实 NAS／SMB 真机结果。
 - “10k”只是 10,000 条恢复元数据的结构与容量估算，不是 10,000 个真实文件的复制、哈希、恢复或性能测试；日志恢复解析还会产生额外内存占用。
 - Resolve 有已记录的合成样本实际导入证据；Premiere Pro／Final Cut Pro 清单完成结构与生成检查，未宣称完成对应软件实机导入。
@@ -150,11 +149,11 @@ Kocpy is a local-first macOS workspace for verified media offload and production
 
 Project mode adds shooting days, cameras and positions, logical card volumes, closeout requirements, versioned rules, editable templates and handoff records. Existing backups can be adopted against MHL/SHA manifests, read into a first baseline, or imported as unverified structure. A first baseline does not prove historical completeness, and different volume UUIDs alone do not prove physical independence.
 
-Current features also include recovery, media relinking, evidence-backed H.264/ProRes proxies, delivery manifests, archive reverification, audited metadata exchange between workstations, opt-in completion actions, diagnostics, light/dark themes and reduced motion. Release **0.1.39** clarifies settings feedback, card-selection boundaries and add controls, and turns the in-app version history into collapsed per-version rows. Copying, verification, recovery, archiving and report safety semantics are unchanged.
+Current features also include recovery, media relinking, evidence-backed H.264/ProRes proxies, delivery manifests, archive reverification, audited metadata exchange between workstations, opt-in completion actions, diagnostics, light/dark themes and reduced motion. Release **0.1.40** enforces strict proxy delivery checks and records evidence-bound approval of metadata warnings. Hash verification cannot be waived. Version history remains collapsed per version.
 
 [Download](https://github.com/sexyfeifan/Kocpy/releases/latest) · [Installation](docs/INSTALLATION.md) · [Guide (Chinese)](docs/USER_GUIDE.md) · [Verification scope](docs/VERIFICATION.md)
 
-Separate arm64 and x64 installers are available in the 0.1.39 Release with `SHA256SUMS.txt`. They use ad-hoc signing, **not Developer ID signing or Apple notarization**. Automated tests and historical hardware results are not certification for every storage setup; this release has no real NAS/SMB device result and does not claim complete two-independent-external-disk coverage.
+Separate arm64 and x64 installers are available in the 0.1.40 Release with `SHA256SUMS.txt`. They use ad-hoc signing, **not Developer ID signing or Apple notarization**. Automated tests and historical hardware results are not certification for every storage setup; this release has no real NAS/SMB device result and does not claim complete two-independent-external-disk coverage.
 
 ## 日本語
 
@@ -162,11 +161,11 @@ Kocpy は macOS 向けのローカル優先メディアバックアップ／プ�
 
 プロジェクトモードでは撮影日、カメラ／位置、素材巻、必要コピー数、ルール履歴、テンプレート、引き継ぎを管理できます。既存素材の取り込み、MHL／SHA 比較、復旧、プロキシ、納品リスト、長期再検証、監査付きメタデータ交換にも対応します。初回基準は取り込み以前の完全性を証明せず、異なる UUID だけでは物理的に独立したコピーと認定しません。
 
-正式版 **0.1.39** は、設定の保存表示、カード選択境界、追加操作の視認性を改善し、アプリ内の更新履歴をバージョンごとの折りたたみ表示に変更します。コピー、検証、復旧、アーカイブ、レポートの安全ルールは変更しません。
+正式版 **0.1.40** は、プロキシ納品の検査を厳格化し、メタデータ警告の例外承認を証拠・担当者・理由・時刻とともに記録します。ハッシュ検証は免除できません。更新履歴はバージョンごとに折りたたんで表示します。
 
 [ダウンロード](https://github.com/sexyfeifan/Kocpy/releases/latest) · [インストール（中国語）](docs/INSTALLATION.md) · [使用手冊（中国語）](docs/USER_GUIDE.md) · [検証範囲](docs/VERIFICATION.md)
 
-Apple Silicon／Intel 用の 0.1.39 インストーラと `SHA256SUMS.txt` は同版 Release から取得できます。現在は ad-hoc 署名のみで、**Developer ID 署名・Apple 公証はありません**。自動テストをあらゆる実機構成の検証とみなさないでください。実 NAS／SMB 機器での結果や、独立した外付け二台構成をすべて検証済みとは表明していません。
+Apple Silicon／Intel 用の 0.1.40 インストーラと `SHA256SUMS.txt` は同版 Release から取得できます。現在は ad-hoc 署名のみで、**Developer ID 署名・Apple 公証はありません**。自動テストをあらゆる実機構成の検証とみなさないでください。実 NAS／SMB 機器での結果や、独立した外付け二台構成をすべて検証済みとは表明していません。
 
 ## License
 

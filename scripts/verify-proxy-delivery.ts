@@ -16,6 +16,7 @@ import {
   approveProxyDelivery,
 } from "../src/main/proxy-evidence";
 import { publishProxyDeliveryPackage } from "../src/main/delivery";
+import { ProxyRunRegistry } from "../src/main/proxy-scheduler";
 import type {
   ProxyJob,
   ProxyMediaSnapshot,
@@ -153,6 +154,18 @@ async function main() {
       if (check.state === "warning") approveProxyDelivery(job, "合成样本运行时检查：保留未知元数据边界", "隔离运行时验收");
     }
     const delivery = await publishProxyDeliveryPackage(jobs, deliveries, "runtime-check");
+    // Isolated resource fixture tests real FFmpeg workers and independent signals;
+    // it is not evidence of a physical disk or NAS throughput test.
+    const registry = new ProxyRunRegistry();
+    const parallelJobs = ["parallel-a", "parallel-b"].map((id) => ({ id, concurrency: 2 } as ProxyJob));
+    const resources = { keys: ["synthetic-ssd"], exclusive: false, autoLimit: 2 as const, reason: "synthetic" };
+    const controllers = parallelJobs.map((job) => registry.reserve(job, resources, 2)!);
+    const workers = controllers.map((controller) => makeProxy(source, outputs, "h264", "720p", { signal: controller.signal }));
+    registry.cancel(parallelJobs[1].id);
+    const results = await Promise.allSettled(workers);
+    if (results[0].status !== "fulfilled" || results[1].status !== "rejected") throw new Error("Parallel cancellation affected another worker");
+    for (const job of parallelJobs) registry.release(job.id);
+    if (registry.busy) throw new Error("Parallel worker slot leaked");
     const check = JSON.parse(
       await fs.readFile(path.join(delivery, "Delivery_Check.json"), "utf8"),
     );

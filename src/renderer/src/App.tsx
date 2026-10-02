@@ -6175,6 +6175,15 @@ function HelpPage({
   ];
   const releaseNotes = [
     {
+      version: "0.1.41",
+      title: "可配置并行代理队列",
+      paragraphs: [
+        "新增默认及本批并行数：自动、1、2、3；旧工作区默认保持 1，新工作区自动模式最多 2。队列上限可即时调整，降低上限不会中断已有任务。",
+        "每个代理独立暂停、取消和恢复；机械盘、网络盘及未知介质同设备串行。备份会安全暂停全部运行代理，结束后只恢复备份暂停的任务。",
+        "队列记录保存失败会阻止启动新任务，修复磁盘问题后可明确重试保存并恢复。",
+      ],
+    },
+    {
       version: "0.1.40",
       title: "严格代理交付与例外审计",
       paragraphs: [
@@ -7578,6 +7587,10 @@ export function ProxyQueue({
   const [sourceTask, setSourceTask] = useState("");
   const [queueLimit, setQueueLimit] = useState(100);
   const [approvalReasons, setApprovalReasons] = useState<Record<string, string>>({});
+  const [queuePolicy, setQueuePolicy] = useState<{ limit: number; running: number; error?: string }>({ limit: 3, running: 0 });
+  useEffect(() => {
+    void api.getProxyQueuePolicy().then(setQueuePolicy).catch(() => {});
+  }, [jobs]);
   const rows = [...jobs]
     .filter((job) => !sourceTask || job.sourceTaskId === sourceTask)
     .reverse();
@@ -7629,10 +7642,26 @@ export function ProxyQueue({
             </span>
           </h2>
           <span className="muted small">
-            队列按顺序处理，保留原素材关联并检查帧率、时间码与音轨
+            运行 {jobs.filter((job) => job.status === "running").length} / 队列上限 {queuePolicy.limit} · 保留素材关联与媒体检查
           </span>
         </div>
+        <label>
+          队列并行上限
+          <select value={queuePolicy.limit} onChange={(event) => void act(async () => {
+            setQueuePolicy(await api.setProxyQueueLimit(Number(event.target.value)));
+          })}>
+            {[1, 2, 3].map((value) => <option key={value} value={value}>{value} 个</option>)}
+          </select>
+          <small>各批次上限与同盘限流仍生效；降低上限不终止当前任务。</small>
+        </label>
       </div>
+      {queuePolicy.error && <div className="notice" role="alert">
+        <span>{queuePolicy.error}</span>
+        <Button onClick={() => void act(async () => {
+          await api.retryProxyPersistence();
+          setQueuePolicy(await api.getProxyQueuePolicy());
+        })}>重试保存并恢复队列</Button>
+      </div>}
       <div className="notice proxy-compatibility-notice">
         <ShieldCheck size={16} />
         <span>
@@ -7744,6 +7773,9 @@ export function ProxyQueue({
                       : "通用审片"}{" "}
                   · {job.format.toUpperCase()} · {job.resolution}
                   {job.timecode ? ` · TC ${job.timecode}` : ""}
+                </p>
+                <p className="small">
+                  并行策略：{job.concurrency === "auto" ? "自动" : `${job.concurrency || 1} 个`} · {job.resourceReason || "启动前检查磁盘"}
                 </p>
                 <p className="small">
                   阶段：
@@ -8228,6 +8260,16 @@ function SettingsPage({
         </div>
         <div className="setting-row">
           <div>
+            <h3>代理默认并行数</h3>
+            <p>新批次使用此设置；生成代理时可覆盖。备份开始时代理会安全让路。</p>
+          </div>
+          <select aria-label="代理默认并行数" value={draft.proxyConcurrency ?? 1} onChange={(event) => setDraft({ ...draft, proxyConcurrency: event.target.value === "auto" ? "auto" : Number(event.target.value) as 1 | 2 | 3 })}>
+            <option value="auto">自动（推荐）</option>
+            {[1, 2, 3].map((value) => <option key={value} value={value}>{value} 个</option>)}
+          </select>
+        </div>
+        <div className="setting-row">
+          <div>
             <h3>快捷操作</h3>
             <p>⌘ N 新建备份 · / 搜索 · Esc 关闭面板</p>
           </div>
@@ -8284,6 +8326,10 @@ function ProxyDialog({
     [presetName, setPresetName] = useState(""),
     [result, setResult] = useState(""),
     [error, setError] = useState("");
+  const [concurrency, setConcurrency] = useState<"auto" | 1 | 2 | 3>(1);
+  useEffect(() => {
+    void api.getSettings().then((settings) => setConcurrency(settings.proxyConcurrency ?? 1)).catch(() => {});
+  }, []);
   useEffect(() => {
     void api
       .getProxyPresets()
@@ -8330,6 +8376,7 @@ function ProxyDialog({
     setError("");
     try {
       await api.enqueueProxy(file.paths || [file.path], out, format, res, {
+        concurrency,
         preset,
         namingTemplate,
         bitrateMbps: bitrate || undefined,
@@ -8419,6 +8466,14 @@ function ProxyDialog({
           <label>
             视频文件
             <input readOnly value={file.name} />
+          </label>
+          <label>
+            本批并行任务数
+            <select value={concurrency} disabled={busy} onChange={(event) => setConcurrency(event.target.value === "auto" ? "auto" : Number(event.target.value) as 1 | 2 | 3)}>
+              <option value="auto">自动（推荐）</option>
+              {[1, 2, 3].map((value) => <option key={value} value={value}>{value} 个</option>)}
+            </select>
+            <small>自动模式最多 2 个；机械盘、网络盘或未知介质同设备串行。暂停后继续会重新转码当前文件。</small>
           </label>
           <div className="form-grid">
             <label>

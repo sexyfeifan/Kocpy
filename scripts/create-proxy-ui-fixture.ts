@@ -41,7 +41,7 @@ async function main() {
     "-i",
     "sine=frequency=880:sample_rate=48000",
     "-t",
-    "2",
+    process.env.KOCPY_PROXY_UI_SECONDS || "2",
     "-metadata",
     "timecode=01:00:00:00",
     "-c:v",
@@ -126,7 +126,9 @@ async function main() {
   await Promise.all([
     fs.writeFile(path.join(data, "tasks.json"), JSON.stringify([task])),
     fs.writeFile(path.join(data, "projects.json"), "[]"),
-    fs.writeFile(path.join(data, "proxy-jobs.json"), JSON.stringify([job])),
+    fs.writeFile(path.join(data, "proxy-jobs.json"), JSON.stringify(process.env.KOCPY_PROXY_UI_PENDING === "1" ?
+      Array.from({ length: 3 }, () => ({ ...job, id: randomUUID(), batchId: "synthetic-parallel-batch", concurrency: 3,
+        status: "pending", stage: "queued", progress: 0, outputPath: undefined, outputEvidence: undefined, validation: undefined, completedAt: undefined })) : [job])),
   ]);
   console.log(JSON.stringify({ root, data, output: result.outputPath }));
 }

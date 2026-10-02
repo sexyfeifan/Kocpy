@@ -109,6 +109,7 @@ export interface Volume {
   writable?: boolean;
 }
 export interface Settings {
+  proxyConcurrency?: import("../../main/types").ProxyConcurrency;
   defaultHash: "sha256" | "md5" | "sha1";
   defaultDuplicateStrategy: "skip" | "suffix";
   includeHidden: boolean;
@@ -548,6 +549,9 @@ export interface API {
     waveformPath?: string;
   }>;
   getProxyJobs(): Promise<ProxyJob[]>;
+  getProxyQueuePolicy(): Promise<{ limit: number; running: number; error?: string }>;
+  retryProxyPersistence(): Promise<void>;
+  setProxyQueueLimit(limit: number): Promise<{ limit: number; running: number }>;
   approveProxyDelivery(id: string, reason: string): Promise<NonNullable<ProxyJob["deliveryApproval"]>>;
   getProxyPresets(): Promise<SavedProxyPreset[]>;
   saveProxyPreset(
@@ -566,6 +570,7 @@ export interface API {
       container?: "mp4" | "mov" | "mkv";
       dependsOn?: string[];
       chain?: boolean;
+      concurrency?: import("../../main/types").ProxyConcurrency;
     },
   ): Promise<ProxyJob[]>;
   cancelProxy(id?: string): Promise<void>;

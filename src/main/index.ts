@@ -40,6 +40,8 @@ import {
 import { Storage, defaultSettings } from "./storage";
 import { listVolumes, driveInfo, ejectVolume, volumeIdentity } from "./system";
 import { makeProxy } from "./proxy";
+import { ProxyRunRegistry, validateProxyConcurrency } from "./proxy-scheduler";
+import { assessProxyResources } from "./proxy-resources";
 import { mainWindowLayout } from "./window-layout";
 import { installMainWindowConstraints } from "./window-constraints";
 import { withTemporaryReportHtml } from "./report-html";
@@ -211,7 +213,6 @@ import {
 } from "./workstation-exchange";
 import { CatalogDatabase } from "./catalog";
 import {
-  claimBackupPriorityPause,
   mapWithConcurrency,
   resumeBackupPausedProxyJobs,
 } from "./resource-policy";
@@ -273,13 +274,12 @@ const engine = new BackupEngine(
   store = new Storage(app.getPath("userData")),
   catalog = new CatalogDatabase(app.getPath("userData")),
   workspace = new WorkspaceRepository(store, catalog);
-const readSettings = async () => ({
-  ...defaultSettings,
-  ...(await store.read<Partial<typeof defaultSettings>>(
-    "settings.json",
-    defaultSettings,
-  )),
-});
+let proxyDefaultConcurrency: import("./types").ProxyConcurrency = 1;
+const readSettings = async () => {
+  const saved = await store.read<Partial<typeof defaultSettings>>("settings.json", {});
+  return { ...defaultSettings, ...saved,
+    proxyConcurrency: saved.proxyConcurrency === undefined ? proxyDefaultConcurrency : validateProxyConcurrency(saved.proxyConcurrency) };
+};
 const hasProjectRuleEvidence = (project: ProjectConfig) =>
   Boolean(
     project.activeRuleSnapshotId &&
@@ -480,8 +480,9 @@ let main: BrowserWindow | null = null,
   quitReady = false,
   blocker: number | undefined,
   proxyBusy = false,
-  proxyController: AbortController | undefined,
-  proxyPauseRequested: string | undefined,
+  proxyScheduling = false,
+  proxyRescheduleRequested = false,
+  proxyQueueLimit = 3,
   backupStartPending = 0,
   proxyJobs: ProxyJob[] = [];
 let archiveTransferManager: ArchiveTransferManager;
@@ -490,6 +491,7 @@ const archiveTransferLiveProgress = new Map<
   import("./archive-transfer").ArchiveTransferProgress
 >();
 const proxyIdleWaiters = new Set<() => void>();
+const proxyRuns = new ProxyRunRegistry();
 let benchmarkHistory: BenchmarkResult[] = [];
 let reliabilityValidations: ReliabilityValidationRecord[] = [];
 let healthRecords: ArchiveHealthRecord[] = [],
@@ -943,7 +945,10 @@ function handle(name: string, fn: (...args: any[]) => any) {
     }
   });
 }
-const persistProxyJobs = () => store.write("proxy-jobs.json", proxyJobs);
+const persistProxyJobs = async () => {
+  try { await store.write("proxy-jobs.json", proxyJobs); }
+  catch (error) { proxyRuns.failPersistence(error); emitProxyJobs(); throw error; }
+};
 const workspaceIntegrity = (value: Record<string, unknown>) =>
   createHash("sha256")
     .update(
@@ -1488,13 +1493,17 @@ async function executeCompletionAction(
   }
 }
 async function processProxyQueue() {
+  if (proxyScheduling) { proxyRescheduleRequested = true; return; }
   if (
-    proxyBusy ||
+    proxyRuns.persistenceError || quitReady ||
     operations.active ||
     backupStartPending > 0 ||
     engine.hasActive()
   )
     return;
+  proxyScheduling = true;
+  proxyRescheduleRequested = false;
+  try {
   let dependencyChanged = false;
   for (const queued of proxyJobs.filter((item) => item.status === "pending")) {
     const failed = (queued.dependsOn || []).find((id) =>
@@ -1509,7 +1518,7 @@ async function processProxyQueue() {
       dependencyChanged = true;
     }
   }
-  const job = proxyJobs.find(
+  const candidates = proxyJobs.filter(
     (j) =>
       j.status === "pending" &&
       (j.dependsOn || []).every(
@@ -1517,15 +1526,35 @@ async function processProxyQueue() {
           proxyJobs.find((item) => item.id === id)?.status === "completed",
       ),
   );
-  if (!job) {
-    if (dependencyChanged) {
-      await persistProxyJobs();
-      emitProxyJobs();
-    }
-    return;
+  if (dependencyChanged) await persistProxyJobs();
+  const resourceCache = new Map<string, ReturnType<typeof assessProxyResources>>();
+  for (const job of candidates) {
+    if (quitReady || operations.active || backupStartPending > 0 || engine.hasActive() ||
+      proxyRuns.runs.size >= Math.min(proxyQueueLimit, ...[...proxyRuns.runs.values()].map((run) => run.limit))) break;
+    const resourceKey = JSON.stringify([path.dirname(job.input), path.resolve(job.outputDir)]);
+    if (!resourceCache.has(resourceKey)) resourceCache.set(resourceKey, assessProxyResources(job.input, job.outputDir));
+    const resources = await resourceCache.get(resourceKey)!;
+    if (job.status !== "pending" || quitReady || operations.active || backupStartPending > 0 || engine.hasActive()) continue;
+    job.resourceReason = resources.reason;
+    job.effectiveConcurrency = job.concurrency === "auto" ? resources.autoLimit : job.concurrency || 1;
+    const controller = proxyRuns.reserve(job, resources, proxyQueueLimit);
+    if (!controller) continue;
+    proxyBusy = proxyRuns.busy;
+    job.status = "running";
+    void runProxyJob(job, controller).catch((error) => {
+      console.error("Proxy state persistence failed", error);
+    });
   }
-  proxyBusy = true;
-  proxyController = new AbortController();
+  emitProxyJobs();
+  } catch (error) {
+    console.error("Proxy scheduling failed", error);
+  } finally {
+    proxyScheduling = false;
+    if (proxyRescheduleRequested) queueMicrotask(() => void processProxyQueue());
+  }
+}
+
+async function runProxyJob(job: ProxyJob, proxyController: AbortController) {
   Object.assign(job, {
     status: "running",
     stage: "validating-source",
@@ -1533,11 +1562,11 @@ async function processProxyQueue() {
     startedAt: Date.now(),
     error: undefined,
   });
-  emitProxyJobs();
-  await persistProxyJobs();
   const lock = powerSaveBlocker.start("prevent-app-suspension");
   let unpublishedProxyOutput: string | undefined;
   try {
+    emitProxyJobs();
+    await persistProxyJobs();
     const parameters = job.parameterSnapshot;
     if (!parameters)
       throw new Error("旧代理任务缺少参数快照，请从素材库重新加入队列");
@@ -1597,7 +1626,7 @@ async function processProxyQueue() {
   } catch (e: any) {
     if (unpublishedProxyOutput)
       await fs.unlink(unpublishedProxyOutput).catch(() => {});
-    const paused = proxyPauseRequested === job.id;
+    const paused = Boolean(proxyRuns.runs.get(job.id)?.pauseReason);
     Object.assign(job, {
       status: paused
         ? "paused"
@@ -1610,15 +1639,18 @@ async function processProxyQueue() {
       completedAt: paused ? undefined : Date.now(),
     });
   } finally {
-    proxyBusy = false;
-    proxyController = undefined;
-    proxyPauseRequested = undefined;
-    for (const resolve of proxyIdleWaiters) resolve();
-    proxyIdleWaiters.clear();
     powerSaveBlocker.stop(lock);
-    await persistProxyJobs();
-    emitProxyJobs();
-    void processProxyQueue();
+    try { await persistProxyJobs(); }
+    finally {
+      proxyRuns.release(job.id);
+      proxyBusy = proxyRuns.busy;
+      if (!proxyBusy) {
+        for (const resolve of proxyIdleWaiters) resolve();
+        proxyIdleWaiters.clear();
+      }
+      emitProxyJobs();
+      void processProxyQueue();
+    }
   }
 }
 
@@ -1644,14 +1676,11 @@ async function waitForProxyIdle() {
 async function withBackupPriority<T>(operation: () => Promise<T>) {
   backupStartPending++;
   try {
-    const running = proxyJobs.find((job) => job.status === "running");
-    if (proxyBusy && running) {
+    if (proxyBusy) {
       // A user pause already in flight remains a user decision. The backup
       // waits for the same safe boundary but must not make it auto-resumable.
-      if (claimBackupPriorityPause(running, Boolean(proxyPauseRequested))) {
-        proxyPauseRequested = running.id;
-        proxyController?.abort(new Error("备份任务优先，代理已安全暂停"));
-      }
+      for (const running of proxyJobs.filter((job) => proxyRuns.runs.has(job.id)))
+        proxyRuns.pause(running, "backup-priority");
       await waitForProxyIdle();
     }
     return await operation();
@@ -1692,6 +1721,9 @@ function createWindow() {
   else main.loadFile(path.join(__dirname, "../renderer/index.html"));
 }
 app.whenReady().then(async () => {
+  const existingWorkspace = await Promise.all(["workspace-state.json", "tasks.json", "settings.json"].map((name) =>
+    fs.access(path.join(app.getPath("userData"), name)).then(() => true, () => false)));
+  proxyDefaultConcurrency = existingWorkspace.some(Boolean) ? 1 : "auto";
   let workspaceLoad;
   try {
     workspaceLoad = await workspace.initialize();
@@ -1824,6 +1856,8 @@ app.whenReady().then(async () => {
       1024 ** 3,
   ).catch(() => {});
   proxyJobs = await store.read<ProxyJob[]>("proxy-jobs.json", []);
+  const proxyQueueSettings = await store.read<{ limit?: number }>("proxy-queue-settings.json", {});
+  proxyQueueLimit = [1, 2, 3].includes(proxyQueueSettings.limit!) ? proxyQueueSettings.limit! : 3;
   benchmarkHistory = await store.read<BenchmarkResult[]>("benchmarks.json", []);
   reliabilityValidations = await store.read<ReliabilityValidationRecord[]>(
     "reliability-validations.json",
@@ -6332,6 +6366,7 @@ app.whenReady().then(async () => {
       ...defaultSettings,
       ...settings,
       automaticPdf: settings.automaticPdf !== false,
+      proxyConcurrency: validateProxyConcurrency(settings.proxyConcurrency ?? 1),
     };
     nativeTheme.themeSource = normalized.theme === "light" ? "light" : "dark";
     return store.write("settings.json", normalized);
@@ -6886,6 +6921,21 @@ app.whenReady().then(async () => {
     );
   });
   handle("proxy:list", () => proxyJobs.map((job) => ({ ...job, deliveryCheck: job.status === "completed" ? checkProxyDelivery(job) : undefined })));
+  handle("proxy:queue-policy", () => ({ limit: proxyQueueLimit, running: proxyRuns.runs.size, error: proxyRuns.persistenceError }));
+  handle("proxy:retry-persistence", async () => {
+    await persistProxyJobs();
+    proxyRuns.persistenceError = undefined;
+    emitProxyJobs();
+    void processProxyQueue();
+  });
+  handle("proxy:set-queue-limit", async (limit: number) => {
+    if (![1, 2, 3].includes(limit)) throw new Error("队列上限必须为 1、2 或 3");
+    await store.write("proxy-queue-settings.json", { limit });
+    proxyQueueLimit = limit;
+    void processProxyQueue();
+    emitProxyJobs();
+    return { limit, running: proxyRuns.runs.size };
+  });
   handle("proxy:approve-delivery", async (id: string, reason: string) => {
     const job = proxyJobs.find((item) => item.id === id);
     if (!job) throw new Error("代理任务不存在");
@@ -6957,9 +7007,12 @@ app.whenReady().then(async () => {
         container?: "mp4" | "mov" | "mkv";
         dependsOn?: string[];
         chain?: boolean;
+        concurrency?: import("./types").ProxyConcurrency;
       } = {},
     ) => {
       if (!inputs.length) throw new Error("请选择至少一个视频");
+      const concurrency = validateProxyConcurrency(options.concurrency ?? (await readSettings()).proxyConcurrency);
+      const batchId = randomUUID();
       const parameters = validateProxyParameters({
         purpose:
           options.preset || (format === "prores" ? "editorial" : "review"),
@@ -7026,6 +7079,8 @@ app.whenReady().then(async () => {
             },
           };
         jobs.push({
+          batchId,
+          concurrency,
           id: randomUUID(),
           input,
           name: path.basename(input),
@@ -7068,7 +7123,7 @@ app.whenReady().then(async () => {
       : proxyJobs.find((j) => j.status === "running");
     if (!job) return false;
     if (job.status === "running")
-      proxyController?.abort(new Error("用户取消代理任务"));
+      proxyRuns.cancel(job.id);
     else if (["pending", "paused"].includes(job.status))
       job.status = "cancelled";
     await persistProxyJobs();
@@ -7080,8 +7135,7 @@ app.whenReady().then(async () => {
     if (!job || job.status !== "running")
       throw new Error("只有正在转码的任务可以暂停");
     job.pauseReason = "user";
-    proxyPauseRequested = id;
-    proxyController?.abort(new Error("用户暂停代理任务"));
+    proxyRuns.pause(job, "user");
     return true;
   });
   handle("proxy:resume", async (id: string) => {

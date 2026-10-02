@@ -1,4 +1,10 @@
-# Kocpy 0.1.40 architecture
+# Kocpy 0.1.41 architecture
+
+## Bounded concurrent proxy scheduler
+
+Each proxy owns an abort controller and synchronously reserved slot before persistence or process launch. Batch limits and the global queue ceiling both apply; lowering the ceiling drains existing workers without cancelling them. Old installations default to serial processing; new installations default to auto (at most two on known local SSDs with sufficient CPU/memory). APFS physical-store topology prevents treating sibling volumes as distinct disks. Shared mechanical/network/unknown resources serialize; discovery failure uses a globally exclusive unknown-storage key.
+
+Backup priority pauses every running worker and waits for all slots to settle. User pauses and in-flight cancellations are never converted into auto-resuming pauses. Persistence errors latch the scheduler closed to new work until an explicit successful state-save recovery. Pause/resume restarts the clip, not an unsupported byte-level transcode continuation.
 
 ## Strict proxy delivery
 

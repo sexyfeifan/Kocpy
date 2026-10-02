@@ -15,6 +15,7 @@ export type DuplicateStrategy = "skip" | "suffix";
 export type ProxyStatus =
   "pending" | "running" | "paused" | "completed" | "failed" | "cancelled";
 export type ProxyPreset = "review" | "editorial" | "offline";
+export type ProxyConcurrency = "auto" | 1 | 2 | 3;
 export interface ProxyMediaSnapshot {
   duration?: string;
   frameRate?: string;
@@ -63,6 +64,10 @@ export interface SavedProxyPreset {
   updatedAt: number;
 }
 export interface ProxyJob {
+  batchId?: string;
+  concurrency?: ProxyConcurrency;
+  resourceReason?: string;
+  effectiveConcurrency?: number;
   id: string;
   input: string;
   name: string;
