@@ -1,6 +1,6 @@
 # Kocpy 文档导航
 
-当前正式版：**0.1.44**。本目录说明已经实现的功能、操作方法和验证边界。[返回项目首页](../README.md) · [下载正式版](https://github.com/sexyfeifan/Kocpy/releases/latest)
+当前正式版：**0.1.45**。本目录说明已经实现的功能、操作方法和验证边界。[返回项目首页](../README.md) · [下载正式版](https://github.com/sexyfeifan/Kocpy/releases/latest)
 
 ## 使用 Kocpy
 
@@ -27,7 +27,7 @@
 ## 版本与验证
 
 - [代理专项验证](PROXY_ACCEPTANCE.md)：准确安装包命令、合成 NLE 样本与故障／真实介质边界。
-- [0.1.45 更新说明](RELEASE_NOTES_0.1.45.md)：Electron 与签名门禁（候选）。
+- [0.1.45 更新说明](RELEASE_NOTES_0.1.45.md)：Electron 与签名门禁。
 - [0.1.44 更新说明](RELEASE_NOTES_0.1.44.md)：高级代理、滚动修复与可复用验证工具。
 
 - [0.1.40 候选说明](RELEASE_NOTES_0.1.40.md)：严格代理交付与例外审计；正式附件以 Release 为准。
