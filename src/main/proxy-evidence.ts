@@ -39,6 +39,15 @@ export function checkProxyDelivery(job: ProxyJob): NonNullable<ProxyJob["deliver
   if (job.status !== "completed" || !job.outputPath) blockers.push("代理尚未完成");
   const source = job.sourceEvidence?.media, output = job.outputEvidence;
   if (!source || !job.parameterSnapshot) blockers.push("缺少源证据或参数快照，请重新生成");
+  const sourceEvidence = job.sourceEvidence;
+  const hashLengths: Record<string, number> = { md5: 32, sha1: 40, sha256: 64, xxhash32: 8 };
+  if (sourceEvidence && (sourceEvidence.path !== job.input || !Number.isFinite(sourceEvidence.bytes) || sourceEvidence.bytes <= 0 ||
+    !hashLengths[sourceEvidence.hashAlgorithm] || !new RegExp(`^[a-f0-9]{${hashLengths[sourceEvidence.hashAlgorithm] || 1}}$`, "i").test(sourceEvidence.checksum || "")))
+    blockers.push("源路径或哈希证据无效，请重新生成");
+  if (job.parameterSnapshot) {
+    try { validateProxyParameters(job.parameterSnapshot); }
+    catch { blockers.push("参数快照无效，请重新生成"); }
+  }
   if (!output || !/^[a-f0-9]{64}$/.test(output.sha256) || !Number.isFinite(output.bytes) || output.bytes <= 0)
     blockers.push("缺少有效输出哈希证据，请重新生成");
   if (output) {
@@ -92,6 +101,7 @@ export function requireProxyDelivery(job: ProxyJob) {
 }
 
 export function validateProxyParameters(value: ProxyParameterSnapshot) {
+  if (!["review", "editorial", "offline"].includes(value.purpose)) throw new Error("无效代理用途");
   if (!["h264", "prores"].includes(value.format))
     throw new Error("不支持的代理编码");
   if (!/^(?:\d{3,4}p|\d{3,5}x\d{3,5})$/i.test(value.resolution))
@@ -100,7 +110,7 @@ export function validateProxyParameters(value: ProxyParameterSnapshot) {
     throw new Error("不支持的代理封装");
   if (value.format === "prores" && value.container !== "mov")
     throw new Error("ProRes Proxy 仅允许 MOV 封装");
-  if (!value.namingTemplate.includes("{name}"))
+  if (typeof value.namingTemplate !== "string" || !value.namingTemplate.includes("{name}"))
     throw new Error("命名规则必须包含 {name}");
   if (
     value.bitrateMbps !== undefined &&

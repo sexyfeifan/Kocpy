@@ -17,6 +17,7 @@ import {
 } from "../src/main/proxy-evidence";
 import { publishProxyDeliveryPackage } from "../src/main/delivery";
 import { ProxyRunRegistry } from "../src/main/proxy-scheduler";
+import { preflightProxyGeneration } from "../src/main/proxy-preflight";
 import type {
   ProxyJob,
   ProxyMediaSnapshot,
@@ -64,6 +65,7 @@ async function createJob(
       parameterSnapshot: parameters,
     };
   await verifyProxySource(job);
+  job.preflight = await preflightProxyGeneration(outputDirectory, [{ media: sourceMedia, parameters }], [source]);
   job.stage = "transcoding";
   const result = await makeProxy(
     source,

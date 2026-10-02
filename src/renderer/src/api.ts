@@ -573,6 +573,9 @@ export interface API {
       concurrency?: import("../../main/types").ProxyConcurrency;
     },
   ): Promise<ProxyJob[]>;
+  preflightProxy(...args: Parameters<API["enqueueProxy"]>): Promise<import("../../main/proxy-preflight").ProxyPreflight>;
+  batchProxy(ids: string[], action: "pause" | "resume" | "cancel" | "retry"): Promise<number>;
+  prioritizeProxy(id: string, priority: number, beforeId?: string): Promise<void>;
   cancelProxy(id?: string): Promise<void>;
   pauseProxy(id: string): Promise<void>;
   resumeProxy(id: string): Promise<void>;

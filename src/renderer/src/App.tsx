@@ -6175,6 +6175,15 @@ function HelpPage({
   ];
   const releaseNotes = [
     {
+      version: "0.1.42",
+      title: "代理预检与批量队列操作",
+      paragraphs: [
+        "入队前检查目录、有效视频参数和当前可用空间，显示代理大小估算及含已有队列的保守预留；修改参数须重新预检，执行时再次检查。素材源和已校验备份目录禁止作为输出目录。",
+        "代理队列新增状态筛选、完整路径搜索、选择及批量暂停／继续／取消／重试；等待任务支持优先级和移到队首，依赖关系仍须满足。",
+        "已提交生成面板锁定参数，关闭不再误报丢弃未提交输入；补充无效历史哈希／参数证据阻断。",
+      ],
+    },
+    {
       version: "0.1.41",
       title: "可配置并行代理队列",
       paragraphs: [
@@ -7585,6 +7594,9 @@ export function ProxyQueue({
   refresh: () => Promise<void>;
 }) {
   const [sourceTask, setSourceTask] = useState("");
+  const [statusFilter, setStatusFilter] = useState("");
+  const [search, setSearch] = useState("");
+  const [selected, setSelected] = useState<string[]>([]);
   const [queueLimit, setQueueLimit] = useState(100);
   const [approvalReasons, setApprovalReasons] = useState<Record<string, string>>({});
   const [queuePolicy, setQueuePolicy] = useState<{ limit: number; running: number; error?: string }>({ limit: 3, running: 0 });
@@ -7593,13 +7605,24 @@ export function ProxyQueue({
   }, [jobs]);
   const rows = [...jobs]
     .filter((job) => !sourceTask || job.sourceTaskId === sourceTask)
-    .reverse();
+    .filter((job) => !statusFilter || job.status === statusFilter)
+    .filter((job) => `${job.name} ${job.input} ${job.outputDir}`.toLowerCase().includes(search.toLowerCase()))
+    .sort((a, b) => {
+      const rank = (job: ProxyJob) => job.status === "running" ? 0 : job.status === "pending" ? 1 : job.status === "paused" ? 2 : 3;
+      return rank(a) - rank(b) || (a.status === "pending" ? (b.priority || 0) - (a.priority || 0) || (a.queueOrder ?? a.createdAt) - (b.queueOrder ?? b.createdAt) : b.createdAt - a.createdAt);
+    });
+  const selectedIds = selected.filter((id) => rows.some((job) => job.id === id));
   const exportIds = rows
     .filter((job) => job.status === "completed")
     .map((job) => job.id);
   return (
     <section className="panel proxy-queue-panel">
       <div className="proxy-scope-toolbar">
+        <label>任务状态<select value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value); setSelected([]); }}>
+          <option value="">全部状态</option>
+          {Object.entries({ pending: "等待", running: "运行", paused: "暂停", completed: "完成", failed: "失败", cancelled: "取消" }).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+        </select></label>
+        <label>搜索代理<input value={search} onChange={(event) => { setSearch(event.target.value); setSelected([]); }} placeholder="文件名或完整路径" /></label>
         <label>
           队列与交付范围
           <select
@@ -7727,6 +7750,16 @@ export function ProxyQueue({
           Final Cut XML · 未实测
         </Button>
       </div>
+      <div className="proxy-delivery-actions" role="group" aria-label="批量队列操作">
+        <Button onClick={() => setSelected(rows.slice(0, queueLimit).map((job) => job.id))}>选择本页 {Math.min(queueLimit, rows.length)} 项</Button>
+        <Button disabled={!selectedIds.length} onClick={() => setSelected([])}>清除选择</Button>
+        {(["pause", "resume", "cancel", "retry"] as const).map((action) => <Button key={action} disabled={!selectedIds.length} kind={action === "cancel" ? "danger" : "subtle"} onClick={() => void act(async () => {
+          if (action === "cancel" && !window.confirm(`取消选中的 ${selectedIds.length} 项代理？不删除原素材或已完成代理。`)) return;
+          const affected = await api.batchProxy(selectedIds, action);
+          await refresh();
+          if (affected === 0) throw new Error("选中的任务状态不适用于此操作");
+        })}>{({ pause: "批量暂停", resume: "批量继续", cancel: "批量取消", retry: "批量重试" })[action]} · {selectedIds.length}</Button>)}
+      </div>
       {rows.length > queueLimit && (
         <Button onClick={() => setQueueLimit((value) => value + 100)}>
           加载更多代理任务
@@ -7736,6 +7769,7 @@ export function ProxyQueue({
         <div className="proxy-job-list">
           {rows.slice(0, queueLimit).map((job) => (
             <div className="proxy-job" key={job.id}>
+              <input type="checkbox" aria-label={`选择代理 ${job.name} ${job.id.slice(0, 6)}`} checked={selected.includes(job.id)} onChange={(event) => setSelected((value) => event.target.checked ? [...value, job.id] : value.filter((id) => id !== job.id))} />
               <span
                 className={`file-icon ${job.status === "completed" ? "green" : ""}`}
               >
@@ -7843,6 +7877,12 @@ export function ProxyQueue({
                 )}
               </div>
               <div className="row">
+                {job.status === "pending" && <>
+                  <label>优先级<select aria-label={`${job.name} 优先级`} value={job.priority || 0} onChange={(event) => void act(async () => { await api.prioritizeProxy(job.id, Number(event.target.value)); await refresh(); })}>
+                    <option value={0}>普通</option><option value={1}>优先</option><option value={2}>紧急</option>
+                  </select></label>
+                  <Button onClick={() => void act(async () => { const first = rows.find((item) => item.status === "pending" && item.id !== job.id); if (first) { await api.prioritizeProxy(job.id, job.priority || 0, first.id); await refresh(); } })}>移到等待队列首位</Button>
+                </>}
                 {job.status === "running" && (
                   <Button
                     kind="subtle"
@@ -8327,6 +8367,17 @@ function ProxyDialog({
     [result, setResult] = useState(""),
     [error, setError] = useState("");
   const [concurrency, setConcurrency] = useState<"auto" | 1 | 2 | 3>(1);
+  const [preview, setPreview] = useState<{ key: string; report: import("../../main/proxy-preflight").ProxyPreflight }>();
+  const previewKey = JSON.stringify([file.paths || [file.path], out, format, res, concurrency, preset, namingTemplate, bitrate, container]);
+  const currentPreview = preview?.key === previewKey ? preview.report : undefined;
+  async function preflight() {
+    setBusy(true); setError("");
+    try {
+      const report = await api.preflightProxy(file.paths || [file.path], out, format, res, { concurrency, preset, namingTemplate, bitrateMbps: bitrate || undefined, container });
+      setPreview({ key: previewKey, report });
+    } catch (error) { setError(String(error)); setPreview(undefined); }
+    finally { setBusy(false); }
+  }
   useEffect(() => {
     void api.getSettings().then((settings) => setConcurrency(settings.proxyConcurrency ?? 1)).catch(() => {});
   }, []);
@@ -8397,6 +8448,7 @@ function ProxyDialog({
         role="dialog"
         aria-modal="true"
         aria-label="生成代理"
+        data-submitted={Boolean(result)}
       >
         <div className="modal-header">
           <div>
@@ -8412,7 +8464,7 @@ function ProxyDialog({
             <X size={20} />
           </Button>
         </div>
-        <div className="form-body">
+        <fieldset className="form-body" disabled={busy || !!result} style={{ border: 0, margin: 0, minWidth: 0 }}>
           <div className="notice">
             <ShieldCheck size={17} />
             从已校验的备份副本读取，原始素材保持不变。
@@ -8638,6 +8690,9 @@ function ProxyDialog({
             保持原始宽高比、不放大小尺寸素材。生成期间请保持应用运行。编解码支持取决于内置
             FFmpeg，不保证专有 RAW 格式。
           </p>
+          {currentPreview && <div className="notice" role="status">
+            <span>预检：预计代理 {bytes(currentPreview.estimatedBytes)}；保守预留 {bytes(currentPreview.requiredBytes)}；当前可用 {bytes(currentPreview.availableBytes)}。{currentPreview.warnings.join(" ")}</span>
+          </div>}
           {result && (
             <div className="success-box" role="status">
               <CheckCircle2 size={17} />
@@ -8649,12 +8704,13 @@ function ProxyDialog({
               {error}
             </div>
           )}
-        </div>
+        </fieldset>
         <div className="modal-footer">
           <span className="small muted">唯一文件名 · 不覆盖已有文件</span>
+          <Button disabled={busy || !out || !!result} onClick={() => void preflight()}>检查容量与参数</Button>
           <Button
             kind="primary"
-            disabled={busy || !out || !!result}
+            disabled={busy || !out || !!result || !currentPreview}
             onClick={() => void run()}
           >
             <Play size={15} />

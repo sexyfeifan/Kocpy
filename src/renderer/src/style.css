@@ -1999,7 +1999,19 @@ small {
   gap: 15px;
   padding: 17px 20px;
   border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
 }
+.proxy-job > .row {
+  flex-wrap: wrap;
+  max-width: 300px;
+}
+.proxy-job > .row label {
+  display: grid;
+  gap: 5px;
+  font-size: 11px;
+}
+.proxy-job > .row select { max-width: 150px; }
+.proxy-job > input[type="checkbox"] { flex: 0 0 auto; }
 .proxy-job:last-child {
   border: 0;
 }
@@ -6520,6 +6532,7 @@ small {
 }
 .proxy-scope-toolbar {
   display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr));
   gap: 10px;
   padding: 22px;
   border-bottom: 1px solid var(--border);
@@ -6542,8 +6555,10 @@ small {
   padding: 8px 12px;
 }
 .proxy-scope-toolbar p {
+  grid-column: 1 / -1;
   line-height: 1.7;
 }
+.proxy-queue-panel .section-title > label { width: min(100%, 360px); }
 .proxy-queue-panel .section-title {
   border-bottom: 0;
   padding-bottom: 12px;

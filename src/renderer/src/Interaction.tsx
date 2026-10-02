@@ -64,6 +64,7 @@ export function useModalStack() {
     };
     const closeAllowed = (dialog: HTMLElement) =>
       dialog.getAttribute("role") === "alertdialog" ||
+      dialog.dataset.submitted === "true" ||
       !dirty.has(dialog) ||
       dialog.getAttribute("aria-busy") === "true" ||
       window.confirm(

@@ -64,6 +64,9 @@ export interface SavedProxyPreset {
   updatedAt: number;
 }
 export interface ProxyJob {
+  priority?: 0 | 1 | 2;
+  queueOrder?: number;
+  preflight?: import("./proxy-preflight").ProxyPreflight;
   batchId?: string;
   concurrency?: ProxyConcurrency;
   resourceReason?: string;

@@ -100,6 +100,10 @@ it("blocks abnormal media even when persisted validation claims ready", async ()
     job.parameterSnapshot!.purpose = "editorial";
     job.outputEvidence!.timecode = undefined;
     expect(checkProxyDelivery(job).blockers).toContain("剪辑代理时间码丢失或变化");
+    const invalid = await jobFor(source, output);
+    invalid.sourceEvidence!.checksum = "";
+    invalid.parameterSnapshot!.container = "invalid" as any;
+    expect(checkProxyDelivery(invalid).blockers).toEqual(expect.arrayContaining(["源路径或哈希证据无效，请重新生成", "参数快照无效，请重新生成"]));
   } finally { await fs.rm(root, { recursive: true, force: true }); }
 });
 

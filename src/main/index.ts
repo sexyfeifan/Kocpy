@@ -42,6 +42,9 @@ import { listVolumes, driveInfo, ejectVolume, volumeIdentity } from "./system";
 import { makeProxy } from "./proxy";
 import { ProxyRunRegistry, validateProxyConcurrency } from "./proxy-scheduler";
 import { assessProxyResources } from "./proxy-resources";
+import { preflightProxyGeneration, estimateProxyBytes } from "./proxy-preflight";
+import { existingProxyOutputAncestor } from "./proxy-resources";
+import { orderedPendingProxies, mutateProxyQueue, reprioritizeProxy } from "./proxy-queue";
 import { mainWindowLayout } from "./window-layout";
 import { installMainWindowConstraints } from "./window-constraints";
 import { withTemporaryReportHtml } from "./report-html";
@@ -1518,7 +1521,7 @@ async function processProxyQueue() {
       dependencyChanged = true;
     }
   }
-  const candidates = proxyJobs.filter(
+  const candidates = orderedPendingProxies(proxyJobs).filter(
     (j) =>
       j.status === "pending" &&
       (j.dependsOn || []).every(
@@ -1572,6 +1575,10 @@ async function runProxyJob(job: ProxyJob, proxyController: AbortController) {
       throw new Error("旧代理任务缺少参数快照，请从素材库重新加入队列");
     validateProxyParameters(parameters);
     await verifyProxySource(job, proxyController.signal);
+    job.preflight = await preflightProxyGeneration(job.outputDir,
+      [{ media: job.sourceEvidence?.media || {}, parameters }],
+      engine.getAllTasks().flatMap((task) => [task.sourcePath, ...task.destinations.map((destination) => destination.resolvedPath || destination.path)]),
+      0, job.preflight?.destinationDevice);
     job.stage = "transcoding";
     emitProxyJobs();
     await persistProxyJobs();
@@ -6993,9 +7000,7 @@ app.whenReady().then(async () => {
     await store.write("proxy-presets.json", savedProxyPresets);
     return savedProxyPresets;
   });
-  handle(
-    "proxy:enqueue",
-    async (
+  const prepareProxyBatch = async (
       inputs: string[],
       out: string,
       format: "h264" | "prores",
@@ -7010,7 +7015,8 @@ app.whenReady().then(async () => {
         concurrency?: import("./types").ProxyConcurrency;
       } = {},
     ) => {
-      if (!inputs.length) throw new Error("请选择至少一个视频");
+      if (!Array.isArray(inputs) || !inputs.length || inputs.length > 1000 || new Set(inputs).size !== inputs.length) throw new Error("请选择 1–1000 个不同的视频");
+      if (options.dependsOn && (!Array.isArray(options.dependsOn) || options.dependsOn.some((id) => !proxyJobs.some((job) => job.id === id)))) throw new Error("依赖任务不存在");
       const concurrency = validateProxyConcurrency(options.concurrency ?? (await readSettings()).proxyConcurrency);
       const batchId = randomUUID();
       const parameters = validateProxyParameters({
@@ -7023,9 +7029,6 @@ app.whenReady().then(async () => {
         namingTemplate: options.namingTemplate || "{name}_proxy_{resolution}",
       });
       const canonicalOut = await canonical(out);
-      for (const task of engine.getAllTasks())
-        if (inside(canonicalOut, await canonical(task.sourcePath)))
-          throw new Error("代理不能写入素材源目录");
       const tracked = new Map(
         engine
           .getAllTasks()
@@ -7084,7 +7087,8 @@ app.whenReady().then(async () => {
           id: randomUUID(),
           input,
           name: path.basename(input),
-          outputDir: out,
+          outputDir: canonicalOut,
+          queueOrder: proxyJobs.reduce((maximum, job) => Math.max(maximum, job.queueOrder ?? job.createdAt), -1) + 1 + jobs.length,
           format: parameters.format,
           resolution: parameters.resolution,
           bitrateMbps: parameters.bitrateMbps,
@@ -7110,13 +7114,42 @@ app.whenReady().then(async () => {
               : options.dependsOn,
         });
       }
+      const ancestor = await existingProxyOutputAncestor(canonicalOut);
+      const device = (await fs.stat(ancestor)).dev;
+      let reservedBytes = 0;
+      for (const queued of proxyJobs.filter((job) => ["pending", "running", "paused"].includes(job.status))) {
+        try {
+          if ((await fs.stat(await existingProxyOutputAncestor(queued.outputDir))).dev === device)
+            reservedBytes += queued.preflight?.estimatedBytes || estimateProxyBytes(queued.sourceEvidence?.media || {}, queued.parameterSnapshot!);
+        } catch { throw new Error("已有队列缺少可用容量或媒体证据，请处理后重新预检"); }
+      }
+      const preflight = await preflightProxyGeneration(canonicalOut,
+        jobs.map((job) => ({ media: job.sourceEvidence!.media, parameters: job.parameterSnapshot! })),
+        engine.getAllTasks().flatMap((task) => [task.sourcePath, ...task.destinations.map((destination) => destination.resolvedPath || destination.path)]), reservedBytes);
+      for (const job of jobs) job.preflight = { ...preflight, estimatedBytes: estimateProxyBytes(job.sourceEvidence!.media, job.parameterSnapshot!) };
+      return { jobs, preflight };
+    };
+  handle("proxy:preflight", async (...args: Parameters<typeof prepareProxyBatch>) => (await prepareProxyBatch(...args)).preflight);
+  handle("proxy:enqueue", async (...args: Parameters<typeof prepareProxyBatch>) => {
+      const { jobs } = await prepareProxyBatch(...args);
       proxyJobs.push(...jobs);
       await persistProxyJobs();
       emitProxyJobs();
       void processProxyQueue();
       return jobs;
-    },
-  );
+    });
+  handle("proxy:batch", async (ids: string[], action: "pause" | "resume" | "cancel" | "retry") => {
+    const affected = mutateProxyQueue(proxyJobs, ids, action, {
+      pause: (job) => { proxyRuns.pause(job, "user"); },
+      cancel: (job) => { proxyRuns.cancel(job.id); },
+    });
+    await persistProxyJobs(); emitProxyJobs(); void processProxyQueue();
+    return affected;
+  });
+  handle("proxy:priority", async (id: string, priority: number, beforeId?: string) => {
+    reprioritizeProxy(proxyJobs, id, priority, beforeId);
+    await persistProxyJobs(); emitProxyJobs(); void processProxyQueue();
+  });
   handle("proxy:cancel", async (id?: string) => {
     const job = id
       ? proxyJobs.find((j) => j.id === id)

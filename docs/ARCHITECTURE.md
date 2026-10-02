@@ -1,4 +1,10 @@
-# Kocpy 0.1.41 architecture
+# Kocpy 0.1.42 architecture
+
+## Proxy generation preflight and queue scope
+
+Preview and enqueue share one main-process frozen batch preparation. Input identity must refer to verified backup records, valid media dimensions/timing and validated parameters. Canonical output paths cannot be inside source or backup roots. Existing output ancestors must be writable directories; statfs capacity is checked against a conservative encode estimate, queued reservations on the same filesystem and exclusive-copy staging overhead. Estimates are advisory, not a capacity guarantee. Execution repeats the destination filesystem and space checks after full source hashing.
+
+Queue actions use exact unique job ids and validate scope before mutation. Completed outputs cannot be cancelled/retried as active work. Pending jobs sort by priority and stable queue order, but dependencies remain mandatory. Retrying clears stale output and delivery-approval evidence. GUI preview is bound to current parameters, and submitted forms are locked before suppressing discard warnings.
 
 ## Bounded concurrent proxy scheduler
 
