@@ -1,6 +1,6 @@
 # Kocpy 文档导航
 
-当前正式版：**0.1.40**。本目录说明已经实现的功能、操作方法和验证边界。[返回项目首页](../README.md) · [下载正式版](https://github.com/sexyfeifan/Kocpy/releases/latest)
+当前正式版：**0.1.41**。本目录说明已经实现的功能、操作方法和验证边界。[返回项目首页](../README.md) · [下载正式版](https://github.com/sexyfeifan/Kocpy/releases/latest)
 
 ## 使用 Kocpy
 
@@ -27,7 +27,8 @@
 ## 版本与验证
 
 - [0.1.40 候选说明](RELEASE_NOTES_0.1.40.md)：严格代理交付与例外审计；正式附件以 Release 为准。
-- [0.1.41 候选更新说明](RELEASE_NOTES_0.1.41.md)：可配置并行代理队列。
+- [0.1.42 候选更新说明](RELEASE_NOTES_0.1.42.md)：代理预检与批量队列操作。
+- [0.1.41 更新说明](RELEASE_NOTES_0.1.41.md)：可配置并行代理队列。
 - [0.1.40 更新说明](RELEASE_NOTES_0.1.40.md)：严格代理交付与例外审计。
 - [0.1.39 更新说明](RELEASE_NOTES_0.1.39.md)：界面边界与按版本折叠更新记录。
 
