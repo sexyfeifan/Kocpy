@@ -1,4 +1,5 @@
 import { promises as fs } from "node:fs";
+import { createHash } from "node:crypto";
 import { hashFile } from "./backup/BackupEngine";
 import type {
   ProxyJob,
@@ -18,11 +19,76 @@ function durationSeconds(value?: string) {
 }
 
 function sameNumber(a?: number, b?: number, tolerance = 0.01) {
-  return a === undefined || b === undefined
+  return a === undefined || b === undefined || !Number.isFinite(a) || !Number.isFinite(b)
     ? "unknown"
     : Math.abs(a - b) <= tolerance
       ? "match"
       : "changed";
+}
+
+/** Recomputed from evidence, never trust a persisted UI readiness flag. */
+export function proxyDeliveryFingerprint(job: ProxyJob) {
+  return createHash("sha256").update(JSON.stringify([
+    1, job.id, job.input, job.outputPath, job.sourceEvidence,
+    job.parameterSnapshot, job.outputEvidence,
+  ])).digest("hex");
+}
+
+export function checkProxyDelivery(job: ProxyJob): NonNullable<ProxyJob["deliveryCheck"]> {
+  const blockers: string[] = [], warnings: string[] = [];
+  if (job.status !== "completed" || !job.outputPath) blockers.push("代理尚未完成");
+  const source = job.sourceEvidence?.media, output = job.outputEvidence;
+  if (!source || !job.parameterSnapshot) blockers.push("缺少源证据或参数快照，请重新生成");
+  if (!output || !/^[a-f0-9]{64}$/.test(output.sha256) || !Number.isFinite(output.bytes) || output.bytes <= 0)
+    blockers.push("缺少有效输出哈希证据，请重新生成");
+  if (output) {
+    if (!(Number(output.frameRate) > 0) || !Number.isFinite(Number(output.frameRate)))
+      blockers.push("缺少有效输出帧率");
+    if (!(durationSeconds(output.duration)! > 0)) blockers.push("缺少有效输出时长");
+    if (!/^[1-9]\d*x[1-9]\d*$/i.test(output.resolution || "")) blockers.push("缺少有效输出分辨率");
+  }
+  if (source && output) {
+    const validation = compareProxyMedia(source, output);
+    if (validation.audio === "missing") blockers.push("源音轨在代理中缺失");
+    if (validation.duration === "changed") blockers.push("代理时长与源素材不符");
+    if (validation.frameRate === "changed") blockers.push("代理帧率与源素材不符");
+    const editorial = job.parameterSnapshot?.purpose === "editorial";
+    if (editorial && source.timecode && source.timecode !== output.timecode)
+      blockers.push("剪辑代理时间码丢失或变化");
+    if (editorial && validation.audioTracks === "changed") blockers.push("剪辑代理音轨数量变化");
+    warnings.push(...validation.notes);
+  }
+  const approval = job.deliveryApproval;
+  const approved = blockers.length === 0 && warnings.length > 0 &&
+    approval?.policyVersion === 1 && approval.fingerprint === proxyDeliveryFingerprint(job) &&
+    typeof approval.reason === "string" && Boolean(approval.reason.trim()) &&
+    typeof approval.operator === "string" && Boolean(approval.operator.trim()) &&
+    Number.isFinite(approval.approvedAt) && approval.approvedAt > 0 &&
+    JSON.stringify(approval.warnings) === JSON.stringify(warnings);
+  return { state: blockers.length ? "blocked" : warnings.length ? "warning" : "ready", blockers, warnings, approved: Boolean(approved) };
+}
+
+export function approveProxyDelivery(job: ProxyJob, reason: string, operator: string) {
+  if (typeof reason !== "string" || !reason.trim() || reason.length > 2000)
+    throw new Error("请填写例外交付原因（最多 2000 字）");
+  if (typeof operator !== "string" || !operator.trim() || operator.length > 200)
+    throw new Error("请填写有效操作人");
+  const check = checkProxyDelivery(job);
+  if (check.state === "blocked") throw new Error(`代理禁止交付：${check.blockers.join("；")}`);
+  if (check.state !== "warning") throw new Error("该代理无需例外确认");
+  job.deliveryApproval = { policyVersion: 1, fingerprint: proxyDeliveryFingerprint(job),
+    operator: operator.trim(), reason: reason.trim(), approvedAt: Date.now(), warnings: check.warnings };
+  job.deliveryCheck = checkProxyDelivery(job);
+  return job.deliveryApproval;
+}
+
+export function requireProxyDelivery(job: ProxyJob) {
+  const check = checkProxyDelivery(job);
+  job.deliveryCheck = check;
+  if (check.state === "blocked") throw new Error(`${job.name} 禁止交付：${check.blockers.join("；")}`);
+  if (check.state === "warning" && !check.approved)
+    throw new Error(`${job.name} 需要例外确认：${check.warnings.join("；")}`);
+  return check;
 }
 
 export function validateProxyParameters(value: ProxyParameterSnapshot) {
@@ -154,6 +220,7 @@ export function compareProxyMedia(
 }
 
 export async function verifyProxyOutput(job: ProxyJob) {
+  const fingerprint = proxyDeliveryFingerprint(job);
   if (job.status !== "completed" || !job.outputPath)
     throw new Error(`代理任务 ${job.name} 尚未完成`);
   const evidence = job.outputEvidence;
@@ -168,5 +235,7 @@ export async function verifyProxyOutput(job: ProxyJob) {
   const checksum = await hashFile(job.outputPath, "sha256");
   if (checksum !== evidence.sha256)
     throw new Error(`代理输出内容已变化：${job.name}`);
+  if (job.status !== "completed" || fingerprint !== proxyDeliveryFingerprint(job))
+    throw new Error(`代理任务或证据在校验期间变化：${job.name}`);
   return evidence;
 }

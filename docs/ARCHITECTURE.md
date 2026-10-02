@@ -1,4 +1,8 @@
-# Kocpy 0.1.39 architecture
+# Kocpy 0.1.40 architecture
+
+## Strict proxy delivery
+
+Delivery eligibility is recomputed from frozen source, parameter and output evidence in the main process, independently of the persisted validation label. Missing core output evidence, missing source audio, duration/frame-rate changes and editorial timecode/audio-track changes block export. Metadata warnings require an explicit reason, operator and timestamp bound to a SHA-256 fingerprint of the evidence and parameters. Changes invalidate approval; content hashing remains mandatory and cannot be waived. CSV, JSON, FCPXML audit comments and delivery-package checks retain this audit.
 
 ## Frozen complete inventory and compatibility boundary
 

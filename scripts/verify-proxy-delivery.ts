@@ -12,6 +12,8 @@ import {
   compareProxyMedia,
   verifyProxyOutput,
   verifyProxySource,
+  checkProxyDelivery,
+  approveProxyDelivery,
 } from "../src/main/proxy-evidence";
 import { publishProxyDeliveryPackage } from "../src/main/delivery";
 import type {
@@ -145,6 +147,11 @@ async function main() {
       },
     ] as ProxyParameterSnapshot[])
       jobs.push(await createJob(source, outputs, sourceMedia, parameters));
+    for (const job of jobs) {
+      const check = checkProxyDelivery(job);
+      if (check.state === "blocked") throw new Error(`Generated proxy blocked: ${check.blockers.join("; ")}`);
+      if (check.state === "warning") approveProxyDelivery(job, "合成样本运行时检查：保留未知元数据边界", "隔离运行时验收");
+    }
     const delivery = await publishProxyDeliveryPackage(jobs, deliveries, "runtime-check");
     const check = JSON.parse(
       await fs.readFile(path.join(delivery, "Delivery_Check.json"), "utf8"),

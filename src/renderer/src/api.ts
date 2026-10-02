@@ -548,6 +548,7 @@ export interface API {
     waveformPath?: string;
   }>;
   getProxyJobs(): Promise<ProxyJob[]>;
+  approveProxyDelivery(id: string, reason: string): Promise<NonNullable<ProxyJob["deliveryApproval"]>>;
   getProxyPresets(): Promise<SavedProxyPreset[]>;
   saveProxyPreset(
     value: Partial<SavedProxyPreset> & { name: string },

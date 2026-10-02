@@ -3,7 +3,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { randomUUID } from "node:crypto";
 import { hashFile } from "./backup/BackupEngine";
-import { verifyProxyOutput } from "./proxy-evidence";
+import { verifyProxyOutput, requireProxyDelivery } from "./proxy-evidence";
 import type { ProxyJob } from "./types";
 
 const csv = (value: unknown) =>
@@ -85,19 +85,20 @@ export function generateDeliveryManifest(
     return (
       "\ufeff" +
       [
-        "Media Path,Clip Name,Reel,Timecode,Frame Rate,Source Path,Source Checksum,Output SHA-256,Delivery State,Validation",
+        "Media Path,Clip Name,Reel,Timecode,Frame Rate,Source Path,Source Checksum,Output SHA-256,Delivery State,Validation,Delivery Approval",
         ...rows.map((job) =>
           [
             job.outputPath,
             path.basename(job.outputPath!),
             path.basename(job.input, path.extname(job.input)),
-            job.outputEvidence?.timecode || job.timecode,
+            job.outputEvidence?.timecode,
             job.outputEvidence?.frameRate,
             job.input,
             job.sourceEvidence?.checksum,
             job.outputEvidence?.sha256,
-            job.validation?.readiness || "unknown",
+            job.deliveryCheck?.state || job.validation?.readiness || "unknown",
             job.validation?.notes.join("; ") || "OK",
+            JSON.stringify({ check: job.deliveryCheck, approval: job.deliveryApproval }),
           ]
             .map(csv)
             .join(","),
@@ -108,7 +109,7 @@ export function generateDeliveryManifest(
     return (
       "\ufeff" +
       [
-        "File Path,Name,Media Type,Video Info,Audio Info,Start Timecode,Source,Output SHA-256,Delivery State",
+        "File Path,Name,Media Type,Video Info,Audio Info,Start Timecode,Source,Output SHA-256,Delivery State,Validation,Delivery Approval",
         ...rows.map((job) =>
           [
             job.outputPath,
@@ -116,10 +117,12 @@ export function generateDeliveryManifest(
             "Video",
             `${job.outputEvidence?.resolution || "未知分辨率"} ${job.format.toUpperCase()}`,
             job.outputEvidence?.audio,
-            job.outputEvidence?.timecode || job.timecode,
+            job.outputEvidence?.timecode,
             job.input,
             job.outputEvidence?.sha256,
-            job.validation?.readiness || "unknown",
+            job.deliveryCheck?.state || job.validation?.readiness || "unknown",
+            job.validation?.notes.join("; ") || "OK",
+            JSON.stringify({ check: job.deliveryCheck, approval: job.deliveryApproval }),
           ]
             .map(csv)
             .join(","),
@@ -141,7 +144,8 @@ export function generateDeliveryManifest(
       return clip;
     })
     .join("");
-  return `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE fcpxml>\n<fcpxml version="1.10"><resources>${formats}${rows
+  const audit = xml(JSON.stringify(rows.map((job) => ({ jobId: job.id, check: job.deliveryCheck, approval: job.deliveryApproval })))).replaceAll("--", "&#45;&#45;");
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE fcpxml>\n<fcpxml version="1.10"><!-- Kocpy Delivery Audit: ${audit} --><resources>${formats}${rows
     .map(
       (job, index) =>
         `<asset id="r${index + 1}" name="${xml(path.basename(job.outputPath!))}" src="${xml(pathToFileURL(job.outputPath!).href)}" start="0s" duration="${mediaDuration(job.outputEvidence?.duration)}/1000s" hasVideo="1" hasAudio="${(job.outputEvidence?.audioTracks || 0) > 0 ? "1" : "0"}" format="f${index + 1}"/>`,
@@ -185,7 +189,10 @@ export async function preflightProxyDelivery(jobs: ProxyJob[]) {
   const rows = completed(jobs);
   if (!rows.length) throw new Error("没有可交付的已完成代理文件");
   safeOutputNames(rows);
-  for (const job of rows) await verifyProxyOutput(job);
+  for (const job of rows) {
+    await verifyProxyOutput(job);
+    requireProxyDelivery(job);
+  }
   return rows;
 }
 
@@ -223,6 +230,8 @@ export async function publishProxyDeliveryPackage(
         file: path.relative(staging, output),
         copiedSha256,
         validation: job.validation,
+        deliveryCheck: job.deliveryCheck,
+        deliveryApproval: job.deliveryApproval,
       });
     }
     const files = new Map<string, string>([

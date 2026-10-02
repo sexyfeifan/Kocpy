@@ -9,10 +9,14 @@ import {
   validateProxyParameters,
   verifyProxyOutput,
   verifyProxySource,
+  checkProxyDelivery,
+  approveProxyDelivery,
 } from "../src/main/proxy-evidence";
 import {
   publishProxyDeliveryPackage,
   proxyDeliveryCompatibility,
+  preflightProxyDelivery,
+  generateDeliveryManifest,
 } from "../src/main/delivery";
 import type { ProxyJob } from "../src/main/types";
 
@@ -77,6 +81,52 @@ it("rejects incompatible proxy presets before they enter the queue", () => {
       namingTemplate: "{name}_proxy",
     }),
   ).toThrow("ProRes Proxy 仅允许 MOV 封装");
+});
+
+it("blocks abnormal media even when persisted validation claims ready", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "kocpy-strict-delivery-"));
+  try {
+    const source = path.join(root, "source.mov"), output = path.join(root, "proxy.mp4");
+    await fs.writeFile(source, "source");
+    await fs.writeFile(output, "output");
+    for (const change of [{ audioTracks: 0 }, { frameRate: "30" }, { duration: "00:00:05.000" }, { frameRate: "NaN" }, { resolution: undefined }]) {
+      const job = await jobFor(source, output);
+      Object.assign(job.outputEvidence!, change);
+      expect(checkProxyDelivery(job).state).toBe("blocked");
+      expect(() => approveProxyDelivery(job, "ignore", "operator")).toThrow("禁止交付");
+      await expect(preflightProxyDelivery([job])).rejects.toThrow("禁止交付");
+    }
+    const job = await jobFor(source, output);
+    job.parameterSnapshot!.purpose = "editorial";
+    job.outputEvidence!.timecode = undefined;
+    expect(checkProxyDelivery(job).blockers).toContain("剪辑代理时间码丢失或变化");
+  } finally { await fs.rm(root, { recursive: true, force: true }); }
+});
+
+it("requires audited exceptions and invalidates them when evidence or parameters change", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "kocpy-delivery-exception-"));
+  try {
+    const source = path.join(root, "source.mov"), output = path.join(root, "proxy.mp4");
+    await fs.writeFile(source, "source");
+    await fs.writeFile(output, "output");
+    const job = await jobFor(source, output);
+    job.outputEvidence!.rotation = undefined;
+    await expect(preflightProxyDelivery([job])).rejects.toThrow("需要例外确认");
+    expect(() => approveProxyDelivery(job, " ", "operator")).toThrow("原因");
+    approveProxyDelivery(job, "已人工核对画面方向", "测试操作人");
+    await expect(preflightProxyDelivery([job])).resolves.toHaveLength(1);
+    for (const format of ["resolve", "premiere", "json", "fcpxml"] as const)
+      expect(generateDeliveryManifest([job], format)).toContain("测试操作人");
+    const reloaded = JSON.parse(JSON.stringify(job));
+    expect(checkProxyDelivery(reloaded).approved).toBe(true);
+    reloaded.parameterSnapshot.resolution = "720p";
+    expect(checkProxyDelivery(reloaded).approved).toBe(false);
+    const changed = JSON.parse(JSON.stringify(job));
+    changed.outputEvidence.checkedAt++;
+    expect(checkProxyDelivery(changed).approved).toBe(false);
+    await fs.writeFile(output, "alter!");
+    await expect(preflightProxyDelivery([job])).rejects.toThrow("内容已变化");
+  } finally { await fs.rm(root, { recursive: true, force: true }); }
 });
 
 it("detects a same-size replacement of an already verified proxy source", async () => {

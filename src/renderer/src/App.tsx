@@ -6175,6 +6175,14 @@ function HelpPage({
   ];
   const releaseNotes = [
     {
+      version: "0.1.40",
+      title: "严格代理交付与例外审计",
+      paragraphs: [
+        "代理导出会重新检查源证据、参数快照和输出媒体信息；音轨缺失、时长或帧率变化，以及剪辑代理的时间码或音轨异常会阻止交付。",
+        "可豁免的元数据警告需要填写例外交付原因；操作人、时间和原因写入清单与交付检查报告，重新生成或参数变化后原确认失效。",
+      ],
+    },
+    {
       version: "0.1.39",
       title: "界面边界与折叠更新记录",
       paragraphs: [
@@ -7569,6 +7577,7 @@ export function ProxyQueue({
 }) {
   const [sourceTask, setSourceTask] = useState("");
   const [queueLimit, setQueueLimit] = useState(100);
+  const [approvalReasons, setApprovalReasons] = useState<Record<string, string>>({});
   const rows = [...jobs]
     .filter((job) => !sourceTask || job.sourceTaskId === sourceTask)
     .reverse();
@@ -7780,6 +7789,26 @@ export function ProxyQueue({
                   </small>
                 )}
                 {job.error && <small className="red-text">{job.error}</small>}
+                {job.deliveryCheck && (
+                  <div className="notice">
+                    <ShieldCheck size={16} />
+                    <div>
+                      <strong>{job.deliveryCheck.state === "blocked" ? "禁止交付" : job.deliveryCheck.state === "warning" ? job.deliveryCheck.approved ? "例外交付已确认" : "交付前需要确认" : "严格交付检查通过"}</strong>
+                      <p className="small">{[...job.deliveryCheck.blockers, ...job.deliveryCheck.warnings].join(" · ")}</p>
+                      {job.deliveryCheck.approved && job.deliveryApproval && <p className="small">{job.deliveryApproval.operator} · {new Date(job.deliveryApproval.approvedAt).toLocaleString()} · {job.deliveryApproval.reason}</p>}
+                      {job.deliveryCheck.state === "warning" && !job.deliveryCheck.approved && (
+                        <label>
+                          例外交付原因
+                          <textarea maxLength={2000} value={approvalReasons[job.id] || ""} onChange={(event) => setApprovalReasons((values) => ({ ...values, [job.id]: event.target.value }))} />
+                          <Button disabled={!approvalReasons[job.id]?.trim()} onClick={() => void act(async () => {
+                            await api.approveProxyDelivery(job.id, approvalReasons[job.id]);
+                            await refresh();
+                          }, "例外交付原因已记录")}>确认上述警告并允许交付</Button>
+                        </label>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
               <div className="row">
                 {job.status === "running" && (

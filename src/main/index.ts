@@ -176,6 +176,9 @@ import {
   publishProxyDeliveryPackage,
 } from "./delivery";
 import {
+  approveProxyDelivery,
+  checkProxyDelivery,
+  verifyProxyOutput,
   captureProxyOutput,
   compareProxyMedia,
   validateProxyParameters,
@@ -972,7 +975,7 @@ const syncFileAndParent = async (file: string) => {
 };
 const emitProxyJobs = () => {
   if (main && !main.isDestroyed()) {
-    main.webContents.send("proxy:jobs", proxyJobs);
+    main.webContents.send("proxy:jobs", proxyJobs.map((job) => ({ ...job, deliveryCheck: job.status === "completed" ? checkProxyDelivery(job) : undefined })));
     main.webContents.send("background:changed");
   }
 };
@@ -6882,7 +6885,17 @@ app.whenReady().then(async () => {
       path.join(app.getPath("userData"), "thumbnails"),
     );
   });
-  handle("proxy:list", () => proxyJobs);
+  handle("proxy:list", () => proxyJobs.map((job) => ({ ...job, deliveryCheck: job.status === "completed" ? checkProxyDelivery(job) : undefined })));
+  handle("proxy:approve-delivery", async (id: string, reason: string) => {
+    const job = proxyJobs.find((item) => item.id === id);
+    if (!job) throw new Error("代理任务不存在");
+    const operator = await existingOperator();
+    await verifyProxyOutput(job);
+    const approval = approveProxyDelivery(job, reason, operator);
+    await persistProxyJobs();
+    emitProxyJobs();
+    return approval;
+  });
   handle("proxy:presets", () => savedProxyPresets);
   handle(
     "proxy:save-preset",
@@ -7097,6 +7110,8 @@ app.whenReady().then(async () => {
       error: undefined,
       pauseReason: undefined,
       completedAt: undefined,
+      deliveryApproval: undefined,
+      deliveryCheck: undefined,
     });
     await persistProxyJobs();
     emitProxyJobs();

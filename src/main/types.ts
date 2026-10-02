@@ -100,6 +100,20 @@ export interface ProxyJob {
   sourceEvidence?: ProxySourceEvidence;
   parameterSnapshot?: ProxyParameterSnapshot;
   outputEvidence?: ProxyOutputEvidence;
+  deliveryApproval?: {
+    policyVersion: 1;
+    fingerprint: string;
+    operator: string;
+    reason: string;
+    approvedAt: number;
+    warnings: string[];
+  };
+  deliveryCheck?: {
+    state: "ready" | "warning" | "blocked";
+    blockers: string[];
+    warnings: string[];
+    approved: boolean;
+  };
   validation?: {
     frameRate: "match" | "changed" | "unknown";
     timecode: "match" | "changed" | "unknown";

@@ -140,6 +140,7 @@ contextBridge.exposeInMainWorld("api", {
   exportResolveCsv: call("report:resolve-csv"),
   inspectMedia: call("media:inspect"),
   getProxyJobs: call("proxy:list"),
+  approveProxyDelivery: call("proxy:approve-delivery"),
   getProxyPresets: call("proxy:presets"),
   saveProxyPreset: call("proxy:save-preset"),
   deleteProxyPreset: call("proxy:delete-preset"),
