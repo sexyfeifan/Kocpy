@@ -6177,13 +6177,18 @@ function HelpPage({
   ];
   const releaseNotes = [
     {
+      version: "0.1.45",
+      title: "Electron 维护与签名发布门禁",
+      paragraphs: ["Electron 锁定到同主版本稳定版 44.5.1，保留其余主版本，不改变素材证据与交付策略。", "签名配置不完整会阻断发布；未来身份签名须核验实际 Developer ID、团队、公证票据与 Gatekeeper。当前无凭据，仍为 ad-hoc，不宣称完成身份签名或 Apple 公证。"],
+    },
+    {
       version: "0.1.44",
       title: "代理专项验证与故障覆盖",
       paragraphs: ["新增准确安装包专项命令与双音轨合成样本，可保留样本供 NLE 手动导入；结果不覆盖已有文件。", "补充编码器回退及空间／权限／I/O／损坏输入故障注入，既有输出保持不变。工具与格式检查不代表实际 NAS、拔盘或新增 NLE 高级组合认证。"],
     },
     {
       version: "0.1.43",
-      title: "折叠高级代理设置与实际编码证据",
+      title: "高级代理候选（随 0.1.44 修复发布）",
       paragraphs: [
         "H.264 软件／自动／仅硬件模式通过实际 VideoToolbox 探测，自动仅对编码器兼容性失败回退；显示实际编码器。ProRes 支持软件 Proxy、LT、422、HQ。",
         "默认折叠高级设置：帧率、音轨、音频、时间码、旋转、尺寸比例与 H.264 质量／速度／GOP／Profile；BT.709 需已知源色彩，不是 HDR 色调映射。",

@@ -1,4 +1,8 @@
-# Kocpy 0.1.43 architecture
+# Kocpy 0.1.45 architecture
+
+## Release maintenance gates
+
+Electron is pinned to 44.5.1. The single release workflow rejects partial signing credentials without disclosing values; absent credentials deliberately produce ad-hoc packages. A configured identity branch must prove Developer ID Application authority, matching team, stapled notarization ticket and Gatekeeper assessment. Source/CI readiness is not evidence that this branch has executed. Current releases remain ad-hoc.
 
 ## Frozen advanced proxy transforms
 

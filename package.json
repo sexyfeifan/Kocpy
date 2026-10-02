@@ -1,6 +1,6 @@
 {
   "name": "kocpy",
-  "version": "0.1.44",
+  "version": "0.1.45",
   "description": "Kocpy 专业素材工作台 · 多目的地备份、独立校验与项目归档",
   "main": "out/main/index.js",
   "productName": "Kocpy",
@@ -48,7 +48,7 @@
     "@types/react-dom": "^19.2.5",
     "@types/sql.js": "^1.4.11",
     "@vitejs/plugin-react": "^5.1.4",
-    "electron": "^44.0.0",
+    "electron": "44.5.1",
     "electron-builder": "^26.15.3",
     "electron-vite": "^5.0.0",
     "esbuild": "^0.28.2",

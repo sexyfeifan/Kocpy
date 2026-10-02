@@ -30,6 +30,14 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      - name: Validate complete signing configuration without printing secret values
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: node scripts/release-signing.cjs
       - run: npm ci
       - name: Verify source provenance, type safety and regressions
         run: npm run verify:release && npm run typecheck && npm test
@@ -58,6 +66,16 @@ jobs:
           codesign --verify --deep --strict --verbose=2 "release/${{ matrix.appdir }}/Kocpy.app"
           codesign -d --entitlements - "release/${{ matrix.appdir }}/Kocpy.app" | grep -q "com.apple.security.cs.allow-jit"
           codesign -d --entitlements - "release/${{ matrix.appdir }}/Kocpy.app" | grep -q "com.apple.security.cs.disable-library-validation"
+      - name: Verify actual Developer ID team and notarization ticket
+        if: env.HAS_APPLE_SIGNING == 'true'
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          app="release/${{ matrix.appdir }}/Kocpy.app"
+          codesign -dv --verbose=4 "$app" 2>&1 | grep -q 'Authority=Developer ID Application:'
+          codesign -dv --verbose=4 "$app" 2>&1 | grep -Fx "TeamIdentifier=${APPLE_TEAM_ID}"
+          xcrun stapler validate "$app"
+          spctl --assess --type execute --verbose=2 "$app"
       - name: Verify packaged native runtime with isolated synthetic media
         env:
           ELECTRON_RUN_AS_NODE: "1"

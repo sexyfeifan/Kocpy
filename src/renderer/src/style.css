@@ -6939,3 +6939,4 @@ small {
  .proxy-advanced summary { cursor: pointer; }
  .proxy-advanced .form-grid { margin: 12px 0; }
  .proxy-form-scroll { min-height: 0; flex: 1 1 auto; overflow: auto; }
+ .proxy-advanced > .inline-actions { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0; }

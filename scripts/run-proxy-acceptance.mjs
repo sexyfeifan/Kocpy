@@ -24,6 +24,11 @@ try {
   if (existsSync(result)) throw Error("Result already exists; never overwritten");
   if (path.relative(app, result) === "" || !path.relative(app, result).startsWith("..") && !path.isAbsolute(path.relative(app, result))) throw Error("Result cannot be inside tested application");
   if (plan) { console.log(JSON.stringify({ generatedFixturesOnly: true, applicationReadOnly: true, resultOverwrite: false, keepsFixtures: keep, nleImportExecuted: false, physicalStorageExecuted: false })); process.exit(0); }
+  const architecture = spawnSync("lipo", ["-archs", binary], { encoding: "utf8" });
+  const packagedArch = architecture.stdout.trim() === "arm64" ? "arm64" : architecture.stdout.trim() === "x86_64" ? "x64" : undefined;
+  if (architecture.status !== 0 || !packagedArch) throw Error("Single supported packaged architecture required");
+  const mediaRuntime = path.join(resources, "ffmpeg", `ffmpeg-darwin-${packagedArch}`);
+  if (!existsSync(mediaRuntime)) throw Error("Packaged FFmpeg missing; development fallback forbidden");
   if (spawnSync("codesign", ["--verify", "--deep", "--strict", app], { encoding: "utf8" }).status !== 0) throw Error("Application signature structure check failed");
   const version = spawnSync("/usr/libexec/PlistBuddy", ["-c", "Print :CFBundleShortVersionString", path.join(app, "Contents/Info.plist")], { encoding: "utf8" });
   if (version.status !== 0) throw Error("Application version could not be read");
@@ -36,7 +41,9 @@ try {
     const run = spawnSync(binary, [script], { cwd: repo, encoding: "utf8", timeout: 180000, maxBuffer: 8 * 1024 ** 2, env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", KOCPY_KEEP_PROXY_DELIVERY: keep ? "1" : "0" } });
     if (run.status !== 0) throw Error(`Proxy acceptance failed: ${String(run.stderr).slice(-3000)}`);
     const evidence = JSON.parse(run.stdout.trim().split("\n").at(-1));
-    await fs.writeFile(result, JSON.stringify({ checkedAt: new Date().toISOString(), applicationVersion: version.stdout.trim(), payloadSha256, verifierScope: "current-source-against-packaged-media-runtime", ...evidence, fixtureScope: "generated-only", fixturesRetained: keep, nleImportExecuted: false, physicalStorageExecuted: false }, null, 2), { flag: "wx", mode: 0o600 });
+    if (evidence.arch !== packagedArch) throw Error("Runtime architecture differs from packaged application");
+    const mediaSha256 = createHash("sha256").update(await fs.readFile(mediaRuntime)).digest("hex");
+    await fs.writeFile(result, JSON.stringify({ checkedAt: new Date().toISOString(), applicationVersion: version.stdout.trim(), payloadSha256, mediaSha256, verifierScope: "current-source-against-packaged-media-runtime", ...evidence, fixtureScope: "generated-only", fixturesRetained: keep, nleImportExecuted: false, physicalStorageExecuted: false }, null, 2), { flag: "wx", mode: 0o600 });
     console.log(JSON.stringify({ passed: true, result, retainedDelivery: keep ? evidence.delivery : undefined }));
   } finally { await fs.rm(work, { recursive: true, force: true }); }
 } catch (error) { console.error(`${error.message}\n${usage}`); process.exitCode = 1; }
