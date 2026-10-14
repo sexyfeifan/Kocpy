@@ -1,8 +1,8 @@
-# Kocpy 0.1.46 architecture
+# Kocpy 0.1.47 architecture
 
 ## Release maintenance gates
 
-Electron is pinned to 44.5.1. The single release workflow rejects partial signing credentials without disclosing values; absent credentials deliberately produce ad-hoc packages. A configured identity branch must prove Developer ID Application authority, matching team, stapled notarization ticket and Gatekeeper assessment. Source/CI readiness is not evidence that this branch has executed. Current releases remain ad-hoc.
+Electron is pinned to 44.5.1. The single release workflow rejects partial signing credentials without disclosing values; absent credentials deliberately produce ad-hoc packages. The current immutable media helper policy supports only ad-hoc packages and fails closed for identity signing. Media is compiled from locked sources, explicitly signed with a fixed identifier and hardened runtime, and then its complete file hash is frozen alongside the pre-sign compiler-output hash. Only this exact, already verified helper is excluded from a second App packaging signature; final media provenance and full App signature checks run after signing. A future identity strategy must also prove the media transformation, Developer ID Application authority, matching team, stapled notarization ticket and Gatekeeper assessment. Source/CI readiness is not evidence that this branch has executed. Current releases remain ad-hoc.
 
 ## Frozen advanced proxy transforms
 
@@ -190,7 +190,7 @@ Kocpy ships separate native FFmpeg binaries for Apple Silicon and Intel. All tas
 
 Normal main windows use a 1.4–2.0 aspect-ratio band and a screen-fitted 1080×720 minimum. Display moves update constraints; full-screen and maximized windows remain OS-managed. Sidebar fonts/icons stay fixed, with an independently scrolling navigation area. Page content, tables and modal bodies have separate overflow boundaries; controls wrap without stretching their height.
 
-The 0.1.46 renderer uses cold silver glass surfaces, silver primary controls and functional navigation colors through shared dark/light theme tokens. Task status colors remain separate from navigation colors: active work is blue, verified content green, attention amber and failures red, with text labels accompanying each state. Copy and destination readback have distinct progress tracks. The source-to-destination view derives paths, phases and progress from actual task records; presentation does not simulate progress, infer storage independence or clear scope warnings. Existing dialogs, forms, confirmation gates and fixed sidebar typography retain their behavior.
+The 0.1.47 renderer uses cold silver glass surfaces, silver primary controls and functional navigation colors through shared dark/light theme tokens. Task status colors remain separate from navigation colors: active work is blue, verified content green, attention amber and failures red, with text labels accompanying each state. Copy and destination readback have distinct progress tracks. The source-to-destination view derives paths, phases and progress from actual task records; presentation does not simulate progress, infer storage independence or clear scope warnings. Existing dialogs, forms, confirmation gates and fixed sidebar typography retain their behavior.
 
 ## Copy evidence and closeout
 

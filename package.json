@@ -1,6 +1,6 @@
 {
   "name": "kocpy",
-  "version": "0.1.46",
+  "version": "0.1.47",
   "description": "Kocpy 专业素材工作台 · 多目的地备份、独立校验与项目归档",
   "main": "out/main/index.js",
   "productName": "Kocpy",
@@ -79,7 +79,10 @@
       "target": [
         "dmg"
       ],
-      "artifactName": "Kocpy-${version}-${arch}.${ext}"
+      "artifactName": "Kocpy-${version}-${arch}.${ext}",
+      "signIgnore": [
+        "/Contents/Resources/ffmpeg/ffmpeg-darwin-(?:arm64|x64)$"
+      ]
     },
     "extraResources": [
       {
@@ -94,6 +97,7 @@
           "sources/**/*"
         ]
       }
-    ]
+    ],
+    "afterSign": "scripts/after-sign.cjs"
   }
 }

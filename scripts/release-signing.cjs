@@ -4,7 +4,7 @@ function signingMode(environment = process.env) {
   if (!required.some(name => typeof environment[name] === "string" && environment[name].length > 0)) return "ad-hoc";
   const missing = required.filter(name => !present.includes(name));
   if (missing.length) throw new Error(`Incomplete signing configuration; missing secret names: ${missing.join(", ")}`);
-  return "developer-id-and-notarization";
+  throw new Error("Developer ID and notarization are unsupported for the fixed ad-hoc media runtimes; refusing to re-sign frozen media bytes");
 }
 module.exports = { signingMode };
 if (require.main === module) {

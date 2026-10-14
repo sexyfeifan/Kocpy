@@ -1,8 +1,8 @@
 # Kocpy 文档导航
 
-当前版本：**0.1.46**。本目录说明已经实现的功能、操作方法和验证边界；正式安装包与公开状态以 GitHub Release 为准。[返回项目首页](../README.md) · [下载正式版](https://github.com/sexyfeifan/Kocpy/releases/latest)
+当前版本：**0.1.47**。本目录说明已经实现的功能、操作方法和验证边界；正式安装包与公开状态以 GitHub Release 为准。[返回项目首页](../README.md) · [下载正式版](https://github.com/sexyfeifan/Kocpy/releases/latest)
 
-本次改动摘要见[发布状态与改动](CHANGES_UNRELEASED.md)，具体功能见[0.1.46 更新说明](RELEASE_NOTES_0.1.46.md)。版本文字、源码提交或草稿不代表已公开安装包。
+本次改动摘要见[发布状态与改动](CHANGES_UNRELEASED.md)，具体功能见[0.1.47 更新说明](RELEASE_NOTES_0.1.47.md)。版本文字、源码提交或草稿不代表已公开安装包。
 
 ## 使用 Kocpy
 
@@ -29,7 +29,7 @@
 ## 版本与验证
 
 - [代理专项验证](PROXY_ACCEPTANCE.md)：准确安装包命令、合成 NLE 样本与故障／真实介质边界。
-- [0.1.46 更新说明](RELEASE_NOTES_0.1.46.md)：冷银玻璃界面、真实多目标进度与系统／权限目录扫描。
+- [0.1.47 更新说明](RELEASE_NOTES_0.1.47.md)：冷银玻璃界面、真实多目标进度与系统／权限目录扫描。
 - [0.1.45 更新说明](RELEASE_NOTES_0.1.45.md)：Electron 与签名门禁。
 - [0.1.44 更新说明](RELEASE_NOTES_0.1.44.md)：高级代理、滚动修复与可复用验证工具。
 

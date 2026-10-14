@@ -1,13 +1,21 @@
 // Rebuild the separately executed FFmpeg CLI from the exact corresponding sources.
 // No system installation, source patches, nonfree components or Homebrew linkage.
-import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { existsSync, realpathSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { copyFile, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+export function compilerSignatureState(result, binary) {
+  if (result.status === 0) return "signed";
+  if (result.status === 1 && !(result.stdout || "").trim() &&
+      (result.stderr || "").trim() === `${binary}: code object is not signed at all`) return "unsigned";
+  throw new Error("Cannot establish the compiler output's signature state; refusing media signing");
+}
+
+async function main() {
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const repo = path.resolve(scriptDirectory, "..");
 const arch = process.argv[2];
@@ -82,6 +90,34 @@ run("./configure", ffmpegArgs, ffmpeg, env);
 run("make", [`-j${jobs}`, "ffmpeg"], ffmpeg, env);
 const binary = path.join(output, `ffmpeg-darwin-${arch}`);
 await copyFile(path.join(ffmpeg, "ffmpeg"), binary);
+// Freeze both compilation output and the intentionally signed runtime. The
+// compiler output on arm64 can already carry a linker signature; unsignedSha256
+// records its exact bytes before this explicit Kocpy signing step.
+const unsignedSha256 = sha256(await readFile(binary));
+const binarySigning = {
+  mode: "ad-hoc",
+  tool: "/usr/bin/codesign",
+  identity: "-",
+  identifier: `com.kocpy.media.ffmpeg.${arch}`,
+  timestamp: "none",
+  hardenedRuntime: true,
+  removeExistingSignature: true,
+};
+// A smaller replacement signature can leave the previous linker's signature
+// bytes in codesign's reserved allocation. Remove only a recognized, valid
+// compiler signature first; never suppress arbitrary codesign failures.
+const compilerSignature = spawnSync(binarySigning.tool, ["-d", "--verbose=2", binary], { encoding: "utf8" });
+if (compilerSignatureState(compilerSignature, binary) === "signed") {
+  run(binarySigning.tool, ["--verify", "--strict", binary], output);
+  run(binarySigning.tool, ["--remove-signature", binary], output);
+}
+run(binarySigning.tool, [
+  "--force", "--sign", binarySigning.identity,
+  "--identifier", binarySigning.identifier,
+  "--timestamp=none", "--options", "runtime", binary,
+], output);
+run(binarySigning.tool, ["--verify", "--strict", "--verbose=2", binary], output);
+const signedSha256 = sha256(await readFile(binary));
 const license = execFileSync(binary, ["-hide_banner", "-L"], { encoding: "utf8" });
 if (/nonfree|not legally redistributable/i.test(license) || !/GNU General Public License/.test(license))
   throw new Error("Unexpected or non-redistributable FFmpeg license");
@@ -91,8 +127,9 @@ for (const line of libraries.trim().split("\n").slice(1))
     throw new Error(`Non-system shared library dependency: ${line}`);
 const normal = (value) => value.replaceAll(build, "<BUILD>").replaceAll(sdk, "<SDK>");
 await writeFile(path.join(output, "build-info.json"), JSON.stringify({
-  schemaVersion: 1, architecture: arch, ffmpeg: lock.ffmpeg.version,
-  x264: lock.x264.version, license: "GPL-2.0-or-later", sha256: sha256(await readFile(binary)),
+  schemaVersion: 2, architecture: arch, ffmpeg: lock.ffmpeg.version,
+  x264: lock.x264.version, license: "GPL-2.0-or-later",
+  unsignedSha256, sha256: signedSha256, binarySigning,
   sourceLockSha256: sha256(await readFile(lockPath)),
   compiler: execFileSync("clang", ["--version"], { encoding: "utf8" }).split("\n")[0],
   sdkVersion: execFileSync("xcrun", ["--sdk", "macosx", "--show-sdk-version"], { encoding: "utf8" }).trim(),
@@ -104,3 +141,7 @@ for (const file of ["COPYING.GPLv2", "COPYING.LGPLv2.1", "LICENSE.md"])
 await copyFile(path.join(x264, "COPYING"), path.join(output, "x264-COPYING"));
 console.log(`Built and inspected: ${binary}`);
 console.log("Temporary build tree retained for inspection:", build);
+}
+
+if (process.argv[1] && existsSync(process.argv[1]) && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url)))
+  await main();

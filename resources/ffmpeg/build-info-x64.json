@@ -1,13 +1,23 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "architecture": "x64",
   "ffmpeg": "9.0.1",
   "x264": "b35605ace3ddf7c1a5d67a2eb553f034aef41d55",
   "license": "GPL-2.0-or-later",
-  "sha256": "1473d8e78105a64280f4b65f3efbd61c6d9ebc186ce341000c1cd7b1f04c13f0",
+  "unsignedSha256": "0606a85fbcb0a3e49b10e92a55ee27001f511e59b0e58e21d0e76c89645e30b0",
+  "sha256": "cf3193e816a63450a591cf5a224dd49be16ef45612b460ee3836ab2deb10f1a1",
+  "binarySigning": {
+    "mode": "ad-hoc",
+    "tool": "/usr/bin/codesign",
+    "identity": "-",
+    "identifier": "com.kocpy.media.ffmpeg.x64",
+    "timestamp": "none",
+    "hardenedRuntime": true,
+    "removeExistingSignature": true
+  },
   "sourceLockSha256": "5d00e76a8f80d40619bea99c46198679a7cb3f4b083b2ad4d60e924b8736aac7",
-  "compiler": "Apple clang version 21.0.0 (clang-2100.1.1.101)",
-  "sdkVersion": "26.5",
+  "compiler": "Apple clang version 21.0.0 (clang-2100.3.34.2)",
+  "sdkVersion": "27.0",
   "x264Configure": [
     "--prefix=<BUILD>/prefix",
     "--host=x86_64-apple-darwin",
@@ -48,12 +58,12 @@
   "dynamicLibraries": [
     "/System/Library/Frameworks/AudioToolbox.framework/Versions/A/AudioToolbox (compatibility version 1.0.0, current version 1000.0.0)",
     "/System/Library/Frameworks/CoreAudio.framework/Versions/A/CoreAudio (compatibility version 1.0.0, current version 1.0.0)",
-    "/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1356.0.0)",
+    "/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1359.0.0)",
     "/usr/lib/libz.1.dylib (compatibility version 1.0.0, current version 1.2.12)",
-    "/System/Library/Frameworks/VideoToolbox.framework/Versions/A/VideoToolbox (compatibility version 1.0.0, current version 3320.8.5)",
-    "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation (compatibility version 150.0.0, current version 5026.5.4)",
-    "/System/Library/Frameworks/CoreMedia.framework/Versions/A/CoreMedia (compatibility version 1.0.0, current version 3320.8.5)",
-    "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo (compatibility version 1.2.0, current version 734.4.0)",
+    "/System/Library/Frameworks/VideoToolbox.framework/Versions/A/VideoToolbox (compatibility version 1.0.0, current version 3350.77.5)",
+    "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation (compatibility version 150.0.0, current version 5027.0.69)",
+    "/System/Library/Frameworks/CoreMedia.framework/Versions/A/CoreMedia (compatibility version 1.0.0, current version 3350.77.5)",
+    "/System/Library/Frameworks/CoreVideo.framework/Versions/A/CoreVideo (compatibility version 1.2.0, current version 758.27.0)",
     "/System/Library/Frameworks/CoreServices.framework/Versions/A/CoreServices (compatibility version 1.0.0, current version 1226.0.0)",
     "/usr/lib/libbz2.1.0.dylib (compatibility version 1.0.0, current version 1.0.8)"
   ]

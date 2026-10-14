@@ -40,6 +40,17 @@ Rosetta; that is not an Intel hardware test. Build trees are retained in a new
 temporary directory and outputs under `work/media-built/`. Compiler/SDK details,
 configuration and binary digests are in the `build-info-*.json` files.
 
+Schema 2 records the exact compiler-output digest as `unsignedSha256`; that
+output may already contain an Apple linker ad-hoc signature. The build script
+strictly verifies and removes an existing compiler signature before applying
+a fixed `com.kocpy.media.ffmpeg.<arch>` ad-hoc signature
+with hardened runtime and no timestamp, verifies it, and freezes the complete
+signed file digest as `sha256`. This is a declared build step, not a replacement
+of an expected checksum after packaging. The App packager preserves those exact
+signed media bytes and verifies them again after signing the App. This media
+policy supports ad-hoc releases only; Developer ID and notarization are refused
+until their own provenance and signing process is implemented and verified.
+
 SIMD remains enabled. H.264 encoding uses libx264; ProRes Proxy uses prores_ks.
 Optional third-party codecs from prior vendor builds are not included. Network
 input protocols are disabled; Kocpy's media operations accept local files.

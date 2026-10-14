@@ -2,8 +2,10 @@ const path = require('node:path');
 const { rmSync } = require('node:fs');
 const { execFileSync } = require('node:child_process');
 const { Arch } = require('builder-util');
+const { requireCandidateMediaSigning } = require('./media-signing-policy.cjs');
 
 module.exports = async function afterPack(context) {
+  requireCandidateMediaSigning(context);
   const { verifyMediaRuntime } = await import('./verify-media-runtime.mjs');
   const app = path.join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`);
   const resources = path.join(app, 'Contents', 'Resources', 'ffmpeg');
