@@ -1,4 +1,4 @@
-# Kocpy 0.1.47 architecture
+# Kocpy 0.1.48 architecture
 
 ## Release maintenance gates
 
@@ -190,7 +190,7 @@ Kocpy ships separate native FFmpeg binaries for Apple Silicon and Intel. All tas
 
 Normal main windows use a 1.4–2.0 aspect-ratio band and a screen-fitted 1080×720 minimum. Display moves update constraints; full-screen and maximized windows remain OS-managed. Sidebar fonts/icons stay fixed, with an independently scrolling navigation area. Page content, tables and modal bodies have separate overflow boundaries; controls wrap without stretching their height.
 
-The 0.1.47 renderer uses cold silver glass surfaces, silver primary controls and functional navigation colors through shared dark/light theme tokens. Task status colors remain separate from navigation colors: active work is blue, verified content green, attention amber and failures red, with text labels accompanying each state. Copy and destination readback have distinct progress tracks. The source-to-destination view derives paths, phases and progress from actual task records; presentation does not simulate progress, infer storage independence or clear scope warnings. Existing dialogs, forms, confirmation gates and fixed sidebar typography retain their behavior.
+The 0.1.48 renderer uses cold silver glass surfaces, silver primary controls and functional navigation colors through shared dark/light theme tokens. Task status colors remain separate from navigation colors: active work is blue, verified content green, attention amber and failures red, with text labels accompanying each state. Copy and destination readback have distinct progress tracks. The source-to-destination view derives paths, phases and progress from actual task records; presentation does not simulate progress, infer storage independence or clear scope warnings. Existing dialogs, forms, confirmation gates and fixed sidebar typography retain their behavior.
 
 ## Copy evidence and closeout
 

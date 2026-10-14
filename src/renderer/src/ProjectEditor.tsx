@@ -10,6 +10,7 @@ import {
   Camera,
   CalendarDays,
   ShieldCheck,
+  AlertTriangle,
 } from "lucide-react";
 import {
   api,
@@ -19,6 +20,10 @@ import {
   type ProjectSaveInspection,
 } from "./api";
 import { Button } from "./Ui";
+import {
+  destinationSelectionNotice,
+  destinationNoticeClassName,
+} from "./destination-selection-notice";
 
 export const DEVICE_SUGGESTIONS = [
   "FX3",
@@ -117,6 +122,11 @@ export function ProjectEditor({
     () => projectFolder(start, name || "项目名"),
     [start, name],
   );
+  const destinationNotice = destinationSelectionNotice({
+    mode: "project",
+    destinationCount: dests.length,
+    requiredCopies,
+  });
 
   function addDevice(raw: string) {
     const device = raw.trim();
@@ -782,6 +792,22 @@ export function ProjectEditor({
               添加备份根目录
             </Button>
           )}
+          <div
+            className={destinationNoticeClassName(destinationNotice)}
+            role="note"
+            aria-label="项目副本配置"
+          >
+            {destinationNotice.tone === "warning" ? (
+              <AlertTriangle size={16} />
+            ) : (
+              <Info size={16} />
+            )}
+            <div>
+              <strong>{destinationNotice.title}</strong>
+              <p>{destinationNotice.message}</p>
+              <p>选择备份路径不会改变项目要求的安全副本数量。</p>
+            </div>
+          </div>
           <div className="notice">
             <Info size={16} />
             <span>

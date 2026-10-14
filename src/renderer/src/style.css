@@ -6987,6 +6987,8 @@ small {
   box-shadow: 0 4px 15px #0002, inset 0 1px 0 #ffffff88;
 }
 .btn.primary:hover:not(:disabled) {
+  background: var(--silver-button);
+  color: var(--primary-ink);
   filter: brightness(1.045);
   border-color: color-mix(in srgb, var(--silver) 70%, transparent);
 }

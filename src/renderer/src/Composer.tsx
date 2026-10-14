@@ -39,6 +39,10 @@ import {
   type Scan,
 } from "./api";
 import { Button } from "./Ui";
+import {
+  destinationSelectionNotice,
+  destinationNoticeClassName,
+} from "./destination-selection-notice";
 interface Source {
   path: string;
   scan?: Scan;
@@ -166,6 +170,11 @@ export function Composer({
   };
   const previewStamp = previewVolumeTimestamp(new Date(clock));
   const capacity = capacityReadiness(dests, spaces, total);
+  const destinationNotice = destinationSelectionNotice({
+    mode: mode === "project" ? "project" : "ordinary",
+    destinationCount: dests.length,
+    requiredCopies: project?.requiredCopies,
+  });
   const previewPrefixRaw =
     name.trim() ||
     project?.volumePrefixByDevice?.[camera] ||
@@ -1540,12 +1549,21 @@ export function Composer({
                     </div>
                   </div>
                 </div>
-                {dests.length === 1 && (
-                  <div className="notice amber">
+                <div
+                  className={destinationNoticeClassName(destinationNotice)}
+                  role="note"
+                  aria-label={destinationNotice.title}
+                >
+                  {destinationNotice.tone === "warning" ? (
                     <AlertTriangle size={16} />
-                    当前只有一个备份目的地。重要素材建议再保存一份独立副本。
+                  ) : (
+                    <Info size={16} />
+                  )}
+                  <div>
+                    <strong>{destinationNotice.title}</strong>
+                    <p>{destinationNotice.message}</p>
                   </div>
-                )}
+                </div>
               </>
             )}
             {busy && scanStatus && <p role="status">{scanStatus}</p>}
