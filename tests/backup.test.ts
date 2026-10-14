@@ -5,6 +5,7 @@ import os from "node:os";
 import { randomBytes } from "node:crypto";
 import { BackupEngine, SpeedMeter, hashFile, summarizeSpeeds } from "../src/main/backup/BackupEngine";
 import { validatePaths, scan } from "../src/main/backup/safety";
+import { taskTrustState } from "../src/common/task-trust";
 import type { BackupTask, TaskConfig } from "../src/main/types";
 let root: string, source: string, d1: string, d2: string;
 beforeEach(async () => {
@@ -394,6 +395,63 @@ describe("Real filesystem backup integrity", () => {
     );
     expect(task.skippedBytes).toBe(14);
     await expect(fs.access(path.join(d1, ".hidden-dir"))).rejects.toThrow();
+  });
+  it("backs up readable material while recording system and permission exclusions", async () => {
+    const denied = path.join(await fs.realpath(source), "restricted");
+    await fs.mkdir(denied);
+    await fs.writeFile(path.join(denied, "not-copied.mov"), "unreadable footage");
+    await fs.mkdir(path.join(source, ".Spotlight-V100"));
+    await fs.writeFile(path.join(source, ".Spotlight-V100", "index"), "system");
+    const readdir = fs.readdir;
+    const spy = vi.spyOn(fs, "readdir").mockImplementation((async (...args: Parameters<typeof fs.readdir>) => {
+      if (String(args[0]) === denied)
+        throw Object.assign(new Error("fixture permission denied"), { code: "EPERM" });
+      return readdir(...args);
+    }) as typeof fs.readdir);
+    try {
+      const { task } = await run();
+      expect(task.status).toBe("completed");
+      expect(task.totalFiles).toBe(3);
+      expect(task.destinations.every((destination) => destination.verified)).toBe(true);
+      expect(task.inventoryScope?.exclusions).toEqual(expect.arrayContaining([
+        expect.objectContaining({ relativePath: ".Spotlight-V100", reason: "system-directory", bytesUnknown: true }),
+        expect.objectContaining({ relativePath: "restricted", reason: "permission-denied", permissionCode: "EPERM", bytesUnknown: true }),
+      ]));
+      expect(task.inventoryScope?.includedDirectoryPaths).toEqual(["DCIM", "empty"]);
+      expect(task.faultTimeline).toEqual(expect.arrayContaining([
+        expect.objectContaining({ level: "warning", phase: "scanning", message: expect.stringContaining("源范围不完整") }),
+      ]));
+      expect(taskTrustState(task)).toMatchObject({ status: "unverified", contentVerified: true, countableCopies: 0 });
+      for (const destination of [d1, d2]) {
+        expect(await hashFile(path.join(destination, "DCIM", "片段.bin"), "sha256"))
+          .toBe(await hashFile(path.join(source, "DCIM", "片段.bin"), "sha256"));
+        await expect(fs.access(path.join(destination, "restricted"))).rejects.toThrow();
+        await expect(fs.access(path.join(destination, ".Spotlight-V100"))).rejects.toThrow();
+      }
+    } finally { spy.mockRestore(); }
+  });
+  it("does not complete if included material becomes inaccessible at the final scan", async () => {
+    const readdir = fs.readdir;
+    const denied = path.join(await fs.realpath(source), "DCIM");
+    let restrict = false;
+    const spy = vi.spyOn(fs, "readdir").mockImplementation((async (...args: Parameters<typeof fs.readdir>) => {
+      if (restrict && String(args[0]) === denied)
+        throw Object.assign(new Error("fixture permission changed"), { code: "EACCES" });
+      return readdir(...args);
+    }) as typeof fs.readdir);
+    try {
+      const engine = new BackupEngine(), task = engine.createTask(config());
+      engine.on("progress", (event) => {
+        if (event.physicalWrittenBytes > 0) restrict = true;
+      });
+      const done = wait(engine, task.id);
+      engine.startTask(task.id);
+      const result = await done;
+      expect(result.status).toBe("failed");
+      expect(result.errorMessage).toContain("素材源目录发生变化");
+      expect(result.inventoryScope?.exclusions).toEqual([]);
+      expect(taskTrustState(result).countableCopies).toBe(0);
+    } finally { spy.mockRestore(); }
   });
   it("keeps the historical scanner for loaded tasks without a policy snapshot", async () => {
     const task = new BackupEngine().createTask(config());

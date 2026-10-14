@@ -1369,6 +1369,16 @@ export class BackupEngine extends EventEmitter {
       task.totalBytes = inventory.totalBytes;
       task.skippedFiles = inventory.skipped;
       task.skippedBytes = inventory.skippedBytes;
+      const permissionExclusions = inventory.exclusions.filter(
+        (item) => item.reason === "permission-denied",
+      );
+      if (permissionExclusions.length)
+        this.record(
+          task,
+          "scanning",
+          "warning",
+          `权限不足，跳过 ${permissionExclusions.length} 项并继续处理可读取素材；跳过路径已记录，源范围不完整，不计为达标副本`,
+        );
       task.verifyTotalFiles = task.totalFiles * task.destinations.length;
       task.mediaBreakdown = mediaBreakdownFromFiles(inventory.files);
       const volumeNeeds = new Map<

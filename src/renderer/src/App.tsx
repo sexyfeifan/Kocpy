@@ -11,7 +11,9 @@ import {
   transferPhaseText,
   transferTiming,
   transferProgressLabel,
+  matchesTransferFilter,
 } from "./task-state";
+import { TransferEvidence } from "./TransferEvidence";
 import {
   LayoutDashboard,
   ArrowLeftRight,
@@ -130,6 +132,7 @@ import { copyEvidenceSummary } from "../../common/copy-evidence";
 import { APP_VERSION } from "../../common/version";
 import {
   taskTrustState,
+  taskCompletionNotice,
   projectCoverage,
   savedDestinationBytes,
 } from "../../common/task-trust";
@@ -989,9 +992,7 @@ export function App() {
         .join(" ")
         .toLowerCase()
         .includes(query.toLowerCase()) &&
-      (filter === "all" ||
-        (filter === "active" && active(t)) ||
-        t.status === filter) &&
+      matchesTransferFilter(t, filter) &&
       (transferProjectScope === "all" ||
         (transferProjectScope === "archived"
           ? Boolean(t.projectId && archivedProjectIds.has(t.projectId))
@@ -1042,10 +1043,11 @@ export function App() {
         return (
           <div
             className="task-row"
+            data-status={taskTrustState(t).status}
             key={t.id}
             role="button"
             tabIndex={0}
-            aria-label={`查看任务 ${t.name}，当前状态 ${statusText[t.status] || t.status}`}
+            aria-label={`查看任务 ${t.name}，当前状态 ${taskTrustState(t).label}`}
             onClick={() => setDetail(t.id)}
             onKeyDown={(event) => {
               if (
@@ -1129,6 +1131,43 @@ export function App() {
             <TaskBadge task={t} />
             <ChevronRight size={16} />
           </div>
+        );
+      })}
+    </div>
+  );
+  const transferCards = (rows: BackupTask[]) => (
+    <div className="transfer-card-list">
+      {rows.map((task) => {
+        const trust = taskTrustState(task),
+          kind = taskMediaKind(task),
+          TaskIcon = kind === "video" ? Clapperboard : kind === "photo" ? Camera :
+            kind === "audio" ? AudioWaveform : kind === "mixed" ? Layers : MemoryStick;
+        return (
+          <article className="transfer-card" data-status={task.status} data-trust={trust.status} key={task.id}>
+            <header className="transfer-card-header">
+              <span className={`file-icon media-${kind} task-${task.status}`} aria-hidden="true"><TaskIcon size={20} /></span>
+              <div className="transfer-card-name">
+                <h2>{task.name}</h2>
+                <p>{task.totalFiles || task.inventoryScope ? `${task.totalFiles} 个文件 · ${bytes(task.totalBytes)}` : "等待素材扫描"} · {task.destinations.length} 个目标</p>
+              </div>
+              <TaskBadge task={task} />
+            </header>
+            <TransferEvidence task={task} compact={!active(task)} />
+            {["failed", "unverified"].includes(trust.status) && (
+              <p className="transfer-card-attention"><AlertTriangle size={15} /><span>{trust.explanation}</span></p>
+            )}
+            <footer className="transfer-card-footer">
+              <span className="transfer-card-meta"><ShieldCheck size={14} />源只读 · {task.hashAlgorithm.toUpperCase()}<span className="dot-sep">·</span>{date(task.startedAt || task.createdAt)}</span>
+              <div className="transfer-card-actions">
+                <Button kind="subtle" onClick={() => setDetail(task.id)} aria-label={`查看任务 ${task.name} 的详情`}>任务详情<ArrowUpRight size={14} /></Button>
+                {task.status === "paused" ? (
+                  <Button kind="subtle" disabled={taskCommand?.id === task.id} onClick={() => void controlTask(task.id, "resume")}><Play size={14} />{taskCommand?.id === task.id ? "正在继续…" : "继续"}</Button>
+                ) : ["running", "verifying"].includes(task.status) ? (
+                  <Button kind="subtle" disabled={taskCommand?.id === task.id} onClick={() => void controlTask(task.id, "pause")}><Pause size={14} />{taskCommand?.id === task.id ? "正在暂停…" : "暂停"}</Button>
+                ) : null}
+              </div>
+            </footer>
+          </article>
         );
       })}
     </div>
@@ -1296,7 +1335,7 @@ export function App() {
     });
   const recoveryTasks = tasks.filter(
     (task) =>
-      (!active(task) && !taskTrustState(task).contentVerified) ||
+      (!active(task) && taskTrustState(task).status !== "completed") ||
       ["failed", "cancelled", "paused", "pending", "unverified"].includes(
         task.status,
       ) ||
@@ -1461,6 +1500,7 @@ export function App() {
             <button
               key={id}
               className={`nav-item ${page === id ? "selected" : ""}`}
+              data-nav={id}
               aria-current={page === id ? "page" : undefined}
               onClick={() => go(id)}
             >
@@ -1495,6 +1535,7 @@ export function App() {
           </div>
           <button
             className={`nav-item ${page === "settings" ? "selected" : ""}`}
+            data-nav="settings"
             aria-current={page === "settings" ? "page" : undefined}
             onClick={() => go("settings")}
           >
@@ -1982,7 +2023,7 @@ export function App() {
                 </>
               )}
               {page === "transfers" && (
-                <section className="panel">
+                <section className="panel transfer-panel">
                   <div className="list-toolbar">
                     <div
                       className="tabs"
@@ -2038,7 +2079,7 @@ export function App() {
                   </div>
                   {filtered.length ? (
                     <>
-                      {taskRows(filtered.slice(0, taskLimit))}
+                      {transferCards(filtered.slice(0, taskLimit))}
                       {filtered.length > taskLimit && (
                         <Button
                           onClick={() => setTaskLimit((value) => value + 100)}
@@ -3375,13 +3416,22 @@ export function App() {
                 <X size={20} />
               </Button>
             </div>
+            <nav className="detail-section-nav" aria-label="任务详情快速定位">
+              {[["overview", "概况"], ["targets", "目标与校验"], ["scope", "读取范围"]].map(([section, label]) => (
+                <a key={section} className="btn subtle" href={`#task-detail-${section}`} aria-controls={`task-detail-${section}`} onClick={(event) => {
+                  event.preventDefault();
+                  event.currentTarget.closest(".detail-modal")?.querySelector<HTMLElement>(`#task-detail-${section}`)?.scrollIntoView({ block: "start" });
+                }}>{label}</a>
+              ))}
+            </nav>
             <div className="detail-body">
-              <div className="row between">
+              <div className="row between" id="task-detail-overview">
                 <TaskBadge task={selected} />
                 <span className="mono muted">
                   {selected.hashAlgorithm.toUpperCase()}
                 </span>
               </div>
+              <TransferEvidence task={selected} compact />
               <div className="detail-stats">
                 <div>
                   <strong>{bytes(selected.totalBytes)}</strong>
@@ -3456,13 +3506,42 @@ export function App() {
                   </small>
                 </div>
               )}
-              {taskTrustState(selected).contentVerified && (
+              <section className="detail-scope-section" id="task-detail-scope" aria-label="扫描与接收范围">
+                <h3 className="detail-label">扫描与接收范围</h3>
+                {selected.inventoryScope ? (
+                  <>
+                    <div className="scope-summary">
+                      <span>纳入 {selected.inventoryScope.includedFiles} 个文件 · {bytes(selected.inventoryScope.includedBytes)}</span>
+                      <span>普通隐藏文件：{selected.inventoryScope.policy.includeHidden ? "包含" : "过滤"}</span>
+                      <span>{selected.inventoryScope.policy.sourceReadPolicy === "skip-system-and-permission-errors" ? "系统目录跳过 · 权限排除保留证据" : "此历史任务保留原严格扫描策略"}</span>
+                    </div>
+                    {selected.inventoryScope.exclusions.some((item) => item.reason === "permission-denied") && (
+                      <p className="scope-warning"><AlertTriangle size={15} />未读取目录的大小及子项数量未知；已纳入范围的校验不证明整卡完整。</p>
+                    )}
+                    {selected.inventoryScope.exclusions.length ? (
+                      <details className="backup-advanced">
+                        <summary>扫描排除清单 · {selected.inventoryScope.exclusions.length} 项</summary>
+                        <p className="muted small">以下路径不参与复制和校验；未扫描目录的子项数量及容量未知。</p>
+                        <div className="final-path-list">
+                          {selected.inventoryScope.exclusions.map((item) => (
+                            <p className="mono" key={item.relativePath}>
+                              {item.relativePath} · {item.bytesUnknown ? "大小未知" : bytes(item.bytes)} ·{" "}
+                              {item.reason === "system-directory" ? "系统隐藏目录" : item.reason === "permission-denied" ? `无读取权限（${item.permissionCode}）` : "用户选择过滤隐藏条目"}
+                            </p>
+                          ))}
+                        </div>
+                      </details>
+                    ) : <p className="muted small">此冻结范围没有记录排除条目。</p>}
+                  </>
+                ) : <p className="muted small">此记录没有保存冻结的扫描范围；不能据文件数推断范围外没有遗漏。</p>}
+              </section>
+              {taskTrustState(selected).status === "completed" && (
                 <div className="completion-conclusion">
                   <CheckCircle2 size={17} />
                   <div>
                     <strong>
                       {selected.destinations.filter((d) => d.verified).length}{" "}
-                      个目标通过校验 · {verifiedPhysicalCopyCount(selected)}{" "}
+                      个目标通过校验 · {taskTrustState(selected).countableCopies}{" "}
                       份可计数副本
                     </strong>
                     <span>
@@ -3475,7 +3554,7 @@ export function App() {
                 </div>
               )}
               {selected.projectId &&
-                taskTrustState(selected).contentVerified &&
+                taskTrustState(selected).status === "completed" &&
                 selected.destinations.some(
                   (destination) =>
                     destination.verified && destination.resolvedPath,
@@ -3761,7 +3840,7 @@ export function App() {
                   {!active(selected) && <p>{selected.performanceSummary}</p>}
                 </div>
               )}
-              <h3 className="detail-label">备份目的地</h3>
+              <h3 className="detail-label" id="task-detail-targets">备份目的地</h3>
               {selected.destinations.map((d) => (
                 <div className="destination-detail" key={d.id}>
                   <div className="row">
@@ -4101,8 +4180,8 @@ export function App() {
         </div>
       )}
       {completion && (
-        <div className="completion-banner" role="status">
-          <span>备份与校验完成：{completion.name}</span>
+        <div className={`completion-banner ${taskCompletionNotice(completion).attention ? "attention" : ""}`} role="status">
+          <span>{taskCompletionNotice(completion).title}：{completion.name}</span>
           <Button
             onClick={() => {
               setDetail(completion.id);
@@ -5772,8 +5851,8 @@ function HelpPage({
         "普通备份内选择按次保存（推荐）或保留源文件夹（镜像备份）；目的地统一选择存放副本的父目录。",
         "普通备份保存为“源文件夹名_时间戳”；镜像备份保留所选源文件夹这一层，不添加时间戳。开始前核对每个来源的最终路径。",
         "扫描统计中的数字是各类型的文件数，不是卷数；其他／附属文件也会备份。源和目的地均支持从 Finder 拖入文件夹。",
-        "选择位于不同物理磁盘的目的地并开始；紫色表示拷贝，绿色表示独立校验。",
-        "新任务默认按完整范围接收隐藏项、AppleDouble、系统元数据与空目录；任务及全部目的地完成校验后，每个备份目的地会在自身 Kocpy报告 目录内保存不可变的首次完成校验快照。",
+        "选择目的地并核对存储关系后开始；蓝青色表示复制，绿色表示独立回读校验。",
+        "新任务默认接收普通隐藏项、AppleDouble、.DS_Store 与空目录；已知系统隐藏目录会跳过，遇到无读取权限的条目会记录排除原因并继续读取。任务及全部目的地完成校验后，每个备份目的地会在自身 Kocpy报告 目录内保存不可变的首次完成校验快照。",
       ],
       tips: [
         "Kocpy 不会自动开始写入。",
@@ -5783,7 +5862,7 @@ function HelpPage({
         "任务详情和拍摄项目素材卷明细会实时更新速度与进度，无需关闭重开。暂停/继续会即时更新状态，当前小块读写或安全落盘可能需要收尾。",
         "全新文件边复制边计算源哈希，之后仍独立回读每个目标。完整备份含校验，与只复制的耗时不是同一指标。",
         "升级前创建的旧镜像任务恢复时保留旧目录落点，不会自动移动已备份文件；新建镜像任务才采用保留源文件夹的布局。",
-        "0.1.37 以前的任务继续使用当时的扫描规则，不会在恢复时暗中扩大范围；新任务的范围与排除项会冻结在任务记录中。",
+        "旧任务继续使用创建时冻结的扫描规则；新任务的范围与排除项会冻结在任务记录中。权限受限目录的内部文件数量与大小未知，排除统计只显示已知部分。",
         "不要把多个目录位于同一物理盘误当成独立副本。",
         "校验完成前不要拔出素材卡或目的地。",
         "完成判定前会重新扫描素材源；复制期间新增、删除或修改文件会停止任务，避免生成不完整的成功记录。",
@@ -6176,6 +6255,14 @@ function HelpPage({
     },
   ];
   const releaseNotes = [
+    {
+      version: "0.1.46",
+      title: "冷银玻璃界面与素材扫描容错",
+      paragraphs: [
+        "界面采用冷银玻璃材质、功能图标与语义状态色；传输卡显示真实源与各目标进度，复制、内容校验和物理独立性分别呈现。侧栏字号保持稳定，任务详情可快速定位目标与读取范围。",
+        "新任务扫描跳过 macOS 系统目录，子目录权限错误保留排除证据并继续读取其他素材。权限遗漏不计整卡达标，旧任务保持原冻结扫描策略；需处理筛选也显示范围未完整的记录。",
+      ],
+    },
     {
       version: "0.1.45",
       title: "Electron 维护与签名发布门禁",
@@ -8120,7 +8207,7 @@ function SettingsPage({
           <div>
             <h3>包含隐藏文件</h3>
             <p>
-              默认完整纳入隐藏项、AppleDouble、.DS_Store 与空目录；关闭后会冻结并记录明确排除清单。
+              默认纳入普通隐藏项、AppleDouble、.DS_Store 与空目录；已知系统隐藏目录会跳过，权限受限条目会记录后继续读取。关闭后普通隐藏项也会进入排除清单。
             </p>
           </div>
           <button

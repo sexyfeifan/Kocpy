@@ -130,7 +130,9 @@ export interface Scan {
     relativePath: string;
     kind: "file" | "directory";
     bytes: number;
-    reason: "hidden-by-user-filter";
+    reason: "hidden-by-user-filter" | "system-directory" | "permission-denied";
+    bytesUnknown?: boolean;
+    permissionCode?: "EPERM" | "EACCES";
   }>;
   sample: string[];
   breakdown: Record<

@@ -1,4 +1,4 @@
-# Kocpy 0.1.45 architecture
+# Kocpy 0.1.46 architecture
 
 ## Release maintenance gates
 
@@ -26,7 +26,9 @@ Delivery eligibility is recomputed from frozen source, parameter and output evid
 
 ## Frozen complete inventory and compatibility boundary
 
-Every new transfer freezes a `complete-v2` inventory policy and its initial scope. Complete mode includes hidden entries, AppleDouble/system metadata, existing manifests/reports and empty directories; the source fingerprint covers included file paths, sizes and timestamps, directory metadata and every explicit exclusion. Symlinks and non-file/non-directory special entries fail explicitly instead of disappearing from the scope. A final source rescan must match the frozen fingerprint before the task can complete, and each destination must contain the recorded directory scope as well as independently verified files.
+Every new transfer freezes a `complete-v2` inventory policy and its initial scope. Complete mode includes ordinary hidden entries, AppleDouble and metadata outside pruned system directories, existing manifests/reports and empty directories; the source fingerprint covers included file paths, sizes and timestamps, directory metadata and every explicit exclusion. Symlinks and non-file/non-directory special entries fail explicitly instead of disappearing from the scope. A final source rescan must match the frozen fingerprint before the task can complete, and each destination must contain the recorded directory scope as well as independently verified files.
+
+New policies also freeze `sourceReadPolicy: skip-system-and-permission-errors`. Known macOS system directories are pruned before metadata reads or traversal, independently of the hidden-entry setting. Only descendant `EPERM`/`EACCES` metadata/directory-read failures are excluded; the source root and other I/O failures still fail. Exclusions retain relative path, reason, permission code and unknown-byte evidence, and the fingerprint covers that evidence. Pruned directories are not counted as included empty directories. Permission omissions preserve verification of included content but block countable-copy compliance and completed-volume ejection. Task records, UI and reports retain the exclusion reasons, permission codes and unknown-byte markers; ASC MHL exports the exact frozen exclusion paths in its `ignore` patterns. Unknown subtree sizes and counts are never presented as measured zeroes. Historical policy snapshots without this optional field retain strict behavior and their original fingerprints.
 
 Turning off hidden entries creates a filtered policy, not a silent legacy scan. Each excluded file or directory is recorded with path, type, byte count, modified time and reason, and generated manifests describe that exact policy. A task without an inventory-policy field is a historical task and keeps the historical scanner for resume/retry; normalization does not retrofit a wider scope into old evidence.
 
@@ -188,6 +190,8 @@ Kocpy ships separate native FFmpeg binaries for Apple Silicon and Intel. All tas
 
 Normal main windows use a 1.4–2.0 aspect-ratio band and a screen-fitted 1080×720 minimum. Display moves update constraints; full-screen and maximized windows remain OS-managed. Sidebar fonts/icons stay fixed, with an independently scrolling navigation area. Page content, tables and modal bodies have separate overflow boundaries; controls wrap without stretching their height.
 
+The 0.1.46 renderer uses cold silver glass surfaces, silver primary controls and functional navigation colors through shared dark/light theme tokens. Task status colors remain separate from navigation colors: active work is blue, verified content green, attention amber and failures red, with text labels accompanying each state. Copy and destination readback have distinct progress tracks. The source-to-destination view derives paths, phases and progress from actual task records; presentation does not simulate progress, infer storage independence or clear scope warnings. Existing dialogs, forms, confirmation gates and fixed sidebar typography retain their behavior.
+
 ## Copy evidence and closeout
 
 `copy-evidence.ts` separates verified target instances from independent storage groups. Evidence carries a random inspection ID, checked time, volume UUID, known whole-device domains and an explanation. OS device node names are only compared within one inspection, never across historical retries or workstations. APFS stores/partitions map to whole disks; unknown RAID/network/virtual topology cannot add a second independent copy. Existing records remain intact; online reverification can refresh evidence.
@@ -197,6 +201,8 @@ Project matrices, task conclusions and reports share the same copy requirement f
 ## Media distribution and release
 
 Both media architectures are built from the same pinned FFmpeg/x264 sources without nonfree/autodetected external libraries. Full licenses, exact source archives, build scripts and provenance accompany the runtime. Before/after packaging hooks reject hash/source/license mismatches. CI uses native architecture runners for regression and packaged runtime tests, then one aggregation job stages a draft containing both installers, corresponding source and checksums. Publication requires verification of the exact staged artifacts and actual desktop checks; no asset overwrite is performed.
+
+The update check reads the repository's published latest GitHub Release, compares numeric versions and selects the exactly named DMG for the running architecture. The update action opens that official download URL; installation remains a manual quit-and-replace operation. Drafts, prereleases and source-only commits do not update an installed App. Download checksums, ad-hoc signature structure and Developer ID/notarization evidence are separate claims.
 
 ## Existing-backup reconciliation
 

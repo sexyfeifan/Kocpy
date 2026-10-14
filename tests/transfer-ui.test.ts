@@ -1,10 +1,23 @@
 import { describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { normalBackupFolder, previewBackupPath, sourceFolderName, capacityReadiness } from "../src/common/backup-layout";
-import { selectLiveTask, transferPhaseText, transferTiming, transferProgressLabel } from "../src/renderer/src/task-state";
+import { selectLiveTask, transferPhaseText, transferTiming, transferProgressLabel, matchesTransferFilter } from "../src/renderer/src/task-state";
 import type { BackupTask } from "../src/main/types";
 
 describe("backup layout and live detail", () => {
+  it("keeps permission omissions and missing evidence in attention after copying finishes", () => {
+    const complete = { status: "completed", destinations: [{ id: "synthetic-target", verified: true }], totalFiles: 1 } as BackupTask;
+    const partial = { ...complete, inventoryScope: { exclusions: [{ relativePath: "restricted/", reason: "permission-denied", kind: "directory", bytes: 0, bytesUnknown: true, permissionCode: "EACCES", modifiedAt: 0 }] } } as BackupTask;
+    expect(matchesTransferFilter(complete, "completed")).toBe(true);
+    expect(matchesTransferFilter(complete, "failed")).toBe(false);
+    expect(matchesTransferFilter(partial, "failed")).toBe(true);
+    expect(matchesTransferFilter(partial, "completed")).toBe(false);
+    expect(matchesTransferFilter({ ...complete, destinations: [{ id: "synthetic-target", verified: false }] } as BackupTask, "failed")).toBe(true);
+    expect(matchesTransferFilter({ ...partial, status: "paused" }, "active")).toBe(true);
+    expect(matchesTransferFilter({ ...partial, status: "paused" }, "failed")).toBe(false);
+    expect(matchesTransferFilter({ ...partial, status: "cancelled" }, "cancelled")).toBe(true);
+    expect(matchesTransferFilter({ ...partial, status: "failed" }, "failed")).toBe(true);
+  });
   it("never marks missing, invalid or insufficient capacity as checked", () => {
     expect(capacityReadiness(["/a", "/b"], { "/a": 200 }, 100)).toEqual({ checked: 1, total: 2, ready: false });
     expect(capacityReadiness(["/a"], { "/a": NaN }, 100).ready).toBe(false);

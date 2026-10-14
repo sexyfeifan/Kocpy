@@ -43,6 +43,10 @@ export function manifestRequirementMet(task: BackupTask): boolean {
 
 export function taskTrustState(task: BackupTask) {
   const copies = copyEvidenceSummary(task.destinations);
+  const permissionExclusions =
+    task.inventoryScope?.exclusions?.filter(
+      (item) => item.reason === "permission-denied",
+    ) || [];
   const imported = Boolean(
     task.provenance && task.provenance !== "kocpy-transfer",
   );
@@ -71,7 +75,10 @@ export function taskTrustState(task: BackupTask) {
     basis,
     verifiedAt,
     copies,
-    countableCopies: contentVerified ? copies.independentCopies : 0,
+    countableCopies:
+      contentVerified && !permissionExclusions.length
+        ? copies.independentCopies
+        : 0,
   });
   const activeLabels: Record<string, string> = {
     pending: "等待开始",
@@ -141,6 +148,14 @@ export function taskTrustState(task: BackupTask) {
         : "重新校验在线目标，补充完整校验证据。",
     );
   }
+  if (permissionExclusions.length)
+    return result(
+      "unverified",
+      `范围内内容校验通过 · 权限排除 ${permissionExclusions.length} 项`,
+      "已纳入范围的文件已完成内容校验；素材源仍有因权限无法读取的条目，不能证明源范围完整，也不能计作整卡达标副本。",
+      "查看权限排除路径，恢复可读后重新扫描并新建任务；不要仅据完成提示格式化原卡。",
+      true,
+    );
   let label = imported
     ? task.confidence === "baseline"
       ? "首次基线已建立"
@@ -179,6 +194,18 @@ export function taskMeetsCopyRequirement(
   )
     return false;
   return taskTrustState(task).countableCopies >= requiredCopies;
+}
+
+/** Completion messages share the same scope and trust conclusion as task details. */
+export function taskCompletionNotice(task: BackupTask) {
+  const trust = taskTrustState(task);
+  const passed = task.destinations.filter((destination) => destination.verified).length;
+  const permissions = task.inventoryScope?.exclusions.filter((entry) => entry.reason === "permission-denied").length || 0;
+  return {
+    title: trust.label,
+    attention: trust.status !== "completed",
+    body: `${task.name} · ${task.totalFiles} 个纳入文件 · ${passed} 个目标通过校验${permissions ? ` · ${permissions} 项权限排除，源范围未完整，整卡达标副本 0 份` : ` · 当前任务可计 ${trust.countableCopies} 份副本`}`,
+  };
 }
 
 export function projectCoverage(

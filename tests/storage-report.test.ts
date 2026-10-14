@@ -22,6 +22,24 @@ import {
   verifiedPhysicalCopyCount,
 } from "../src/main/project-closeout";
 import { APP_VERSION } from "../src/common/version";
+import type { BackupTask } from "../src/main/types";
+
+function freezeManifestFixture(task: BackupTask, directories: string[] = []) {
+  task.inventoryScope = {
+    policy: task.inventoryPolicy!,
+    capturedAt: 1,
+    sourcePath: task.sourcePath,
+    fingerprint: "a".repeat(64),
+    includedFiles: task.fileRecords.length,
+    includedBytes: task.fileRecords.reduce((sum, file) => sum + file.size, 0),
+    includedDirectories: directories.length,
+    includedDirectoryPaths: directories,
+    excludedFiles: 0,
+    excludedDirectories: 0,
+    excludedBytes: 0,
+    exclusions: [],
+  };
+}
 describe("Persistence and reports", () => {
   it("serializes concurrent writes and recovers the previous valid snapshot", async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "kocpy-store-"));
@@ -271,6 +289,7 @@ describe("Persistence and reports", () => {
         destinations: [],
       },
     ];
+    freezeManifestFixture(t, ["A"]);
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "ascmhl-test-")),
       manifest = path.join(dir, "0001_TEST.mhl"),
       ascMhl = generateAscMhl(t);
@@ -391,6 +410,7 @@ describe("Persistence and reports", () => {
         destinations: [],
       },
     ];
+    freezeManifestFixture(task);
     expect(generateMhl(task)).toContain(`<version>${APP_VERSION}</version>`);
     expect(generateAscMhl(task)).toContain(
       `<tool version="${APP_VERSION}">Kocpy</tool>`,

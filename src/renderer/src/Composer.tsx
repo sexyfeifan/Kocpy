@@ -44,6 +44,12 @@ interface Source {
   scan?: Scan;
 }
 const CAMERA_POSITIONS = ["A", "B", "C", "D", "E"];
+const exclusionReason = (item: Scan["exclusions"][number]) =>
+  ({
+    "hidden-by-user-filter": "用户选择过滤隐藏条目",
+    "system-directory": "系统隐藏目录",
+    "permission-denied": `无读取权限${item.permissionCode ? `（${item.permissionCode}）` : ""}`,
+  })[item.reason];
 
 export function composerDefaultsFromSettings(settings: Settings) {
   return {
@@ -880,14 +886,14 @@ export function Composer({
                 {sources.some((source) => source.scan?.exclusions.length) && (
                   <details className="backup-advanced">
                     <summary>
-                      本任务明确排除的隐藏条目
+                      本任务明确排除的条目
                       <span>
                         {sources.reduce(
                           (sum, source) =>
                             sum + (source.scan?.exclusions.length || 0),
                           0,
                         )}{" "}
-                        项 ·{" "}
+                        项 · 已知字节{" "}
                         {bytes(
                           sources.reduce(
                             (sum, source) =>
@@ -898,8 +904,15 @@ export function Composer({
                       </span>
                     </summary>
                     <p className="muted small">
-                      以下路径不参与复制或校验；原因均为“用户选择过滤隐藏条目”。
+                      以下路径不参与复制或校验；排除原因会随任务记录保存。
                     </p>
+                    {sources.some((source) =>
+                      source.scan?.exclusions.some((item) => item.bytesUnknown),
+                    ) && (
+                      <p className="small amber-text">
+                        部分条目大小未知；未扫描目录内的文件数量和字节未计入统计。
+                      </p>
+                    )}
                     <div className="final-path-list">
                       {sources.flatMap((source) =>
                         (source.scan?.exclusions || []).map((item) => (
@@ -908,7 +921,9 @@ export function Composer({
                             key={`${source.path}:${item.relativePath}`}
                           >
                             {leaf(source.path)}/{item.relativePath} ·{" "}
-                            {item.kind === "file" ? bytes(item.bytes) : "目录"}
+                            {item.kind === "directory" ? "目录 · " : ""}
+                            {item.bytesUnknown ? "大小未知" : bytes(item.bytes)} ·{" "}
+                            {exclusionReason(item)}
                           </p>
                         )),
                       )}
@@ -1381,10 +1396,10 @@ export function Composer({
                       </span>
                     </div>
                     <small className="muted">
-                      隐藏文件：{hidden ? "包含" : "排除"}
+                      普通隐藏文件：{hidden ? "包含" : "排除"}
                       （跟随偏好设置）；
                       {hidden
-                        ? "当前会保留 AppleDouble、已有报告和清单。"
+                        ? "当前会保留 AppleDouble、已有报告和清单。已知系统隐藏目录会跳过，权限受限条目会记录后继续读取。"
                         : "当前隐藏项会进入明确排除清单，本任务不属于未过滤的完整素材范围。"}
                     </small>
                   </div>
@@ -1398,7 +1413,7 @@ export function Composer({
                       (mirror
                         ? " 保留源文件夹，不加时间戳。"
                         : " 按次保存：源文件夹名_开始时的时间戳。")}
-                    隐藏文件：{hidden ? "包含" : "排除"}；
+                    普通隐藏文件：{hidden ? "包含" : "排除"}；
                     {automaticPdf
                       ? "完成后自动保存 PDF 报告。"
                       : "本任务不自动生成 PDF 报告。"}
@@ -1619,7 +1634,7 @@ export function Composer({
             {sources.some((s) => s.scan?.skipped) && (
               <div className="small muted">
                 排除 {sources.reduce((n, s) => n + (s.scan?.skipped || 0), 0)}{" "}
-                项隐藏条目 ·{" "}
+                项条目 · 已知字节{" "}
                 {bytes(
                   sources.reduce(
                     (n, s) => n + (s.scan?.skippedBytes || 0),
@@ -1627,6 +1642,13 @@ export function Composer({
                   ),
                 )}
               </div>
+            )}
+            {sources.some((source) => source.scan?.exclusions.some(
+              (item) => item.reason === "permission-denied",
+            )) && (
+              <p className="small amber-text" role="status">
+                存在因权限无法读取的条目；仅备份可读取内容，不计作完整素材达标副本。
+              </p>
             )}
             <div className="summary-flow">
               <MemoryStick size={19} />

@@ -62,6 +62,7 @@ import {
   dailyReportContribution,
 } from "./backup/ReportGenerator";
 import { generateMhl, generateAscMhl } from "./backup/ManifestGenerator";
+import { completedBackupCoversAttempt } from "../common/source-scan";
 import type {
   ArchiveChangeRecord,
   ArchiveEvidenceState,
@@ -168,7 +169,7 @@ import {
   taskMeetsCopyRequirement,
   verifiedPhysicalCopyCount,
 } from "./project-closeout";
-import { taskTrustState } from "../common/task-trust";
+import { taskTrustState, taskCompletionNotice } from "../common/task-trust";
 import { projectDates, shootingDateKey } from "../common/shooting-dates";
 import { groupLogicalVolumes } from "../common/logical-volumes";
 import {
@@ -2704,6 +2705,8 @@ app.whenReady().then(async () => {
         kind: item.kind,
         bytes: item.bytes,
         reason: item.reason,
+        bytesUnknown: item.bytesUnknown,
+        permissionCode: item.permissionCode,
       })),
       sample: r.files.slice(0, 6).map((f) => f.relativePath),
       breakdown,
@@ -2822,18 +2825,23 @@ app.whenReady().then(async () => {
           (task) =>
             task.status === "completed" &&
             task.destinations.every((destination) => destination.verified) &&
-            manifestRequirementMet(task),
+            manifestRequirementMet(task) &&
+            !task.inventoryScope?.exclusions.some(
+              (item) => item.reason === "permission-denied",
+            ),
         );
         const uncovered = related
-          .filter((task) => ["failed", "cancelled"].includes(task.status))
+          .filter((task) =>
+            ["failed", "cancelled"].includes(task.status) ||
+            task.inventoryScope?.exclusions.some(
+              (item) => item.reason === "permission-denied",
+            ),
+          )
           .some(
             (task) =>
               !complete.some(
                 (candidate) =>
-                  (candidate.createdAt || 0) >= (task.createdAt || 0) &&
-                  ((candidate.sourceVolumeUuid &&
-                    candidate.sourceVolumeUuid === task.sourceVolumeUuid) ||
-                    candidate.sourcePath === task.sourcePath),
+                  completedBackupCoversAttempt(candidate, task),
               ),
           );
         if (!related.length || !complete.length || uncovered) {
@@ -2841,7 +2849,7 @@ app.whenReady().then(async () => {
             path: volume.path,
             ok: false,
             error: uncovered
-              ? "存在尚未被后续成功备份覆盖的失败任务"
+              ? "存在尚未被后续完整备份覆盖的失败或权限排除任务"
               : "没有完整且通过校验的备份记录",
           });
           continue;
@@ -7333,12 +7341,10 @@ app.whenReady().then(async () => {
       if (main && !main.isDestroyed())
         main.webContents.send("tasks:settled", task);
       if (task.status === "completed" && Notification.isSupported()) {
-        const passed = task.destinations.filter(
-          (destination) => destination.verified,
-        ).length;
+        const notice = taskCompletionNotice(task);
         new Notification({
-          title: "备份与校验完成",
-          body: `${task.name} · ${task.totalFiles} 个文件 · ${passed} 个目标通过校验`,
+          title: notice.title,
+          body: notice.body,
           silent: !(await readSettings()).notificationSound,
         }).show();
       }

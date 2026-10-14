@@ -24,8 +24,8 @@ export function generateAscMhl(task: BackupTask, destinationIndex?: number) {
   if (task.fileRecords.some((file) => !file.ascMhlMd5)) throw new Error("ASC MHL 需要 MD5 清单，请先确保源或已校验副本可读取");
   const created = new Date().toISOString();
   const hashes = task.fileRecords.map((file) => `    <hash><path size="${file.size}">${xml(manifestPath(task, file.relativePath, destinationIndex))}</path><md5 action="original" hashdate="${created}">${file.ascMhlMd5}</md5><metadata><kocpy_task>${xml(task.id)}</kocpy_task></metadata></hash>`).join("\n");
-  if (task.inventoryPolicy?.mode === "filtered" && !task.inventoryScope)
-    throw new Error("过滤任务缺少冻结的排除范围，不能生成 ASC MHL");
+  if ((task.inventoryPolicy?.mode === "filtered" || task.inventoryPolicy?.sourceReadPolicy) && !task.inventoryScope)
+    throw new Error("任务缺少冻结的排除范围，不能生成 ASC MHL");
   const filteredPatterns = task.inventoryScope?.exclusions
     .map(
       (item) =>
@@ -34,7 +34,7 @@ export function generateAscMhl(task: BackupTask, destinationIndex?: number) {
     .join("");
   const ignore = !task.inventoryPolicy
     ? "<ignore><pattern>.DS_Store</pattern><pattern>._*</pattern></ignore>"
-    : task.inventoryPolicy.mode === "filtered" && filteredPatterns
+    : filteredPatterns
       ? `<ignore>${filteredPatterns}</ignore>`
       : "";
   const policy = task.inventoryPolicy?.version || "legacy-v1";

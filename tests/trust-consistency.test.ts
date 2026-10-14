@@ -5,9 +5,14 @@ import {
   manifestRequirementMet,
   taskMeetsCopyRequirement,
 } from "../src/main/project-closeout";
-import type { BackupTask, ProjectConfig } from "../src/main/types";
+import type {
+  BackupTask,
+  InventoryExcludedEntry,
+  ProjectConfig,
+} from "../src/main/types";
 import {
   taskTrustState,
+  taskCompletionNotice,
   savedDestinationBytes,
 } from "../src/common/task-trust";
 import {
@@ -43,7 +48,47 @@ export function trustedFixture(): BackupTask {
   });
   return task;
 }
+function recordExclusion(task: BackupTask, exclusion: InventoryExcludedEntry) {
+  task.inventoryScope = {
+    policy: structuredClone(task.inventoryPolicy!),
+    capturedAt: 1,
+    sourcePath: task.sourcePath,
+    fingerprint: "a".repeat(64),
+    includedFiles: task.totalFiles,
+    includedBytes: task.totalBytes,
+    includedDirectories: 0,
+    includedDirectoryPaths: [],
+    excludedFiles: exclusion.kind === "file" ? 1 : 0,
+    excludedDirectories: exclusion.kind === "directory" ? 1 : 0,
+    excludedBytes: exclusion.bytes,
+    exclusions: [exclusion],
+  };
+}
+function independentCopies(task: BackupTask) {
+  task.destinations.forEach((destination, index) => {
+    destination.storageEvidence = {
+      assessmentId: "synthetic-assessment",
+      checkedAt: 1,
+      volumeUuid: destination.volumeUuid,
+      kind: "local-physical",
+      domains: [`disk${index + 1}`],
+      reason: "generated fixture",
+    };
+  });
+}
 describe("one safety conclusion across consumers", () => {
+  it("retains permission scope risk in both native and in-app completion notices", () => {
+    const task = trustedFixture();
+    independentCopies(task);
+    recordExclusion(task, { relativePath: "restricted", kind: "directory", bytes: 0, modifiedAt: 0, reason: "permission-denied", permissionCode: "EACCES", bytesUnknown: true });
+    expect(taskCompletionNotice(task)).toMatchObject({ attention: true });
+    expect(taskCompletionNotice(task).title).toContain("权限排除 1 项");
+    expect(taskCompletionNotice(task).body).toContain("源范围未完整，整卡达标副本 0 份");
+    const complete = trustedFixture();
+    expect(taskCompletionNotice(complete)).toMatchObject({ title: "内容校验通过", attention: false });
+    complete.status = "failed";
+    expect(taskCompletionNotice(complete)).toMatchObject({ title: "备份失败", attention: true });
+  });
   it("does not turn two legacy volume identities into two independent copies", () => {
     const task = trustedFixture();
     expect(taskMeetsCopyRequirement(task, 2)).toBe(false);
@@ -60,6 +105,98 @@ describe("one safety conclusion across consumers", () => {
       projectCoverage({ ...project, requiredCopies: 1 }, [task]),
     ).toMatchObject({ compliant: 0, attention: 1 });
   });
+  it("keeps included hashes valid but denies copy compliance when source permissions omit material", () => {
+    const task = trustedFixture();
+    task.totalFiles = 1;
+    task.totalBytes = 4;
+    task.fileRecords = [{
+      name: "clip.mov",
+      relativePath: "clip.mov",
+      size: 4,
+      srcChecksum: "a".repeat(64),
+      destinations: task.destinations.map((destination) => ({
+        path: `${destination.path}/clip.mov`,
+        checksum: "a".repeat(64),
+        verified: true,
+      })),
+    }];
+    independentCopies(task);
+    expect(taskMeetsCopyRequirement(task, 2)).toBe(true);
+    recordExclusion(task, {
+      relativePath: "DCIM/Unreadable",
+      kind: "directory",
+      bytes: 0,
+      modifiedAt: 0,
+      reason: "permission-denied",
+      permissionCode: "EACCES",
+      bytesUnknown: true,
+    });
+    const before = structuredClone(task),
+      trust = taskTrustState(task);
+    expect(trust).toMatchObject({
+      status: "unverified",
+      contentVerified: true,
+      countableCopies: 0,
+      copies: { verifiedTargets: 2, independentCopies: 2 },
+    });
+    expect(trust.label).toContain("范围内内容校验通过");
+    expect(trust.label).toContain("权限排除 1 项");
+    expect(trust.explanation).toContain("不能证明源范围完整");
+    expect(taskMeetsCopyRequirement(task, 1)).toBe(false);
+    expect(taskMeetsCopyRequirement(task, 2)).toBe(false);
+    expect(projectCoverage(project, [task])).toMatchObject({
+      verified: 1,
+      compliant: 0,
+      attention: 1,
+    });
+    expect(taskTrustState({ ...task, fileRecords: [] })).toEqual(trust);
+    expect(task).toEqual(before);
+  });
+  it("keeps known system-directory omissions compatible with ordinary completed trust", () => {
+    const task = trustedFixture();
+    independentCopies(task);
+    recordExclusion(task, {
+      relativePath: ".Spotlight-V100",
+      kind: "directory",
+      bytes: 0,
+      modifiedAt: 0,
+      reason: "system-directory",
+      bytesUnknown: true,
+    });
+    expect(taskTrustState(task)).toMatchObject({
+      status: "completed",
+      label: "内容校验通过",
+      contentVerified: true,
+      countableCopies: 2,
+    });
+    expect(taskMeetsCopyRequirement(task, 2)).toBe(true);
+    expect(projectCoverage(project, [task])).toMatchObject({
+      verified: 1,
+      compliant: 1,
+      attention: 0,
+    });
+  });
+  it.each(["running", "failed", "cancelled"] as const)(
+    "permission exclusions do not promote %s tasks into verified included content",
+    (status) => {
+      const task = trustedFixture();
+      recordExclusion(task, {
+        relativePath: "clip.mov",
+        kind: "file",
+        bytes: 0,
+        modifiedAt: 0,
+        reason: "permission-denied",
+        permissionCode: "EPERM",
+        bytesUnknown: true,
+      });
+      task.status = status;
+      expect(taskTrustState(task)).toMatchObject({
+        status,
+        contentVerified: false,
+        countableCopies: 0,
+      });
+    },
+  );
   it.each(["missing", "checksumMismatches", "sizeMismatches"] as const)(
     "a stale extra-file waiver cannot waive %s",
     (key) => {

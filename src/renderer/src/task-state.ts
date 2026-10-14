@@ -1,4 +1,16 @@
 import type { BackupTask } from "./api";
+import { taskTrustState } from "../../common/task-trust";
+
+/** A finished copy with an unresolved scope still belongs in the attention filter. */
+export function matchesTransferFilter(task: BackupTask, filter: string): boolean {
+  if (filter === "all") return true;
+  if (filter === "active")
+    return ["pending", "running", "paused", "verifying"].includes(task.status);
+  const trust = taskTrustState(task);
+  if (filter === "failed")
+    return trust.status === "failed" || trust.status === "unverified";
+  return trust.status === filter;
+}
 
 /** File records are fetched on demand; live task headers must not be frozen by that snapshot. */
 export function selectLiveTask(

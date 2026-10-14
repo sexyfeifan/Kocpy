@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import path from "node:path";
+import { SYSTEM_SOURCE_DIRECTORIES } from "../common/source-scan";
 import { validateArchiveEvidence } from "./archive-evidence";
 import { validateCompletionActionRecords } from "./completion-automation";
 import { validateAutomaticReportRecord } from "./automatic-report";
@@ -689,7 +690,9 @@ function validateTaskSnapshots(task: BackupTask) {
       policy.includeSystemMetadata !== policy.includeHidden ||
       policy.includeEmptyDirectories !== true ||
       policy.symlinkPolicy !== "fail" ||
-      policy.specialFilePolicy !== "fail")
+      policy.specialFilePolicy !== "fail" ||
+      (policy.sourceReadPolicy !== undefined &&
+        policy.sourceReadPolicy !== "skip-system-and-permission-errors"))
   )
     throw new Error("任务文件范围策略无效");
   const scope = task.inventoryScope;
@@ -743,7 +746,26 @@ function validateTaskSnapshots(task: BackupTask) {
         !Number.isSafeInteger(item.bytes) ||
         item.bytes < 0 ||
         !Number.isFinite(item.modifiedAt) ||
-        item.reason !== "hidden-by-user-filter"
+        !["hidden-by-user-filter", "system-directory", "permission-denied"].includes(
+          item.reason,
+        ) ||
+        (item.reason !== "hidden-by-user-filter" &&
+          policy.sourceReadPolicy !== "skip-system-and-permission-errors") ||
+        (item.bytesUnknown !== undefined &&
+          typeof item.bytesUnknown !== "boolean") ||
+        (item.bytesUnknown === true && item.bytes !== 0) ||
+        (item.kind === "directory" &&
+          item.reason !== "hidden-by-user-filter" &&
+          item.bytesUnknown !== true) ||
+        (item.reason === "system-directory" &&
+          (item.kind !== "directory" ||
+            item.modifiedAt !== 0 ||
+            !SYSTEM_SOURCE_DIRECTORIES.has(path.posix.basename(item.relativePath)))) ||
+        (item.reason === "permission-denied" &&
+          (item.permissionCode === undefined || item.bytesUnknown !== true)) ||
+        (item.permissionCode !== undefined &&
+          (item.reason !== "permission-denied" ||
+            !["EPERM", "EACCES"].includes(item.permissionCode)))
       )
         throw new Error("任务文件范围排除记录无效");
       exclusionPaths.add(item.relativePath);

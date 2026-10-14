@@ -105,9 +105,9 @@ export async function generateReport(
   const generatedAt = options.generatedAt ?? Date.now();
   const statusLabel = trust.label;
   const statusColor =
-    trust.contentVerified
+    trust.status === "completed"
       ? "#22c55e"
-      : task.status === "unverified"
+      : trust.status === "unverified"
         ? "#f59e0b"
         : task.status === "failed"
           ? "#ef4444"
@@ -138,19 +138,26 @@ export async function generateReport(
     )
     .join("");
   const inventory = task.inventoryScope,
+    hasUnknownExcludedBytes = inventory?.exclusions.some(
+      (item) => item.bytesUnknown,
+    ),
     inventoryLabel = inventory
-      ? inventory.policy.mode === "complete"
+      ? inventory.policy.mode === "complete" && inventory.exclusions.length === 0
         ? `完整文件范围 · ${inventory.policy.version}`
         : `明确过滤范围 · ${inventory.policy.version}`
       : "历史扫描范围 · 不追溯改标完整",
     exclusionLabel = inventory
-      ? `${inventory.excludedFiles} 个文件 / ${inventory.excludedDirectories} 个目录 / ${formatBytes(inventory.excludedBytes)}`
+      ? `${inventory.excludedFiles} 个文件 / ${inventory.excludedDirectories} 个目录 / ${hasUnknownExcludedBytes ? "已知 " : ""}${formatBytes(inventory.excludedBytes)}`
       : `${task.skippedFiles || 0} 项（旧记录未保存精确路径和字节）`,
     exclusionRows = (inventory?.exclusions || [])
-      .map(
-        (item) =>
-          `<tr><td>${esc(item.relativePath)}</td><td>${item.kind === "file" ? "文件" : "目录"}</td><td>${formatBytes(item.bytes)}</td><td>用户选择过滤隐藏条目</td></tr>`,
-      )
+      .map((item) => {
+        const reason = {
+          "hidden-by-user-filter": "用户选择过滤隐藏条目",
+          "system-directory": "系统隐藏目录",
+          "permission-denied": `无读取权限${item.permissionCode ? `（${item.permissionCode}）` : ""}`,
+        }[item.reason];
+        return `<tr><td>${esc(item.relativePath)}</td><td>${item.kind === "file" ? "文件" : "目录"}</td><td>${item.bytesUnknown ? "未知" : formatBytes(item.bytes)}</td><td>${esc(reason)}</td></tr>`;
+      })
       .join("");
 
   const fileRows = (
@@ -337,7 +344,7 @@ ${eventRows ? `<div class="section"><h2>任务事件时间线</h2><table><thead>
   </div>
 </div>
 
-${exclusionRows ? `<div class="section"><h2>明确排除清单</h2><p>以下路径不属于本任务的备份与校验范围；完整路径、数量、字节和原因已随任务记录持久化。</p><table><thead><tr><th>相对路径</th><th>类型</th><th>字节</th><th>原因</th></tr></thead><tbody>${exclusionRows}</tbody></table></div>` : ""}
+${exclusionRows ? `<div class="section"><h2>明确排除清单</h2><p>以下路径不属于本任务的备份与校验范围；已读取的路径、数量、字节和原因已随任务记录持久化。${hasUnknownExcludedBytes ? "存在大小未知的排除条目，汇总字节仅含已知部分；未扫描目录内的文件数量与字节未计入统计。" : ""}</p><table><thead><tr><th>相对路径</th><th>类型</th><th>字节</th><th>原因</th></tr></thead><tbody>${exclusionRows}</tbody></table></div>` : ""}
 
 <div class="section destination-section">
   <h2>备份目的地</h2>
@@ -395,7 +402,7 @@ export async function generateDailyReport(
         const scope = contribution.scope === "daily-allocation"
           ? `当日分配${contribution.pendingAllocation ? ` · ${contribution.pendingGroups} 组待分配` : ""}`
           : "整卡";
-        return `<tr><td>${esc(projectLabel(t))}</td><td>${esc(t.name)}</td><td>${esc((t.devices || []).join(" / ") || "-")}</td><td>${contribution.files}</td><td>${formatBytes(contribution.bytes)}<br>${scope}</td><td style="color:${trust.contentVerified ? "#21b76b" : "#d9545d"}">${esc(trust.label)} · ${trust.countableCopies} 份可计数副本<br>${esc(trust.nextStep)}</td></tr>`;
+        return `<tr><td>${esc(projectLabel(t))}</td><td>${esc(t.name)}</td><td>${esc((t.devices || []).join(" / ") || "-")}</td><td>${contribution.files}</td><td>${formatBytes(contribution.bytes)}<br>${scope}</td><td style="color:${trust.status === "completed" ? "#21b76b" : "#d9545d"}">${esc(trust.label)} · ${trust.countableCopies} 份可计数副本<br>${esc(trust.nextStep)}</td></tr>`;
       },
     )
     .join("");

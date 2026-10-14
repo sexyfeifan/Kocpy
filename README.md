@@ -6,7 +6,7 @@
 
 <p align="center"><a href="#中文">中文</a> · <a href="#english">English</a> · <a href="#日本語">日本語</a></p>
 
-当前正式版：**0.1.45** · [下载](https://github.com/sexyfeifan/Kocpy/releases/latest) · [使用手册](docs/USER_GUIDE.md) · [文档导航](docs/README.md) · [0.1.45 更新](docs/RELEASE_NOTES_0.1.45.md)
+当前版本：**0.1.46** · [下载](https://github.com/sexyfeifan/Kocpy/releases/latest) · [使用手册](docs/USER_GUIDE.md) · [文档导航](docs/README.md) · [0.1.46 更新](docs/RELEASE_NOTES_0.1.46.md)。正式安装包与公开状态以 GitHub Release 为准。
 
 ![Kocpy 工作台](docs/screenshots/dashboard.png)
 
@@ -16,12 +16,14 @@
 
 ### 下载与安装
 
-| 你的 Mac | 0.1.45 安装包 |
+| 你的 Mac | 0.1.46 安装包 |
 | --- | --- |
-| Apple Silicon（M 系列） | [下载 arm64 DMG](https://github.com/sexyfeifan/Kocpy/releases/download/v0.1.45/Kocpy-0.1.45-arm64.dmg) |
-| Intel | [下载 x64 DMG](https://github.com/sexyfeifan/Kocpy/releases/download/v0.1.45/Kocpy-0.1.45-x64.dmg) |
+| Apple Silicon（M 系列） | [下载 arm64 DMG](https://github.com/sexyfeifan/Kocpy/releases/download/v0.1.46/Kocpy-0.1.46-arm64.dmg) |
+| Intel | [下载 x64 DMG](https://github.com/sexyfeifan/Kocpy/releases/download/v0.1.46/Kocpy-0.1.46-x64.dmg) |
 
-下载后先核对同一 Release 的 [SHA256SUMS.txt](https://github.com/sexyfeifan/Kocpy/releases/download/v0.1.45/SHA256SUMS.txt)，再打开 DMG，将 Kocpy 拖入“应用程序”。候选包不能用其摘要校验正式附件。
+下载后先核对同一 Release 的 [SHA256SUMS.txt](https://github.com/sexyfeifan/Kocpy/releases/download/v0.1.46/SHA256SUMS.txt)，再打开 DMG，将 Kocpy 拖入“应用程序”。候选包不能用其摘要校验正式附件。
+
+软件内“检查更新”打开与你的 Mac 架构匹配的官方 DMG 下载链接；下载并核对摘要后，正常退出 Kocpy，手动替换“应用程序”中的旧 App，再启动确认版本。
 
 **当前没有 Developer ID 签名或 Apple 公证。** 安装包仅采用 ad-hoc 签名；同版 Release 提供的 SHA-256 用于下载完整性核对。两者都不构成 Apple 身份认证或 Apple 公证。遇到系统阻止、架构不符或“已损坏”提示，请按[安装、升级与排查说明](docs/INSTALLATION.md)处理，不要直接关闭系统安全防护。
 
@@ -48,7 +50,7 @@
 
 | 模块 | 已实现能力 |
 | --- | --- |
-| 备份与校验 | 1–4 个目的地；SHA-256／SHA-1／MD5；逐目标独立回读；新任务默认完整清单包含隐藏项与空目录；完整源与最终目的地路径；实时写入、回读速度与进度 |
+| 备份与校验 | 1–4 个目的地；SHA-256／SHA-1／MD5；逐目标独立回读；新任务默认保留普通隐藏项与空目录，跳过系统目录并记录权限排除；完整源与最终目的地路径；实时写入、回读速度与进度 |
 | 暂停与恢复 | 暂停／继续、大文件断点恢复、异常退出恢复、只重试失败目标；离线、空间、权限与身份异常的检查引导 |
 | 后台任务 | 首页集中显示运行／待处理任务；独立页面按状态、类型和项目筛选近期历史，显示阶段、当前文件、路径、速度、用时、结果与错误 |
 | 拍摄项目 | 按拍摄日分组的设备／机位矩阵和素材卷明细；逻辑素材卷去重统计；收工副本要求；按需创建目录、安全空脚手架整理；日计划、规则版本、检查表与交接 |
@@ -63,7 +65,7 @@
 | 长期归档 | 按盘、项目、拍摄日、素材卷或单文件复校验；健康历史、位置变化、周期提醒、保留损坏原件的副本修复 |
 | 工作站协作 | 元数据包导出、只读预检、逐项冲突决定、可恢复合并与审计；同包同决定重复导入不重复写入；可选只读局域网索引 |
 | 安全自动化 | 历史素材卡与疑似重复建议；完成后报告／代理／交付／推出建议；用户逐项确认后执行并保留结果 |
-| 诊断与界面 | 受控读写预检、故障时间线、脱敏诊断；深浅色外观、固定侧栏字图比例、独立滚动、减少动态效果支持、默认折叠的模板管理与按需展开的使用说明 |
+| 诊断与界面 | 受控读写预检、故障时间线、脱敏诊断；冷银玻璃深浅外观、功能图标与状态语义色、真实源与多目标进度、固定侧栏字图比例、独立滚动、减少动态效果支持、默认折叠的模板管理与按需展开的使用说明 |
 
 备份工作优先于后台代理；用户手动暂停的代理不会被自动恢复。工作站包交换记录与证据，不复制原始素材，也不证明另一台 Mac 上的素材当前健康。
 
@@ -80,23 +82,22 @@
 
 普通备份按只读原则处理素材源。修复副本、修订 MHL 等维护写入必须经过明确确认；MHL 修订保留原始清单与审计，不删除素材，也不允许豁免大小或哈希异常。删除项目只清理 Kocpy 内部记录，不删除磁盘素材、报告或清单。
 
-### 0.1.45 更新重点
+### 0.1.46 更新重点
 
-1. **并行与队列管理**：默认／每批自动、1、2、3；独立暂停、取消、备份优先，支持筛选、批量范围、优先级和移到队首。
-2. **入队安全预检**：媒体参数、保护目录、可用空间与队列容量预留；参数变化及执行前重新检查。
-3. **折叠高级转码**：H.264 软件／自动／仅硬件、ProRes 档位、帧率、音频、时间码、旋转、比例与质量设置；记录实际编码器。
-4. **冻结 LUT 与严格交付**：LUT 哈希复核，原始证据保留，意外变化阻断、警告例外审计；不覆盖原素材或已有输出。
-5. **可复用专项工具**：合成双音轨／高级转换、故障注入与 NLE／真实介质协议，明确未执行边界。更新历史按版本折叠，代理面板独立滚动且操作保持可达。
-6. **运行时与发布维护**：Electron 锁定 44.5.1，部分签名凭据阻断发布；当前安装包仍为 ad-hoc，不宣称完成身份签名或公证。
+1. **冷银玻璃界面**：分层面板、银色主操作和蓝／青／紫功能图标，深浅主题使用同一套交互规则。原侧栏字号与图标尺寸保持稳定，密集内容独立滚动。
+2. **真实备份进度**：工作台显示实际素材源与各目的地；复制和独立回读分别展示，内容已校验与物理独立副本达标分别判断。
+3. **系统目录过滤**：新任务跳过 `.Spotlight-V100`、`.Trashes` 等 macOS 系统目录，普通隐藏素材继续遵循“包含隐藏文件”设置。
+4. **权限错误后继续扫描**：子目录或条目遇到 `EPERM`／`EACCES` 时保留排除证据，继续读取其余素材。权限遗漏标记范围风险，不算整卡完整副本，也不用于推出已完成素材卡。
+5. **旧任务兼容**：历史任务保留原冻结策略和路径；哈希、卷身份、最终源复扫与逐目标回读要求继续生效。Electron 仍锁定 44.5.1，安装包采用 ad-hoc，不宣称身份签名或公证。
 
-[完整更新说明](docs/RELEASE_NOTES_0.1.45.md) · [历史正式发布](https://github.com/sexyfeifan/Kocpy/releases)
+[完整更新说明](docs/RELEASE_NOTES_0.1.46.md) · [历史正式发布](https://github.com/sexyfeifan/Kocpy/releases)
 
 ### 验证范围与已知限制
 
-0.1.45 的精确自动测试、架构、候选包与正式附件验收范围见[验证记录](docs/VERIFICATION.md)和同版 Release；任何未执行项目不会计作通过。当前源码全量回归为 **547 项通过、4 项跳过**。
+0.1.46 的自动测试、架构、准确安装包与桌面验收范围，以[验证记录](docs/VERIFICATION.md)和同版公开 Release 为准。历史或开发版本通过的检查不会自动计作本版正式附件通过；未执行项目保持明确标注。
 
 - 没有 Developer ID／Apple 公证，不宣称通过 App Store 审核。
-- 原生 Apple Silicon／Intel 候选与正式标签流水线、正式附件摘要和回下载核验以[验证记录](docs/VERIFICATION.md)中的 0.1.45 章节为准；候选成功不等同于正式附件通过。
+- 原生 Apple Silicon、Rosetta 与原生 Intel 分开记录；候选成功不等同于正式附件通过，准确附件摘要与回下载核验见[验证记录](docs/VERIFICATION.md)。
 - 历史硬件或双机结果不能泛化成当前版本在所有设备上通过；真实外置双盘、NAS／SMB 网络中断／重挂载、拔盘、睡眠与空间耗尽的本版复验边界仍明确保留；当前没有真实 NAS／SMB 真机结果。
 - “10k”只是 10,000 条恢复元数据的结构与容量估算，不是 10,000 个真实文件的复制、哈希、恢复或性能测试；日志恢复解析还会产生额外内存占用。
 - Resolve 有已记录的合成样本实际导入证据；Premiere Pro／Final Cut Pro 清单完成结构与生成检查，未宣称完成对应软件实机导入。
@@ -151,11 +152,11 @@ Kocpy is a local-first macOS workspace for verified media offload and production
 
 Project mode adds shooting days, cameras and positions, logical card volumes, closeout requirements, versioned rules, editable templates and handoff records. Existing backups can be adopted against MHL/SHA manifests, read into a first baseline, or imported as unverified structure. A first baseline does not prove historical completeness, and different volume UUIDs alone do not prove physical independence.
 
-Current features also include recovery, media relinking, evidence-backed H.264/ProRes proxies, delivery manifests, archive reverification, audited metadata exchange between workstations, opt-in completion actions, diagnostics, light/dark themes and reduced motion. Release **0.1.45** includes bounded proxy concurrency, capacity preflight and folded advanced encoding settings, plus Electron 44.5.1 and explicit signing gates. Hash verification cannot be waived. Version history remains collapsed per version.
+Current features also include recovery, media relinking, evidence-backed H.264/ProRes proxies, delivery manifests, archive reverification, audited metadata exchange between workstations, opt-in completion actions and diagnostics. Version **0.1.46** adds cold silver glass surfaces, functional icon colors and actual source-to-destination progress. Copying, content verification and independent-copy compliance remain separate facts. New scans skip macOS system directories and record descendant permission failures while continuing readable media; permission omissions prevent whole-card compliance. Historical tasks retain their frozen policies. Light/dark themes, fixed sidebar sizing and reduced motion remain supported.
 
 [Download](https://github.com/sexyfeifan/Kocpy/releases/latest) · [Installation](docs/INSTALLATION.md) · [Guide (Chinese)](docs/USER_GUIDE.md) · [Verification scope](docs/VERIFICATION.md)
 
-Separate arm64 and x64 installers are available in the 0.1.45 Release with `SHA256SUMS.txt`. They use ad-hoc signing, **not Developer ID signing or Apple notarization**. Automated tests and historical hardware results are not certification for every storage setup; this release has no real NAS/SMB device result and does not claim complete two-independent-external-disk coverage.
+Use the published 0.1.46 Release's separate arm64 or x64 installer and matching `SHA256SUMS.txt`; public asset availability is determined by GitHub Releases. The update command opens the matching DMG download, after which you quit Kocpy and replace the installed App manually. Packages use ad-hoc signing, **not Developer ID signing or Apple notarization**. Automated tests and historical hardware results are not certification for every storage setup; real NAS/SMB and physical two-disk results require their own recorded evidence.
 
 ## 日本語
 
@@ -163,11 +164,11 @@ Kocpy は macOS 向けのローカル優先メディアバックアップ／プ�
 
 プロジェクトモードでは撮影日、カメラ／位置、素材巻、必要コピー数、ルール履歴、テンプレート、引き継ぎを管理できます。既存素材の取り込み、MHL／SHA 比較、復旧、プロキシ、納品リスト、長期再検証、監査付きメタデータ交換にも対応します。初回基準は取り込み以前の完全性を証明せず、異なる UUID だけでは物理的に独立したコピーと認定しません。
 
-正式版 **0.1.45** は、プロキシの並列数、容量事前確認、折りたたみ式詳細設定に加え、Electron 44.5.1 と明確な署名検証を含みます。ハッシュ検証は免除できません。更新履歴はバージョンごとに折りたたんで表示します。
+バージョン **0.1.46** は、シルバーのガラス調パネル、機能別アイコン色、実際のソースと保存先の進捗を表示します。コピー、内容検証、物理的に独立したコピー数は別々に扱います。新規タスクは macOS システムディレクトリを除外し、子項目の権限エラーを記録して読み取り可能な素材を続けます。権限による欠落は完全なカードバックアップとして数えません。既存タスクの範囲は保持し、サイドバーの文字・アイコンサイズは縮小しません。
 
 [ダウンロード](https://github.com/sexyfeifan/Kocpy/releases/latest) · [インストール（中国語）](docs/INSTALLATION.md) · [使用手冊（中国語）](docs/USER_GUIDE.md) · [検証範囲](docs/VERIFICATION.md)
 
-Apple Silicon／Intel 用の 0.1.45 インストーラと `SHA256SUMS.txt` は同版 Release から取得できます。現在は ad-hoc 署名のみで、**Developer ID 署名・Apple 公証はありません**。自動テストをあらゆる実機構成の検証とみなさないでください。実 NAS／SMB 機器での結果や、独立した外付け二台構成をすべて検証済みとは表明していません。
+公開された 0.1.46 Release の Apple Silicon／Intel 用インストーラと、同版の `SHA256SUMS.txt` を使用してください。公開状態は GitHub Releases で確認できます。更新操作は適切な DMG のダウンロードを開き、終了後にインストール済み App を手動で置き換えます。現在は ad-hoc 署名のみで、**Developer ID 署名・Apple 公証はありません**。自動テストをあらゆる実機構成の検証とみなさないでください。実 NAS／SMB や物理的に独立した二台の結果には、それぞれの記録が必要です。
 
 ## License
 

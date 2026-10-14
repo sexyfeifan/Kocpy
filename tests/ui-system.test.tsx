@@ -81,7 +81,7 @@ describe("0.1.25 shared UI contract", () => {
       "--accent: var(--purple)",
       "--warning: var(--amber)",
       "--control-height: 38px",
-      "--dialog-radius: 16px",
+      "--dialog-radius: 20px",
     ])
       expect(css).toContain(token);
     expect(css).toMatch(/\.wizard-steps\s*\{[^}]*overflow-x:\s*auto/s);

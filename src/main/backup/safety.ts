@@ -1,6 +1,8 @@
 import { promises as fs } from "node:fs";
+import type { Stats } from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
+import { SYSTEM_SOURCE_DIRECTORIES } from "../../common/source-scan";
 import type {
   InventoryExcludedEntry,
   InventoryPolicySnapshot,
@@ -88,6 +90,7 @@ export function completeInventoryPolicy(
     includeEmptyDirectories: true,
     symlinkPolicy: "fail",
     specialFilePolicy: "fail",
+    sourceReadPolicy: "skip-system-and-permission-errors",
   };
 }
 
@@ -98,6 +101,11 @@ const legacyExcluded = (name: string, includeHidden: boolean) =>
 
 const readableError = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
+
+const permissionCode = (error: unknown): "EPERM" | "EACCES" | undefined => {
+  const code = (error as NodeJS.ErrnoException | null)?.code;
+  return code === "EPERM" || code === "EACCES" ? code : undefined;
+};
 
 export async function scan(
   source: string,
@@ -121,10 +129,34 @@ export async function scan(
   });
   if (!sourceStat.isDirectory() || sourceStat.isSymbolicLink())
     throw new Error("素材源必须是实际目录");
+  const toleratePermissions =
+    policy?.sourceReadPolicy === "skip-system-and-permission-errors";
   let skipped = 0;
+  function exclude(
+    relativePath: string,
+    kind: InventoryExcludedEntry["kind"],
+    reason: InventoryExcludedEntry["reason"],
+    stat?: Stats,
+    code?: "EPERM" | "EACCES",
+  ) {
+    const item: InventoryExcludedEntry = {
+      relativePath,
+      kind,
+      bytes: kind === "file" && stat ? stat.size : 0,
+      modifiedAt: stat?.mtimeMs || 0,
+      reason,
+      ...(kind === "directory" || !stat ? { bytesUnknown: true } : {}),
+      ...(code ? { permissionCode: code } : {}),
+    };
+    exclusions.push(item);
+    skipped++;
+    return item;
+  }
   async function walk(
     dir: string,
     inheritedExclusion?: InventoryExcludedEntry["reason"],
+    excludedDirectory?: InventoryExcludedEntry,
+    directoryStat?: Stats,
   ) {
     signal?.throwIfAborted();
     let entries: import("node:fs").Dirent[];
@@ -133,7 +165,25 @@ export async function scan(
         (left, right) => left.name.localeCompare(right.name),
       );
     } catch (error) {
+      signal?.throwIfAborted();
       const relativePath = path.relative(source, dir) || ".";
+      const code = permissionCode(error);
+      if (toleratePermissions && dir !== source && code) {
+        if (excludedDirectory) {
+          excludedDirectory.reason = "permission-denied";
+          excludedDirectory.bytesUnknown = true;
+          excludedDirectory.permissionCode = code;
+        } else {
+          exclude(
+            relativePath,
+            "directory",
+            "permission-denied",
+            directoryStat,
+            code,
+          );
+        }
+        return false;
+      }
       throw new Error(
         `无法读取素材目录：${relativePath}：${readableError(error)}`,
       );
@@ -146,10 +196,33 @@ export async function scan(
       }
       const abs = path.join(dir, entry.name),
         rel = path.relative(source, abs);
-      let st: Awaited<ReturnType<typeof fs.lstat>>;
+      if (toleratePermissions) {
+        // Do not turn symlinks or special entries into permission exemptions.
+        if (entry.isSymbolicLink())
+          throw new Error(`不跟随素材中的符号链接，请移除或选择实际目录：${rel}`);
+        if (!entry.isDirectory() && !entry.isFile())
+          throw new Error(`不支持的特殊文件：${rel}`);
+        if (entry.isDirectory() && SYSTEM_SOURCE_DIRECTORIES.has(entry.name)) {
+          exclude(rel, "directory", "system-directory");
+          continue;
+        }
+      }
+      let st: Stats;
       try {
         st = await fs.lstat(abs);
       } catch (error) {
+        signal?.throwIfAborted();
+        const code = permissionCode(error);
+        if (toleratePermissions && code) {
+          exclude(
+            rel,
+            entry.isDirectory() ? "directory" : "file",
+            "permission-denied",
+            undefined,
+            code,
+          );
+          continue;
+        }
         throw new Error(`无法读取素材条目：${rel}：${readableError(error)}`);
       }
       if (st.isSymbolicLink())
@@ -162,15 +235,16 @@ export async function scan(
           ? "hidden-by-user-filter"
           : undefined);
       if (exclusion) {
-        exclusions.push({
+        const item: InventoryExcludedEntry = {
           relativePath: rel,
           kind: st.isDirectory() ? "directory" : "file",
           bytes: st.isFile() ? st.size : 0,
           modifiedAt: st.mtimeMs,
           reason: exclusion,
-        });
+        };
+        exclusions.push(item);
         skipped++;
-        if (st.isDirectory()) await walk(abs, exclusion);
+        if (st.isDirectory()) await walk(abs, exclusion, item, st);
         continue;
       }
       if (st.isDirectory()) {
@@ -182,7 +256,10 @@ export async function scan(
           atimeMs: st.atimeMs,
           mode: st.mode,
         });
-        await walk(abs);
+        if (!(await walk(abs, undefined, undefined, st))) {
+          directories.pop();
+          directoryMetadata.pop();
+        }
       } else if (st.isFile()) {
         files.push({
           name: entry.name,
@@ -196,6 +273,7 @@ export async function scan(
         });
       }
     }
+    return true;
   }
   await walk(source);
   const totalBytes = files.reduce((n, f) => n + f.size, 0);
@@ -221,6 +299,9 @@ export async function scan(
           item.bytes,
           item.modifiedAt,
           item.reason,
+          ...(toleratePermissions
+            ? [item.bytesUnknown || false, item.permissionCode || null]
+            : []),
         ]),
       }),
     )

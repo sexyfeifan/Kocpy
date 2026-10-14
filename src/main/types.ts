@@ -371,6 +371,8 @@ export interface InventoryPolicySnapshot {
   includeEmptyDirectories: true;
   symlinkPolicy: "fail";
   specialFilePolicy: "fail";
+  /** Absent in historical snapshots, which retain their original strict scan. */
+  sourceReadPolicy?: "skip-system-and-permission-errors";
 }
 
 export interface InventoryExcludedEntry {
@@ -378,7 +380,10 @@ export interface InventoryExcludedEntry {
   kind: "file" | "directory";
   bytes: number;
   modifiedAt: number;
-  reason: "hidden-by-user-filter";
+  reason: "hidden-by-user-filter" | "system-directory" | "permission-denied";
+  /** The entry or skipped subtree could not be measured; bytes is a placeholder. */
+  bytesUnknown?: boolean;
+  permissionCode?: "EPERM" | "EACCES";
 }
 
 export interface InventoryScopeSnapshot {
