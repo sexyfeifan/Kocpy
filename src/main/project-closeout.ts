@@ -74,7 +74,9 @@ export function projectDeviceCells(
     if (
       tasksForDate.some(
         (task) => task.devices.includes(device) && !task.cameraPosition,
-      )
+      ) || Object.entries(project.expectedDevicesByDate || {}).some(([date, keys]) =>
+        (!shootingDate || shootingDateKey(date) === shootingDateKey(shootingDate)) && keys.includes(device)) ||
+      declaredKeys.includes(`${device}::unassigned`)
     )
       cells.push({
         device,

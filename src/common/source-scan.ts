@@ -1,4 +1,5 @@
 import type { BackupTask } from "../main/types";
+import { taskHasPartialSelection } from "./task-trust";
 
 /** OS-owned volume directories; ordinary hidden material remains in scope. */
 export const SYSTEM_SOURCE_DIRECTORIES = new Set([
@@ -16,6 +17,7 @@ export function completedBackupCoversAttempt(
   completed: BackupTask,
   attempt: BackupTask,
 ): boolean {
+  if (taskHasPartialSelection(completed)) return false;
   if ((completed.createdAt || 0) < (attempt.createdAt || 0)) return false;
   if (completed.inventoryScope?.exclusions.some(
     (item) => item.reason === "permission-denied",

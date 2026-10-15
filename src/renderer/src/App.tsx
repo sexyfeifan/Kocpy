@@ -191,6 +191,10 @@ const defaults: Settings = {
 export type ComposerRequest = {
   source?: string;
   project?: ProjectConfig;
+  shootingDate?: string;
+  device?: string;
+  position?: string;
+  addTemporaryDevice?: boolean;
 };
 
 export function requestComposerWhenSettingsReady(
@@ -303,7 +307,7 @@ function ProjectVolumeRows({
     ReturnType<typeof groupLogicalVolumes>[number] & {
       dateFiles?: number;
       dateBytes?: number;
-      allocationScope?: "full-card" | "daily-allocation";
+      allocationScope?: "full-card" | "daily-allocation" | "selected-scope";
       pendingAllocation?: boolean;
       pendingAllocationGroups?: number;
     }
@@ -352,6 +356,7 @@ function ProjectVolumeRows({
               <>
                 {logicalVolume.allocationScope === "daily-allocation"
                   ? " · 当日分配"
+                  : logicalVolume.allocationScope === "selected-scope" ? " · 选定范围"
                   : " · 整卡"}
                 {logicalVolume.pendingAllocation
                   ? ` · ${logicalVolume.pendingAllocationGroups || 1} 组待分配（暂留原日期）`
@@ -416,6 +421,7 @@ export function ProjectDayGroups({
   onOpenTask,
   onManifestIssue,
   onBaseline,
+  onNewBackup,
 }: {
   project: ProjectConfig;
   summaries: ReturnType<typeof projectDaySummary>[];
@@ -429,6 +435,7 @@ export function ProjectDayGroups({
   onOpenTask: (taskId: string) => void;
   onManifestIssue: (task: BackupTask) => void;
   onBaseline: (task: BackupTask) => void;
+  onNewBackup?: (shootingDate: string, addTemporaryDevice?: boolean) => void;
 }) {
   return (
     <div className="project-day-groups">
@@ -602,6 +609,10 @@ export function ProjectDayGroups({
                   })}
                 </div>
                 <div className="project-day-actions">
+                  {onNewBackup && project.status !== "archived" && <>
+                    <Button kind="primary" onClick={() => onNewBackup(summary.shootingDate)}><Plus size={13} />当日新建备份</Button>
+                    <Button kind="subtle" onClick={() => onNewBackup(summary.shootingDate, true)}><Plus size={13} />添加当日设备并备份</Button>
+                  </>}
                   <Button
                     kind="subtle"
                     onClick={() => onUpdateSchedule(summary.shootingDate)}
@@ -683,10 +694,7 @@ export function App() {
     [volumes, setVolumes] = useState<Volume[]>([]),
     [settings, setSettings] = useState<Settings>(defaults),
     [settingsReady, setSettingsReady] = useState(false);
-  const [composer, setComposer] = useState<{
-      source?: string;
-      project?: ProjectConfig;
-    } | null>(null),
+  const [composer, setComposer] = useState<ComposerRequest | null>(null),
     [editor, setEditor] = useState<Partial<ProjectConfig> | null>(null),
     [existingImport, setExistingImport] = useState<{
       project: ProjectConfig;
@@ -1395,6 +1403,7 @@ export function App() {
     dateValue: string,
     device?: string,
     decision: "unused" | "expected" | "clear" = "unused",
+    purpose?: "temporary-device",
   ) => {
     if (!dailyPlanOperator.trim()) {
       notify("请先填写每日计划操作人，再确认设备使用状态", true);
@@ -1416,6 +1425,7 @@ export function App() {
           scheduleKey: device,
           decision: recordedDecision,
           operator: dailyPlanOperator.trim(),
+          purpose,
         });
       setProjects(updated);
       notify(
@@ -2775,6 +2785,7 @@ export function App() {
                                       temporaryDailyPosition.trim()
                                   : temporaryDailyDevice.trim(),
                                 "expected",
+                                "temporary-device",
                               ).then((saved) => {
                                 if (saved) {
                                   setTemporaryDailyDevice("");
@@ -2849,6 +2860,7 @@ export function App() {
                         onOpenTask={setDetail}
                         onManifestIssue={setManifestIssue}
                         onBaseline={setExistingBaseline}
+                        onNewBackup={(shootingDate, addTemporaryDevice) => openComposer({ project: projectDetail, shootingDate, addTemporaryDevice })}
                       />
                       <div className="closeout-actions">
                         <Button
@@ -3381,6 +3393,7 @@ export function App() {
             notify("任务已加入传输队列");
           }}
           onCreateProject={() => setEditor({})}
+          onProjectsChanged={setProjects}
         />
       )}
       {editor && (
@@ -5800,6 +5813,28 @@ function HelpPage({
     page?: Page;
   }> = [
     {
+      id: "selection-and-day-device",
+      icon: CalendarDays,
+      title: "当日临时设备与混合日期素材",
+      purpose: "临时加入当天设备，并在不改动源素材的前提下明确本次备份范围。",
+      steps: [
+        "在项目详情选择拍摄日，点击“添加当日设备并备份”，填写设备、可选机位及实际操作人。设备只加入该日期的计划和项目汇总，不添加到其他拍摄日，也不提前创建其他日期的空目录。",
+        "保存当日设备后会进入备份流程；取消备份不会撤销已保存的每日计划。已有设备可直接选择，不要用别名重复建立相同设备。",
+        "新建备份默认整卡复制。确认页先显示轻量日期线索；若混有多日内容，点击“分析并选择日期范围”才会逐文件读取 SHA-256 并核对历史副本。",
+        "展开素材组，核对日期依据和关联路径；跨午夜、相机时钟不准时可手动指定拍摄日。勾选需要的日期并填写范围确认人，点击确认同时确认显示的日期归属。",
+        "同名关联文件按组处理，未知文件、共享索引、不可安全拆分的摄影机包及不能判定关联的独立音频保留。只有同项目、在线、内容一致且满足物理独立副本要求的历史内容，才可作为已保护的跳过依据。",
+        "未能证明已有足够备份的未选素材，必须单独确认风险。开始前和完成时再次核对冻结范围；源文件或历史依据变化会停止任务。",
+      ],
+      tips: [
+        "筛选只决定写入哪些文件，不删除、移动或改名源素材，也不修改原始 MHL。文件名、日期或大小相同不等于历史副本安全。",
+        "部分范围完成只证明本次选定文件已校验，不能当作整卡副本，不能据此清空或格式化源卡；项目中保留未覆盖风险。",
+        "选定范围目录会在复制前写入不可变范围声明，报告列出选中和未选内容及原因。原始 MHL 仍描述原整卡，不能拿它宣称筛选结果是完整整卡。",
+        "选定范围或每日交付目录（包括其中的媒体子目录）不能重新接管或备份成完整卡。搬运时使用独立归档转存；传递原任务记录时，在原工作站导出工作站包，再在第二台 Mac 的项目模板与交接中预检并合并。不要删除范围声明。",
+        "日期分析会额外读取源文件与相关历史副本，耗时独立于实际复制。可取消分析并明确恢复整卡备份；关联不明确时宁可保留，不自动丢弃。",
+      ],
+      page: "projects",
+    },
+    {
       id: "interaction-safety",
       icon: ShieldCheck,
       title: "操作范围、后台任务与安全确认",
@@ -6255,6 +6290,16 @@ function HelpPage({
     },
   ];
   const releaseNotes = [
+    {
+      version: "0.1.49",
+      title: "当日设备、保守日期筛选与布局整理",
+      paragraphs: [
+        "项目卡片摘要保留左右留白，窄卡片按容器宽度换列，长设备名、路径及表单按钮安全换行；侧栏文字和图标不缩小。",
+        "项目详情可添加仅当日使用的临时设备并进入备份，自动纳入当日计划与项目汇总，不扩散到其他日期。",
+        "整卡备份仍为默认。可只读分析多日素材、确认拍摄日与文件组后选择范围；关联文件、未知文件、共享索引及不可安全拆分的包保守保留。",
+        "逐文件校验、历史在线独立副本核对及执行前后范围复核保持开启；部分备份保留范围声明和审计，不能伪装为整卡完整或允许清空源卡。",
+      ],
+    },
     {
       version: "0.1.48",
       title: "按项目副本要求说明目的地配置",

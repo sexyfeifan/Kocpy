@@ -27,6 +27,16 @@ contextBridge.exposeInMainWorld("api", {
   getCatalogFiles: call("catalog:files"),
   rebuildCatalog: call("catalog:rebuild"),
   createTask: call("tasks:create"),
+  inspectBackupDates: call("selection:inspect"),
+  analyzeBackupSelection: call("selection:analyze"),
+  confirmBackupSelection: call("selection:confirm"),
+  cancelBackupSelection: call("selection:cancel"),
+  discardBackupSelection: call("selection:discard"),
+  onBackupSelectionProgress: (callback: (payload: unknown) => void) => {
+    const listener = (_event: unknown, payload: unknown) => callback(payload);
+    ipcRenderer.on("selection:progress", listener);
+    return () => ipcRenderer.removeListener("selection:progress", listener);
+  },
   startTask: call("tasks:start"),
   cancelTask: call("tasks:cancel"),
   pauseTask: call("tasks:pause"),

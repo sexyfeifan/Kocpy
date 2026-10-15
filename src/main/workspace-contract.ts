@@ -1,10 +1,13 @@
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { SYSTEM_SOURCE_DIRECTORIES } from "../common/source-scan";
+import { conservativeSelectionFamilies } from "../common/backup-selection";
+import { dailyDeliverySelectedRecords } from "../common/date-allocation";
 import { validateArchiveEvidence } from "./archive-evidence";
 import { validateCompletionActionRecords } from "./completion-automation";
 import { validateAutomaticReportRecord } from "./automatic-report";
 import { validateFileRecordMatrix } from "./inventory-baseline";
+import { assertBackupSelectionStructure, backupSelectionScope } from "./backup-selection";
 import type { ArchiveEvidenceState, BackupTask, ProjectConfig } from "./types";
 
 export const WORKSPACE_SCHEMA = 2;
@@ -149,6 +152,7 @@ const allocationDigest = (task: BackupTask) => {
             assignedDate: group.assignedDate || "",
             confirmedAt: group.confirmedAt || 0,
             confirmedBy: group.confirmedBy || "",
+            ...(group.requiredForDelivery ? { requiredForDelivery: true } : {}),
           }))
           .sort((left, right) => left.id.localeCompare(right.id)),
       }),
@@ -194,15 +198,12 @@ function validateDateAllocation(task: BackupTask) {
   }
   if (
     !task.fileRecords.length ||
-    plan.sourceEvidenceDigest !== allocationSourceDigest(task) ||
-    plan.groups.length !== expectedFamilies.size
+    plan.sourceEvidenceDigest !== allocationSourceDigest(task)
   )
     throw new Error("素材日期归属与任务文件证据不一致");
 
-  const seenGroupIds = new Set<string>(),
-    seenPaths = new Set<string>(),
-    expectedById = new Map(
-      [...expectedFamilies.values()].map((familyRecords) => {
+  const expectedMap = (families: BackupTask["fileRecords"][]) => new Map(
+      families.map((familyRecords) => {
         const relativePaths = familyRecords
             .map((record) => record.relativePath)
             .sort((left, right) => left.localeCompare(right)),
@@ -221,6 +222,16 @@ function validateDateAllocation(task: BackupTask) {
         ] as const;
       }),
     );
+  // Keep historical same-directory clip families readable; new plans use the
+  // conservative cross-directory and camera-package closure shared with scans.
+  const legacyExpected = expectedMap([...expectedFamilies.values()]);
+  const conservativeExpected = expectedMap(conservativeSelectionFamilies([...records.keys()], task.sourcePath)
+    .map((family) => family.relativePaths.map((relative) => records.get(relative)!)));
+  const matchesIds = (expected: typeof legacyExpected) => plan.groups.length === expected.size &&
+    plan.groups.every((group) => expected.get(group?.id)?.label === group?.label);
+  const expectedById = matchesIds(conservativeExpected) ? conservativeExpected : legacyExpected;
+  if (!matchesIds(expectedById)) throw new Error("素材日期归属分组与任务文件记录不一致");
+  const seenGroupIds = new Set<string>(), seenPaths = new Set<string>();
   for (const group of plan.groups) {
     if (
       !group ||
@@ -234,6 +245,7 @@ function validateDateAllocation(task: BackupTask) {
       !group.relativePaths.length ||
       !safeInteger(group.files) ||
       !safeInteger(group.bytes) ||
+      (group.requiredForDelivery !== undefined && group.requiredForDelivery !== true) ||
       ![
         "embedded-media",
         "path-date",
@@ -471,16 +483,21 @@ function validateDailyDeliveryRuns(task: BackupTask) {
     )
       throw new Error("当日交付来源目的地标识无效或不唯一");
 
-    const currentSelectedPaths = new Set(
-        plan!.groups
-          .filter((group) => group.assignedDate === run.shootingDate)
-          .flatMap((group) => group.relativePaths),
-      ),
-      currentSelectedRecords = new Map(
-        task.fileRecords
-          .filter((record) => currentSelectedPaths.has(record.relativePath))
-          .map((record) => [record.relativePath, record]),
-      ),
+    const closedSelection = requiresCurrentAllocation
+        ? dailyDeliverySelectedRecords(task, plan!, run.shootingDate) : [];
+    // Old resumable records may predate conservative shared-file closure. Keep
+    // their original evidence readable instead of discarding the workspace.
+    // Execution independently recomputes the new closure and refuses a resume
+    // whose frozen totals differ, requiring a newly confirmed delivery run.
+    const legacyPaths = new Set(plan!.groups.filter((group) => group.assignedDate === run.shootingDate)
+      .flatMap((group) => group.relativePaths));
+    const legacySelection = task.fileRecords.filter((record) => legacyPaths.has(record.relativePath));
+    const usesLegacySelection = requiresCurrentAllocation && !plan!.groups.some((group) => group.requiredForDelivery !== undefined) &&
+      legacySelection.length === run.totalFiles &&
+      legacySelection.reduce((sum, record) => sum + record.size, 0) === run.totalBytes;
+    const currentSelected = usesLegacySelection ? legacySelection : closedSelection,
+      currentSelectedPaths = new Set(currentSelected.map((record) => record.relativePath)),
+      currentSelectedRecords = new Map(currentSelected.map((record) => [record.relativePath, record])),
       currentSelectedBytes = [...currentSelectedRecords.values()].reduce(
         (sum, record) => sum + record.size,
         0,
@@ -674,7 +691,33 @@ function validateDailyDeliveryRuns(task: BackupTask) {
   }
 }
 
+function validateTaskSelection(task: BackupTask) {
+  if (task.selection === undefined) return;
+  const plan = task.selection;
+  assertBackupSelectionStructure(plan);
+  const expectedScope = backupSelectionScope(plan);
+  if (
+    task.sourcePath !== plan.sourcePath ||
+    task.projectId !== plan.projectId ||
+    JSON.stringify(task.inventoryPolicy) !== JSON.stringify(plan.sourceScope.policy) ||
+    JSON.stringify(task.inventoryScope) !== JSON.stringify(expectedScope) ||
+    task.totalFiles !== expectedScope.includedFiles ||
+    task.totalBytes !== expectedScope.includedBytes ||
+    !plan.includedPaths.length ||
+    (task.provenance !== undefined && task.provenance !== "kocpy-transfer")
+  ) throw new Error("任务与已确认的备份筛选范围不一致");
+  const included = new Set(plan.includedPaths);
+  const sources = new Map(plan.sourceFiles.map((file) => [file.relativePath, file]));
+  if (task.fileRecords.some((file) => {
+    const source = sources.get(file.relativePath);
+    return !included.has(file.relativePath) || !source || file.size !== source.size ||
+      (task.hashAlgorithm === "sha256" && file.srcChecksum !== "" && file.srcChecksum !== source.sha256);
+  }) || (task.status === "completed" && task.fileRecords.length !== included.size))
+    throw new Error("任务文件记录超出或不符合已确认的备份范围");
+}
+
 function validateTaskSnapshots(task: BackupTask) {
+  validateTaskSelection(task);
   validateDateAllocation(task);
   validateDailyDeliveryRuns(task);
   const policy = task.inventoryPolicy;

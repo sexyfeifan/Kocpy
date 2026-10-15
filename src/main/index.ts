@@ -63,6 +63,11 @@ import {
 } from "./backup/ReportGenerator";
 import { generateMhl, generateAscMhl } from "./backup/ManifestGenerator";
 import { completedBackupCoversAttempt } from "../common/source-scan";
+import { analyzeBackupSelection, applyBackupSelectionInventory, finalizeBackupSelection, inspectBackupDates, validateBackupSelectionPlan } from "./backup-selection";
+import { selectionRuntimeDependencies } from "./backup-selection-runtime";
+import { assertBackupSourceScope } from "./backup-source-scope";
+import { retainConfirmedSelection, discardConfirmedSelections } from "./backup-selection-cache";
+import type { BackupSelectionPreview, BackupSelectionPlan, BackupSelectionDecision } from "../common/backup-selection";
 import type {
   ArchiveChangeRecord,
   ArchiveEvidenceState,
@@ -171,6 +176,7 @@ import {
 } from "./project-closeout";
 import { taskTrustState, taskCompletionNotice } from "../common/task-trust";
 import { projectDates, shootingDateKey } from "../common/shooting-dates";
+import { assertProjectDayDeviceAllowed } from "../common/project-day-devices";
 import { groupLogicalVolumes } from "../common/logical-volumes";
 import {
   benchmarkDirectory,
@@ -764,6 +770,8 @@ const commitArchiveEvidence = async (
   }
 };
 const sourceInventoryMatches = async (task: BackupTask) => {
+  // A selected-range transfer never authorizes releasing the entire source.
+  if (task.selection && !task.selection.wholeCardCovered) return false;
   const identity = await volumeIdentity(task.sourcePath);
   if (task.sourceVolumeUuid && task.sourceVolumeUuid !== identity.uuid)
     return false;
@@ -773,7 +781,9 @@ const sourceInventoryMatches = async (task: BackupTask) => {
     identity.id !== task.sourceVolumeId
   )
     return false;
-  const current = await scan(
+  const current = task.selection
+    ? applyBackupSelectionInventory(await validateBackupSelectionPlan(task.selection, selectionRuntimeDependencies()), task.selection)
+    : await scan(
       task.sourcePath,
       task.inventoryPolicy || task.includeHidden,
     ),
@@ -908,6 +918,24 @@ function emitExistingProgress(progress: any) {
   operations.progress(progress);
   if (main && !main.isDestroyed())
     main.webContents.send("existing:progress", progress);
+}
+const selectionPreviews = new Map<string, BackupSelectionPreview>();
+const selectionPlans = new Map<string, BackupSelectionPlan>();
+let selectionController: AbortController | undefined;
+function rememberSelection<T extends { id: string }>(cache: Map<string, T>, value: T) {
+  while (cache.size >= 8) cache.delete(cache.keys().next().value!);
+  cache.set(value.id, structuredClone(value));
+}
+function selectionDependencies(sourcePath: string) {
+  let previousAt = 0, previousPhase = "";
+  return selectionRuntimeDependencies({ signal: selectionController?.signal, progress: (progress) => {
+    const now = Date.now();
+    if (previousPhase === progress.phase && now - previousAt < 200 &&
+        !(progress.totalFiles > 0 && progress.completedFiles === progress.totalFiles)) return;
+    previousAt = now; previousPhase = progress.phase;
+    operations.progress({ ...progress, message: "只读分析混合日期与关联文件" });
+    if (main && !main.isDestroyed()) main.webContents.send("selection:progress", { sourcePath, ...progress });
+  } });
 }
 function handle(name: string, fn: (...args: any[]) => any) {
   ipcMain.handle(name, async (_event, ...args) => {
@@ -2271,6 +2299,46 @@ app.whenReady().then(async () => {
     await workspace.synchronizeIndex();
     return catalog.stats();
   });
+  handle("selection:inspect", async (sourcePath: string) => inspectBackupDates(
+    // A fast hint must not start one media-probe process for every clip or delay
+    // ordinary whole-card backups. Deep metadata inspection is opt-in below.
+    { sourcePath }, selectionRuntimeDependencies({ readEmbeddedDate: undefined }),
+  ));
+  handle("selection:analyze", async (sourcePath: string, projectId?: string) => {
+    if (engine.hasActive() || proxyBusy) throw new Error("请先结束当前传输，再分析混合日期素材");
+    return operations.run("混合日期素材只读分析", async () => {
+      selectionController = new AbortController();
+      try {
+        const project = projectId ? (await readProjects()).find((item) => item.id === projectId) : undefined;
+        if (projectId && !project) throw new Error("拍摄项目不存在");
+        const preview = await analyzeBackupSelection({ sourcePath, projectId,
+          requiredCopies: project ? project.requiredCopies || 2 : 1, historyTasks: engine.getAllTasks(),
+        }, selectionDependencies(sourcePath));
+        rememberSelection(selectionPreviews, preview);
+        return preview;
+      } finally { selectionController = undefined; }
+    });
+  });
+  handle("selection:confirm", async (id: string, decision: BackupSelectionDecision) => {
+    if (engine.hasActive() || proxyBusy) throw new Error("请先结束当前传输，再确认筛选范围");
+    const preview = selectionPreviews.get(id);
+    if (!preview) throw new Error("分析记录已过期，请重新分析素材源");
+    return operations.run("确认素材筛选范围", async () => {
+      selectionController = new AbortController();
+      try {
+        const plan = await finalizeBackupSelection(preview, decision, selectionDependencies(preview.sourcePath));
+        // Confirmations remain valid for every source in the open composer.
+        // Only drafts are bounded/evicted; consume confirmed plans on creation
+        // and release abandoned confirmations when their composer closes.
+        retainConfirmedSelection(selectionPlans, plan);
+        return plan;
+      } finally { selectionController = undefined; }
+    });
+  });
+  handle("selection:cancel", () => { selectionController?.abort(); });
+  handle("selection:discard", (ids: string[]) => {
+    discardConfirmedSelections(selectionPlans, ids);
+  });
   handle("tasks:create", async (config: TaskConfig) => {
     if (operations.active)
       throw new Error("维护操作正在执行，请完成后再创建备份");
@@ -2282,6 +2350,16 @@ app.whenReady().then(async () => {
         await persist(true);
         return existing;
       }
+    }
+    // Never accept renderer-provided plans, hashes, history evidence or scopes.
+    if (config.selection) throw new Error("筛选范围必须由主进程确认，请重新分析");
+    if (config.selectionId) {
+      const confirmed = selectionPlans.get(config.selectionId);
+      if (!confirmed || confirmed.sourcePath !== config.sourcePath || confirmed.projectId !== config.projectId)
+        throw new Error("筛选确认与当前素材源或项目不一致，请重新分析");
+      const project = config.projectId ? (await readProjects()).find((item) => item.id === config.projectId) : undefined;
+      if (confirmed.requiredCopies !== (project ? project.requiredCopies || 2 : 1)) throw new Error("项目副本要求已改变，请重新分析");
+      config = { ...config, selection: structuredClone(confirmed), includeHidden: true };
     }
     const speedFor = (destination: string) =>
       benchmarkHistory
@@ -2309,6 +2387,11 @@ app.whenReady().then(async () => {
         );
       let project = projects[projectIndex];
       if (!project) throw new Error("拍摄项目不存在");
+      if (!projectDates(project, engine.getAllTasks().filter((task) => task.projectId === project.id)).includes(shootingDateKey(config.shootingDate)))
+        throw new Error("拍摄日期不在当前项目拍摄周期内");
+      if (config.devices.length !== 1)
+        throw new Error("项目备份必须选择一个设备和对应机位");
+      assertProjectDayDeviceAllowed(project, config.shootingDate, config.devices[0], config.cameraPosition);
       if (!hasProjectRuleEvidence(project)) {
         project = ensureProjectRuleEvidence(project);
         projects[projectIndex] = project;
@@ -2358,6 +2441,7 @@ app.whenReady().then(async () => {
       engine.deleteTask(task.id);
       throw error;
     }
+    if (config.selectionId) selectionPlans.delete(config.selectionId);
     return task;
   });
   handle("tasks:start", async (id: string) => {
@@ -2665,11 +2749,11 @@ app.whenReady().then(async () => {
       }, 60000);
     });
     const r = await Promise.race([
-      scan(
-        source,
-        completeInventoryPolicy(includeHidden),
-        controller.signal,
-      ),
+      (async () => {
+        const inventory = await scan(source, completeInventoryPolicy(includeHidden), controller.signal);
+        await assertBackupSourceScope(inventory.scope?.sourcePath || await canonical(source), inventory.directories, controller.signal);
+        return inventory;
+      })(),
       timeout,
     ]).finally(() => clearTimeout(timer));
     const breakdown = Object.fromEntries(
@@ -6572,12 +6656,21 @@ app.whenReady().then(async () => {
   );
   handle(
     "projects:claim-volume",
-    async (projectId: string, device: string, prefixOverride?: string) => {
+    async (
+      projectId: string,
+      device: string,
+      prefixOverride?: string,
+      dayContext?: { shootingDate: string; position?: string },
+    ) => {
       const all = (await readProjects()).map(normalizeProject),
         project = all.find((p) => p.id === projectId);
       if (!project) throw new Error("项目不存在");
-      if (!project.devices.includes(device))
-        throw new Error("所选设备不属于当前项目");
+      const date = shootingDateKey(dayContext?.shootingDate || project.shootingDateStart || project.shootingDate);
+      if (!projectDates(project, engine.getAllTasks().filter((task) => task.projectId === project.id)).includes(date))
+        throw new Error("拍摄日期不在当前项目拍摄周期内");
+      if (!dayContext && !project.devices.includes(device))
+        throw new Error("临时设备必须选择已加入计划的拍摄日");
+      assertProjectDayDeviceAllowed(project, date, device, dayContext?.position);
       const timestamp = formatVolumeTimestamp();
       project.lastVolumeTimestampByDevice ||= {};
       project.volumeTimestampCollisionByDevice ||= {};

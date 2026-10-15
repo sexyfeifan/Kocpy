@@ -8,13 +8,15 @@ import {
 } from "../src/main/archive-transfer-report";
 import type { ArchiveTransferReportSnapshot } from "../src/main/archive-transfer";
 import { BackupEngine } from "../src/main/backup/BackupEngine";
-import { generateReport } from "../src/main/backup/ReportGenerator";
+import { generateReport, generateDailyReport, generateProjectReport } from "../src/main/backup/ReportGenerator";
+import { analyzeBackupSelection, finalizeBackupSelection } from "../src/main/backup-selection";
 import { dailyDeliveryReportHtml } from "../src/main/mixed-day-delivery";
 import { withTemporaryReportHtml } from "../src/main/report-html";
 import type {
   BackupTask,
   DailyDeliveryRun,
   FileRecord,
+  ProjectConfig,
 } from "../src/main/types";
 
 const OUTPUT_ENV = "KOCPY_REPORT_QA_OUTPUT_DIR";
@@ -312,6 +314,72 @@ function syntheticTask(): BackupTask {
   return task;
 }
 
+/** Real isolated bytes create a valid frozen plan; completion/storage fields
+ * below are explicitly synthetic report-layout fixtures, not hardware evidence. */
+async function syntheticSelectionTask(directory: string) {
+  const sourcePath = path.join(directory, "合成输入-仅用于报告版式检查"),
+    longPart = "多日拍摄中文关联元数据路径用于断行检查".repeat(3),
+    files = [
+      `20260917/${longPart}/20260917_A001.mov`,
+      `20260917/${longPart}/20260917_A001.xml`,
+      "20260918/20260918_A002.mov", "20260918/20260918_A002.xml",
+      "20260919/20260919_A003.mov", "20260919/20260919_A003.xml",
+      "共享索引/CameraIndex.bin", "原始清单.mhl",
+    ];
+  for (const relativePath of files) {
+    const absolutePath = path.join(sourcePath, relativePath);
+    await fs.mkdir(path.dirname(absolutePath), { recursive: true });
+    await fs.writeFile(absolutePath, `Synthetic report-layout fixture only: ${relativePath}\n`, { flag: "wx" });
+  }
+  const project: ProjectConfig = {
+    id: "synthetic-selection-project", name: "合成样本 · 城市人物志跨日选定范围版式检查",
+    devices: ["A机 · FX6 临时设备"], volumePrefix: "QA", requiredCopies: 2,
+    startDate: "2026-09-17", endDate: "2026-09-19",
+  };
+  const deps = {
+    identifyVolume: async () => ({ id: "synthetic-source", uuid: "SYNTHETIC-SOURCE", name: "仅合成版式数据" }),
+    now: () => Date.parse("2026-09-19T01:00:00.000Z"),
+  };
+  const preview = await analyzeBackupSelection({ sourcePath, projectId: project.id }, deps);
+  const selection = await finalizeBackupSelection(preview, {
+    selectedDates: ["2026-09-19"],
+    operator: "合成操作人 <排版检查> · 不代表真实拍摄或硬件验收 · 长姓名与确认说明",
+    allowUnprotectedExclusions: true,
+  }, deps);
+  if (selection.excludedFiles.length !== 4 || selection.wholeCardCovered)
+    throw new Error("报告合成样本未得到预期的跨日选定范围");
+  const engine = new BackupEngine(), task = engine.createTask({
+    projectId: project.id, projectName: project.name, name: "选定范围合成任务 · 保留共享关联文件",
+    namingTemplate: "QA-selected", sourcePath, selection, hashAlgorithm: "sha256",
+    devices: project.devices, shootingDate: "2026-09-19",
+    destinationPaths: [`${syntheticRoot}/NAS/客户交付/长路径/${longPart}/${longPart}`],
+    generateThumbnails: false,
+  });
+  task.status = "completed";
+  task.startedAt = Date.parse("2026-09-19T01:00:01.000Z");
+  task.completedAt = Date.parse("2026-09-19T01:10:01.000Z");
+  task.completedFiles = task.totalFiles;
+  task.copyProgress = 100;
+  task.verifyProgress = 100;
+  task.verifiedBytes = task.totalBytes;
+  task.transferredBytes = task.totalBytes;
+  task.destinations[0].resolvedPath = `${task.destinations[0].path}/QA-selected`;
+  task.destinations[0].verified = true;
+  task.destinations[0].volumeUuid = "SYNTHETIC-DESTINATION";
+  task.destinations[0].bytesWritten = task.totalBytes;
+  const included = new Set(selection.includedPaths);
+  task.fileRecords = selection.sourceFiles.filter(file => included.has(file.relativePath)).map(file => ({
+    name: path.basename(file.relativePath), relativePath: file.relativePath, size: file.size, srcChecksum: file.sha256,
+    destinations: [{ path: path.join(task.destinations[0].resolvedPath!, file.relativePath), checksum: file.sha256, verified: true }],
+  }));
+  task.faultTimeline = [
+    { at: task.startedAt, phase: "scanning", level: "warning", message: `合成扫描事件：${sourcePath}/${longPart}/${longPart}/20260917_A001.xml。此消息用于检查长 Unicode 路径不被表格右边界裁切，并不代表真实素材错误。` },
+    { at: task.startedAt + 1000, phase: "copying", level: "info", message: "保留共享索引和原始清单；用户未选择旧日期关联文件组，未复制的文件不计作完整卡副本。" },
+    { at: task.completedAt, phase: "completed", level: "info", message: "仅用于 PDF 版式预览的合成完成状态；不是硬件验收结论。" },
+  ];
+  return { task, project };
+}
+
 function syntheticDailyDelivery(task: BackupTask): DailyDeliveryRun {
   const selected = task.fileRecords.filter((file) =>
       /20260919|250919/.test(file.relativePath),
@@ -468,6 +536,17 @@ async function main() {
         { pixels: summary.pixels },
       ),
     );
+    const selected = await syntheticSelectionTask(directory);
+    for (const [filename, label, html] of [
+      ["05-选定范围-任务报告-合成版式.pdf", "选定范围任务报告（合成版式，非硬件证据）", await generateReport(selected.task)],
+      ["06-选定范围-拍摄日报告-合成版式.pdf", "选定范围拍摄日报告（合成版式，非硬件证据）", await generateDailyReport([selected.task], "2026-09-19", selected.project.name)],
+      ["07-选定范围-项目报告-合成版式.pdf", "选定范围项目报告（合成版式，非硬件证据）", await generateProjectReport(selected.project, [selected.task])],
+    ] as const) {
+      const text = html.toString();
+      for (const required of ["完整源扫描 8 个文件", "本次选择 4 个", "未复制 4 个", "未保护 4 个", "合成操作人 &lt;排版检查&gt;"])
+        if (!text.includes(required)) throw new Error(`${filename} 缺少范围证据：${required}`);
+      results.push(await saveArtifact(directory, filename, "pdf", label, await renderPdf(html)));
+    }
     const manifest = Buffer.from(
       `${JSON.stringify(
         {

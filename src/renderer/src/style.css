@@ -1564,6 +1564,7 @@ small {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  container: project-card / inline-size;
 }
 .project-card-tools {
   position: relative;
@@ -1614,12 +1615,16 @@ small {
   width: 100%;
   justify-content: center;
   min-width: 0;
-  height: 40px;
-  padding: 0 10px;
+  min-height: 40px;
+  padding: 9px 10px;
   gap: 8px;
   font-size: 12px;
-  white-space: nowrap;
-  line-height: 1;
+  white-space: normal;
+  line-height: 1.4;
+}
+.project-card-actions .btn > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .project-card-actions .btn svg {
   width: 16px;
@@ -1694,13 +1699,22 @@ small {
 .project-card h2 {
   font-size: 16px;
   margin: 22px 0 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.project-card > small {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  line-height: 1.6;
 }
 .project-card > p {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   align-items: center;
   color: var(--muted);
   font-size: 10px;
+  line-height: 1.6;
 }
 .chips {
   display: flex;
@@ -1709,19 +1723,34 @@ small {
   margin: 20px 0;
 }
 .chips span {
+  max-width: 100%;
   padding: 5px 8px;
   font-size: 10px;
   color: var(--sub);
   border: 1px solid var(--border);
   border-radius: 5px;
+  overflow-wrap: anywhere;
 }
 .project-summary {
   display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   justify-content: space-between;
+  gap: 8px 14px;
   font-size: 10px;
   color: var(--muted);
-  padding: 14px 0 20px;
-  border-top: 1px solid var(--border);
+  padding: 14px 16px;
+  margin-bottom: 12px;
+  border: 1px solid var(--border);
+  line-height: 1.6;
+}
+.project-summary > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.project-summary > span:last-child {
+  margin-left: auto;
+  text-align: right;
 }
 .volumes-grid {
   display: grid;
@@ -2307,6 +2336,7 @@ small {
   min-width: 0;
   padding: 25px 28px 30px;
   overflow: auto;
+  container: composer-fields / inline-size;
 }
 .form-section-title {
   margin-bottom: 22px;
@@ -2694,6 +2724,7 @@ small {
 }
 .mixed-day-body {
   padding: 22px 26px 30px;
+  min-height: 0;
   overflow: auto;
   display: grid;
   gap: 16px;
@@ -2728,10 +2759,12 @@ small {
   align-items: center;
 }
 .mixed-day-section-heading {
+  flex-wrap: wrap;
   justify-content: space-between;
   gap: 14px;
 }
 .mixed-day-section-heading > span {
+  min-width: 0;
   gap: 8px;
 }
 .mixed-day-section-heading svg {
@@ -2745,7 +2778,7 @@ small {
 }
 .mixed-day-buckets {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr));
   gap: 9px;
 }
 .mixed-day-buckets > div {
@@ -2770,10 +2803,14 @@ small {
   margin-top: 4px;
 }
 .mixed-day-review-tools {
-  display: grid;
-  grid-template-columns: minmax(180px, 420px) auto;
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 10px;
+}
+.mixed-day-review-tools > input {
+  flex: 1 1 240px;
+  min-width: 0;
 }
 .mixed-day-review-tools span {
   color: var(--muted);
@@ -2806,6 +2843,7 @@ small {
 }
 .mixed-day-group strong {
   font-size: 11px;
+  overflow-wrap: anywhere;
 }
 .mixed-day-group span,
 .mixed-day-group small,
@@ -2821,6 +2859,8 @@ small {
   color: var(--text);
 }
 .mixed-day-confirm-row {
+  flex-wrap: wrap;
+  align-items: end;
   justify-content: flex-end;
   gap: 12px;
 }
@@ -2833,10 +2873,15 @@ small {
   gap: 12px;
 }
 .path-input-row {
+  flex-wrap: wrap;
   gap: 8px;
 }
 .path-input-row input {
+  flex: 1 1 160px;
   min-width: 0;
+}
+.path-input-row > .btn {
+  flex: 0 0 auto;
 }
 .mixed-day-ack {
   display: flex;
@@ -2866,6 +2911,7 @@ small {
   gap: 8px;
 }
 .mixed-day-runs article > div:first-child {
+  flex-wrap: wrap;
   justify-content: space-between;
   gap: 12px;
 }
@@ -2959,6 +3005,7 @@ small {
   color: var(--sub);
   font-size: 11px;
   margin-bottom: 20px;
+  min-width: 0;
 }
 .composer-main label input,
 .composer-main label select,
@@ -2968,8 +3015,17 @@ small {
 }
 .form-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 15px;
+}
+.form-grid > * {
+  min-width: 0;
+}
+.form-grid input,
+.form-grid select,
+.form-grid textarea {
+  min-width: 0;
+  max-width: 100%;
 }
 .backup-advanced {
   border: 1px solid var(--border);
@@ -3062,6 +3118,7 @@ small {
 }
 .selected-project {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 12px;
   margin-bottom: 17px;
@@ -3069,7 +3126,7 @@ small {
   border-bottom: 1px solid var(--border);
 }
 .selected-project > div {
-  flex: 1;
+  flex: 1 1 190px;
   min-width: 0;
 }
 .selected-project span,
@@ -3084,6 +3141,7 @@ small {
 .selected-project strong {
   margin: 4px 0;
   font-size: 13px;
+  overflow-wrap: anywhere;
 }
 .selected-project small {
   overflow: hidden;
@@ -3111,6 +3169,9 @@ small {
   border-radius: 9px;
   background: var(--panel);
 }
+.project-path-preview > div {
+  min-width: 0;
+}
 .project-path-preview span,
 .project-path-preview strong {
   display: block;
@@ -3122,6 +3183,7 @@ small {
 }
 .project-path-preview strong {
   font-size: 11px;
+  overflow-wrap: anywhere;
 }
 .device-suggestions {
   display: flex;
@@ -3192,6 +3254,7 @@ small {
 }
 .position-config {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 14px;
   padding: 9px 12px;
@@ -4107,7 +4170,7 @@ small {
 }
 .daily-plan-operator {
   display: grid;
-  grid-template-columns: minmax(260px, 420px) 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 18px;
   align-items: end;
   padding: 16px 20px;
@@ -4120,6 +4183,7 @@ small {
   gap: 7px;
   font-size: 12px;
   color: var(--muted);
+  min-width: 0;
 }
 .daily-plan-operator span {
   align-self: center;
@@ -4130,8 +4194,12 @@ small {
 .daily-plan-temp {
   grid-column: 1 / -1;
   display: grid;
-  grid-template-columns: minmax(180px, 1fr) minmax(150px, 0.7fr) auto;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 0.7fr) auto;
   gap: 9px;
+  align-items: end;
+}
+.daily-plan-temp input {
+  min-width: 0;
 }
 .project-evidence-strip {
   display: flex;
@@ -4575,27 +4643,43 @@ small {
   border-radius: 12px;
   background: var(--panel2);
 }
-.coverage-heading,
-.coverage-metrics {
+.coverage-heading {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: 6px 10px;
+}
+.coverage-heading > * {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.coverage-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  align-items: start;
 }
 .coverage-heading span,
 .project-coverage > small {
   color: var(--muted);
   font-size: 9px;
+  overflow-wrap: anywhere;
+  line-height: 1.6;
 }
 .coverage-metrics span {
   display: grid;
   gap: 3px;
+  min-width: 0;
   color: var(--muted);
   font-size: 9px;
+  overflow-wrap: anywhere;
+  line-height: 1.5;
 }
 .coverage-metrics b {
   color: var(--text);
   font-size: 16px;
+  font-variant-numeric: tabular-nums;
 }
 .import-preview {
   display: grid;
@@ -4642,48 +4726,6 @@ small {
   gap: 3px;
 }
 .archive-change-list small {
-  color: var(--muted);
-}
-.project-coverage {
-  display: grid;
-  gap: 10px;
-  padding: 14px;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--panel2);
-}
-.coverage-heading,
-.coverage-metrics {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
-.coverage-heading span,
-.project-coverage > small {
-  color: var(--muted);
-  font-size: 9px;
-}
-.coverage-metrics span {
-  display: grid;
-  gap: 3px;
-  color: var(--muted);
-  font-size: 9px;
-}
-.coverage-metrics b {
-  color: var(--text);
-  font-size: 16px;
-}
-.import-preview {
-  display: grid;
-  gap: 6px;
-  padding: 16px;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--panel2);
-}
-.import-preview > span,
-.import-preview > small {
   color: var(--muted);
 }
 .maintenance-projects {
@@ -4744,7 +4786,7 @@ small {
 }
 .template-card {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 330px), 1fr));
   align-items: center;
   gap: 18px;
   padding: 15px;
@@ -4756,10 +4798,12 @@ small {
   min-width: 0;
 }
 .template-card-copy > .row {
+  flex-wrap: wrap;
   justify-content: flex-start;
 }
 .template-card-copy strong {
   font-size: 12px;
+  overflow-wrap: anywhere;
 }
 .template-card-copy p {
   margin: 6px 0 9px;
@@ -4805,13 +4849,24 @@ small {
   background: var(--panel);
 }
 .template-card-actions {
-  display: grid;
-  grid-template-columns: minmax(135px, 1fr) auto auto auto;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
+  min-width: 0;
 }
 .template-card-actions select {
-  max-width: 170px;
+  flex: 1 1 170px;
+  min-width: 0;
+  max-width: 100%;
+}
+.template-card-actions .btn {
+  flex: 0 0 auto;
+}
+.template-card-actions .btn:not(.icon) {
+  white-space: normal;
+  line-height: 1.5;
 }
 .template-editor-modal {
   width: 820px;
@@ -4843,6 +4898,7 @@ small {
 .template-device-list label {
   margin: 0;
   font-size: 9px;
+  min-width: 0;
 }
 .device-suggestions.compact {
   margin-bottom: 6px;
@@ -5824,7 +5880,6 @@ small {
   }
   .template-card-actions {
     width: 100%;
-    grid-template-columns: minmax(150px, 1fr) auto auto auto;
   }
   .template-card-actions select {
     max-width: none;
@@ -5890,10 +5945,6 @@ small {
   }
   .template-device-list > div > strong {
     grid-column: 1 / -1;
-  }
-  .template-card-actions {
-    grid-template-columns: minmax(150px, 1fr) auto auto auto;
-    overflow-x: auto;
   }
 }
 
@@ -6519,12 +6570,14 @@ small {
 }
 .directory-picker {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   min-width: 0;
 }
 .directory-picker input {
-  flex: 1;
+  flex: 1 1 180px;
+  min-width: 0;
 }
 .lifecycle-actions,
 .proxy-delivery-actions {
@@ -6544,6 +6597,8 @@ small {
   min-height: 36px;
   align-self: end;
   padding: 8px 12px;
+  white-space: normal;
+  line-height: 1.5;
 }
 .lifecycle-controls .panel > p {
   line-height: 1.7;
@@ -6561,6 +6616,9 @@ small {
 .proxy-queue-panel {
   width: 100%;
   max-width: 1480px;
+}
+.maintenance-center {
+  container: maintenance / inline-size;
 }
 .proxy-scope-toolbar label {
   display: grid;
@@ -6843,6 +6901,9 @@ small {
 .btn:not(.icon) {
   overflow-wrap: anywhere;
 }
+.modal-footer .btn:not(.icon) {
+  white-space: normal;
+}
 .section-title,
 .list-toolbar,
 .modal-footer,
@@ -6853,6 +6914,7 @@ small {
 }
 .modal-footer > .row {
   justify-content: flex-end;
+  min-width: 0;
 }
 .wizard-steps {
   overflow-x: auto;
@@ -8006,5 +8068,39 @@ small {
   .transfer-card > .transfer-evidence {
     padding-left: 15px;
     padding-right: 15px;
+  }
+}
+
+/* Card and form content reflow within the actual panel, including the narrower
+   main column beside the backup summary. Fonts and icons retain their size. */
+@container project-card (max-width: 350px) {
+  .coverage-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@container project-card (max-width: 310px) {
+  .project-card-actions {
+    grid-template-columns: 1fr;
+  }
+}
+@container composer-fields (max-width: 520px) {
+  .form-grid,
+  .project-choice-grid {
+    grid-template-columns: 1fr;
+  }
+  .device-profile {
+    grid-template-columns: minmax(0, 1fr) 90px 32px;
+  }
+  .device-profile > span {
+    grid-column: 1 / -1;
+  }
+}
+@container maintenance (max-width: 640px) {
+  .checklist-fields,
+  .handoff-row {
+    grid-template-columns: 1fr;
+  }
+  .template-device-list > div {
+    grid-template-columns: 1fr;
   }
 }

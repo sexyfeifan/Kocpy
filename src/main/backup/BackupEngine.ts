@@ -31,6 +31,10 @@ import {
   sourceFolderName,
 } from "../../common/backup-layout";
 import { recordedInventoryBaseline } from "../inventory-baseline";
+import { applyBackupSelectionInventory, assertBackupSelectionStructure, backupSelectionScope, validateBackupSelectionPlan } from "../backup-selection";
+import { selectionRuntimeDependencies } from "../backup-selection-runtime";
+import { writeBackupSelectionIntent, writeBackupSelectionMarker } from "../backup-selection-marker";
+import { assertBackupSourceScope } from "../backup-source-scope";
 
 export async function hashFile(
   file: string,
@@ -324,6 +328,15 @@ export class BackupEngine extends EventEmitter {
     for (const task of tasks) this.loadTask(structuredClone(task));
   }
   createTask(config: TaskConfig): BackupTask {
+    if (config.selection) {
+      assertBackupSelectionStructure(config.selection);
+      if (config.selection.sourcePath !== config.sourcePath || config.selection.projectId !== config.projectId)
+        throw new Error("筛选范围与当前素材源或项目不一致，请重新分析");
+      if (!config.selection.includedPaths.length)
+        throw new Error("没有选择可备份文件；本次不会创建空的成功任务");
+      if (config.includeHidden === false)
+        throw new Error("日期筛选必须保留隐藏及关联文件，请先恢复完整范围");
+    }
     if (
       config.mirrorLayout &&
       !["source-folder", "contents"].includes(config.mirrorLayout)
@@ -406,7 +419,9 @@ export class BackupEngine extends EventEmitter {
           ? "task-input"
           : "unrecorded",
       },
-      inventoryPolicy: completeInventoryPolicy(includeHidden, createdAt),
+      inventoryPolicy: config.selection ? structuredClone(config.selection.sourceScope.policy) : completeInventoryPolicy(includeHidden, createdAt),
+      selection: config.selection ? structuredClone(config.selection) : undefined,
+      inventoryScope: config.selection ? backupSelectionScope(config.selection) : undefined,
       automaticReport: {
         schema: 1,
         enabled: automaticPdf,
@@ -429,9 +444,9 @@ export class BackupEngine extends EventEmitter {
           ? config.mirrorLayout || "source-folder"
           : undefined,
       status: "pending",
-      totalFiles: 0,
+      totalFiles: config.selection?.includedPaths.length || 0,
       completedFiles: 0,
-      totalBytes: 0,
+      totalBytes: config.selection ? backupSelectionScope(config.selection).includedBytes : 0,
       transferredBytes: 0,
       physicalWrittenBytes: 0,
       verifiedBytes: 0,
@@ -654,6 +669,11 @@ export class BackupEngine extends EventEmitter {
       controller.signal.throwIfAborted();
       if (task.destinations.some((d) => !d.verified))
         throw new Error("部分目的地未通过重新校验");
+      for (const destination of task.destinations)
+        await writeBackupSelectionMarker(task, destination, {
+          identifyVolume: volumeIdentity, signal: controller.signal,
+          beforeRead: () => this.waitIfPaused(id, controller.signal),
+        });
       task.status = "completed";
       task.lastVerifiedAt = Date.now();
       task.completedAt = task.completedAt || Date.now();
@@ -726,7 +746,10 @@ export class BackupEngine extends EventEmitter {
       task.copyProgress = Math.min(
         ...healthy.map((destination) => destination.copyProgress || 0),
       );
-    this.emit("progress", { ...task, taskId: task.id, fileRecords: undefined });
+    // The frozen plan may contain hundreds of thousands of entries. It is sent
+    // on task creation/listing, never reserialized on every progress tick.
+    const { selection: _selection, ...progressTask } = task;
+    this.emit("progress", { ...progressTask, taskId: task.id, fileRecords: undefined });
   }
   private record(
     task: BackupTask,
@@ -1344,11 +1367,19 @@ export class BackupEngine extends EventEmitter {
       task.sourceVolumeId = sourceIdentity.id;
       task.sourceVolumeUuid = sourceIdentity.uuid;
       task.sourceVolumeName = sourceIdentity.name;
-      const inventory = await scan(
-        src,
-        task.inventoryPolicy || task.includeHidden,
-        signal,
-      );
+      const selectionDeps = selectionRuntimeDependencies({ signal,
+        beforeRead: () => this.waitIfPaused(id, signal),
+        progress: (progress) => {
+          task.currentFile = progress.currentFile || "正在重新确认筛选范围";
+          this.emitProgress(task);
+        },
+      });
+      const fullInventory = task.selection
+        ? await validateBackupSelectionPlan(task.selection, selectionDeps)
+        : await scan(src, task.inventoryPolicy || task.includeHidden, signal);
+      await assertBackupSourceScope(src, fullInventory.directories, signal);
+      const inventory = task.selection
+        ? applyBackupSelectionInventory(fullInventory, task.selection) : fullInventory;
       // complete-v2 inventories include directory structure as first-class
       // scope, so an empty root (or a tree made only of empty directories) is
       // still a valid, verifiable backup. Historical tasks keep their original
@@ -1414,6 +1445,12 @@ export class BackupEngine extends EventEmitter {
           d.volumeName = identity.name;
           await fs.mkdir(root, { recursive: true });
           d.resolvedPath = await canonical(root);
+          // Scope warnings precede any selected media write, including retries:
+          // interrupted selected backups must never look like complete cards.
+          await writeBackupSelectionIntent(task, d, {
+            identifyVolume: volumeIdentity, signal,
+            beforeRead: () => this.waitIfPaused(id, signal),
+          });
           const space = await fs.statfs(root);
           let required = 0,
             largest = 0;
@@ -1729,11 +1766,12 @@ export class BackupEngine extends EventEmitter {
       await this.waitIfPaused(id, signal);
       task.transferPhase = "publishing";
       this.emitProgress(task, true);
-      const finalInventory = await scan(
-          src,
-          task.inventoryPolicy || task.includeHidden,
-          signal,
-        ),
+      const finalFullInventory = task.selection
+        ? await validateBackupSelectionPlan(task.selection, selectionDeps)
+        : await scan(src, task.inventoryPolicy || task.includeHidden, signal);
+      await assertBackupSourceScope(src, finalFullInventory.directories, signal);
+      const finalInventory = task.selection
+        ? applyBackupSelectionInventory(finalFullInventory, task.selection) : finalFullInventory,
         initialInventory = new Map(
           inventory.files.map((file) => [
             file.relativePath,
@@ -1828,6 +1866,11 @@ export class BackupEngine extends EventEmitter {
         throw new Error(
           "部分目的地未通过校验。成功的副本已保留，可单独重试失败目标。",
         );
+      for (const destination of task.destinations)
+        await writeBackupSelectionMarker(task, destination, {
+          identifyVolume: volumeIdentity, signal,
+          beforeRead: () => this.waitIfPaused(id, signal),
+        });
       task.status = "completed";
       task.lastVerifiedAt = Date.now();
       task.completedAt = Date.now();

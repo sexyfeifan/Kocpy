@@ -1,5 +1,6 @@
 import { previewProjectPath } from "../../common/project-layout";
 import { projectDates, shootingDateKey } from "../../common/shooting-dates";
+import { projectDayDevices } from "../../common/project-day-devices";
 import {
   submitBatch,
   readableOperationError,
@@ -39,6 +40,9 @@ import {
   type Scan,
 } from "./api";
 import { Button } from "./Ui";
+import { TemporaryDeviceForm } from "./TemporaryDeviceForm";
+import { BackupSelectionPanel } from "./BackupSelectionPanel";
+import { backupSelectionSummary, type BackupSelectionPlan } from "../../common/backup-selection";
 import {
   destinationSelectionNotice,
   destinationNoticeClassName,
@@ -46,8 +50,8 @@ import {
 interface Source {
   path: string;
   scan?: Scan;
+  selection?: BackupSelectionPlan;
 }
-const CAMERA_POSITIONS = ["A", "B", "C", "D", "E"];
 const exclusionReason = (item: Scan["exclusions"][number]) =>
   ({
     "hidden-by-user-filter": "用户选择过滤隐藏条目",
@@ -72,14 +76,16 @@ export function Composer({
   onClose,
   onCreated,
   onCreateProject,
+  onProjectsChanged,
 }: {
-  initial: { source?: string; project?: ProjectConfig };
+  initial: { source?: string; project?: ProjectConfig; shootingDate?: string; device?: string; position?: string; addTemporaryDevice?: boolean };
   volumes: Volume[];
   projects: ProjectConfig[];
   settings: Settings;
   onClose: () => void;
   onCreated: () => Promise<void>;
   onCreateProject: () => void;
+  onProjectsChanged?: (projects: ProjectConfig[]) => void;
 }) {
   // A composer is an editable draft. Capture the loaded defaults once when it
   // opens so an unrelated settings refresh cannot overwrite choices the user
@@ -97,6 +103,13 @@ export function Composer({
   const batch = useRef<BatchEntry[]>([]);
   const [batchRevision, setBatchRevision] = useState(0);
   const [scanStatus, setScanStatus] = useState("");
+  const [selectionBusy, setSelectionBusy] = useState(false);
+  const [selectionDrafts, setSelectionDrafts] = useState<Record<string, boolean>>({});
+  const [selectionChecks, setSelectionChecks] = useState<Record<string, boolean>>({});
+  const ownedSelectionIds = useRef(new Set<string>());
+  useEffect(() => () => {
+    void api.discardBackupSelection([...ownedSelectionIds.current]).catch(() => {});
+  }, []);
   const [step, setStep] = useState(0),
     [sources, setSources] = useState<Source[]>(
       initial.source ? [{ path: initial.source }] : [],
@@ -110,8 +123,8 @@ export function Composer({
       initial.project ? "project" : "card",
     ),
     [projectId, setProjectId] = useState(initial.project?.id || ""),
-    [shootDate, setShootDate] = useState(today()),
-    [camera, setCamera] = useState(initial.project?.devices[0] || "A机"),
+    [shootDate, setShootDate] = useState(initial.shootingDate || today()),
+    [camera, setCamera] = useState(initial.device || initial.project?.devices[0] || "A机"),
     [multiPosition, setMultiPosition] = useState(
       Boolean(
         initial.project?.devicePositions?.[initial.project?.devices[0] || ""]
@@ -139,14 +152,18 @@ export function Composer({
     >({});
   const [draggingDestination, setDraggingDestination] = useState(false);
   const [draggingSource, setDraggingSource] = useState(false);
-  const project = projects.find((p) => p.id === projectId),
-    total = sources.reduce((n, s) => n + (s.scan?.totalBytes || 0), 0),
+  const [projectUpdates, setProjectUpdates] = useState<Record<string, ProjectConfig>>({});
+  const [temporaryDeviceOpen, setTemporaryDeviceOpen] = useState(Boolean(initial.addTemporaryDevice));
+  const [temporaryDeviceSaved, setTemporaryDeviceSaved] = useState("");
+  const [deviceSelectionNotice, setDeviceSelectionNotice] = useState("");
+  const project = (onProjectsChanged ? projects.find((p) => p.id === projectId) : projectUpdates[projectId] || projects.find((p) => p.id === projectId)),
+    total = sources.reduce((n, s) => n + (s.selection ? backupSelectionSummary(s.selection).includedBytes : s.scan?.totalBytes || 0), 0),
     externalVolumes = volumes.filter(
       (volume) => volume.path.startsWith("/Volumes/") && !volume.isNetwork,
     ),
-    availablePositions = project?.devicePositions?.[camera]?.length
-      ? project.devicePositions[camera]
-      : CAMERA_POSITIONS;
+    dayDevices = project ? projectDayDevices(project, shootDate) : [],
+    selectedDayDevice = dayDevices.find((entry) => entry.device === camera),
+    availablePositions = selectedDayDevice?.positions || [];
   const historicalSuggestion = sources
     .map((source) => source.scan?.suggestion)
     .find((suggestion) => suggestion?.projectId);
@@ -156,9 +173,10 @@ export function Composer({
       (item) => item.id === historicalSuggestion.projectId,
     );
     if (!suggestedProject) return;
-    const suggestedDevice =
-      historicalSuggestion.device || suggestedProject.devices[0] || "A机";
-    const positions = suggestedProject.devicePositions?.[suggestedDevice] || [];
+    const available = projectDayDevices(suggestedProject, shootDate);
+    const suggestedDevice = available.some((entry) => entry.device === historicalSuggestion.device)
+      ? historicalSuggestion.device! : available[0]?.device || "A机";
+    const positions = available.find((entry) => entry.device === suggestedDevice)?.positions || [];
     setMode("project");
     setProjectId(suggestedProject.id);
     setCamera(suggestedDevice);
@@ -194,21 +212,47 @@ export function Composer({
     setMode("project");
     setProjectId(initial.project.id);
     setDests(initial.project.destinationPaths || []);
-    setCamera(initial.project.devices[0] || "FX3");
-    const firstDevice = initial.project.devices[0] || "FX3";
-    const configuredPositions =
-      initial.project.devicePositions?.[firstDevice] || [];
-    setMultiPosition(Boolean(configuredPositions.length));
-    setCameraPosition(configuredPositions[0] || "A");
     const start = shootingDateKey(initial.project.shootingDateStart || initial.project.shootingDate || today());
     const end = shootingDateKey(initial.project.shootingDateEnd || start);
     const now = today();
-    setShootDate(now >= start && now <= end ? now : start);
-  }, [initial.project]);
+    const date = initial.shootingDate
+      ? shootingDateKey(initial.shootingDate) : now >= start && now <= end ? now : start;
+    const available = projectDayDevices(initial.project, date);
+    const firstDevice = available.some((entry) => entry.device === initial.device)
+      ? initial.device! : available[0]?.device || "FX3";
+    setCamera(firstDevice);
+    const configuredPositions = available.find((entry) => entry.device === firstDevice)?.positions || [];
+    setMultiPosition(Boolean(configuredPositions.length));
+    setCameraPosition(initial.position && configuredPositions.includes(initial.position) ? initial.position : configuredPositions[0] || "A");
+    setShootDate(date);
+  }, [initial.project?.id, initial.shootingDate, initial.device, initial.position]);
+  useEffect(() => {
+    if (!project) return;
+    const available = projectDayDevices(project, shootDate);
+    const selected = available.find((entry) => entry.device === camera);
+    if (!selected) {
+      const first = available[0];
+      if (camera) setDeviceSelectionNotice(`「${camera}」未加入 ${shootDate} 的设备计划，已切换到「${first?.device || "未选择"}」。需要继续使用时请先添加当日设备。`);
+      setCamera(first?.device || "");
+      setMultiPosition(Boolean(first?.positions.length));
+      setCameraPosition(first?.positions[0] || "A");
+    } else if (multiPosition && !selected.positions.includes(cameraPosition)) {
+      setDeviceSelectionNotice(`「${camera} · ${cameraPosition}」未加入 ${shootDate} 的机位计划，请核对已切换的机位，或添加当日机位。`);
+      setMultiPosition(Boolean(selected.positions.length));
+      setCameraPosition(selected.positions[0] || "A");
+    } else if (!multiPosition && !selected.allowUnpositioned) {
+      setMultiPosition(true);
+      setCameraPosition(selected.positions[0] || "A");
+    }
+  }, [project, shootDate, camera, multiPosition, cameraPosition]);
   useEffect(() => {
     const timer = setInterval(() => setClock(Date.now()), 1000);
     return () => clearInterval(timer);
   }, []);
+  useEffect(() => {
+    setSources((all) => all.map((source) => ({ ...source, selection: undefined })));
+    setSelectionDrafts({});
+  }, [mode, projectId, hidden]);
   useEffect(() => {
     if (!projectId) return;
     localStorage.setItem(
@@ -353,6 +397,8 @@ export function Composer({
   }
   async function start() {
     await attempt(async () => {
+      if (selectionBusy || sources.some((source) => selectionDrafts[source.path] || selectionChecks[source.path]))
+        throw new Error("请先确认日期筛选范围，或明确选择保留整卡备份");
       if (!batch.current.length) {
         await api.validateDirectories(sources.map((source) => source.path));
         batch.current = sources.map((source) => ({
@@ -373,6 +419,7 @@ export function Composer({
                   project.id,
                   camera,
                   name || undefined,
+                  { shootingDate: shootDate, position: multiPosition ? cameraPosition : undefined },
                 )
               : undefined);
           entry.claim = claimed;
@@ -380,6 +427,7 @@ export function Composer({
           const taskName =
             mode === "project" ? automaticName : name || automaticName;
           const config = {
+            selectionId: source.selection?.id,
             requestId: entry.requestId,
             name: taskName,
             sourcePath: source.path,
@@ -431,7 +479,10 @@ export function Composer({
     });
   function chooseProject(id: string) {
     setProjectId(id);
-    const p = projects.find((p) => p.id === id);
+    setTemporaryDeviceOpen(false);
+    setTemporaryDeviceSaved("");
+    setDeviceSelectionNotice("");
+    const p = onProjectsChanged ? projects.find((p) => p.id === id) : projectUpdates[id] || projects.find((p) => p.id === id);
     if (p) {
       setDests(p.destinationPaths || []);
       const start = shootingDateKey(p.shootingDateStart || p.shootingDate || today()),
@@ -450,11 +501,14 @@ export function Composer({
       } catch {
         /* Ignore damaged local preference. */
       }
+      const selectedDate = recent.shootDate && recent.shootDate >= start && recent.shootDate <= end
+        ? recent.shootDate : now >= start && now <= end ? now : start;
+      const available = projectDayDevices(p, selectedDate);
       const selectedCamera =
-        recent.camera && p.devices.includes(recent.camera)
+        recent.camera && available.some((entry) => entry.device === recent.camera)
           ? recent.camera
           : p.devices[0] || "FX3";
-      const configuredPositions = p.devicePositions?.[selectedCamera] || [];
+      const configuredPositions = available.find((entry) => entry.device === selectedCamera)?.positions || [];
       setCamera(selectedCamera);
       setMultiPosition(
         Boolean(configuredPositions.length) && recent.multiPosition !== false,
@@ -465,13 +519,7 @@ export function Composer({
           ? recent.cameraPosition
           : configuredPositions[0] || "A",
       );
-      setShootDate(
-        recent.shootDate && recent.shootDate >= start && recent.shootDate <= end
-          ? recent.shootDate
-          : now >= start && now <= end
-            ? now
-            : start,
-      );
+      setShootDate(selectedDate);
     }
   }
   return (
@@ -484,7 +532,7 @@ export function Composer({
         className="composer-modal"
         role="dialog"
         aria-modal="true"
-        aria-busy={busy}
+        aria-busy={busy || selectionBusy}
         aria-label="新建备份任务"
         tabIndex={-1}
       >
@@ -496,7 +544,7 @@ export function Composer({
           <Button
             kind="icon"
             title="关闭新建备份"
-            disabled={busy}
+            disabled={busy || selectionBusy}
             onClick={onClose}
           >
             <X size={21} />
@@ -539,6 +587,30 @@ export function Composer({
             className="composer-main interaction-fieldset"
             disabled={busy || batch.current.length > 0}
           >
+            {mode === "project" && project && temporaryDeviceOpen && (
+              <TemporaryDeviceForm
+                key={`${project.id}:${shootDate}`}
+                project={project}
+                shootingDate={shootDate}
+                operator={settings.operator}
+                onBusyChange={setBusy}
+                onClose={() => setTemporaryDeviceOpen(false)}
+                onSaved={(updated, choice) => {
+                  const saved = updated.find((entry) => entry.id === project.id);
+                  if (saved) setProjectUpdates((previous) => ({ ...previous, [saved.id]: saved }));
+                  onProjectsChanged?.(updated);
+                  setShootDate(choice.shootingDate);
+                  setCamera(choice.device);
+                  setMultiPosition(Boolean(choice.position));
+                  setCameraPosition(choice.position || "A");
+                  setTemporaryDeviceOpen(false);
+                  setDeviceSelectionNotice("");
+                  setTemporaryDeviceSaved(`${choice.shootingDate} · ${choice.device}${choice.position ? ` · ${choice.position}` : ""} 已加入当日计划并选中。取消本次备份后日计划仍保留，可在项目详情撤销。`);
+                }}
+              />
+            )}
+            {mode === "project" && temporaryDeviceSaved && <div className="notice temporary-device-saved"><Check size={15} /><span>{temporaryDeviceSaved}</span></div>}
+            {mode === "project" && deviceSelectionNotice && <div className="notice temporary-device-saved"><Info size={15} /><span>{deviceSelectionNotice}</span></div>}
             {step === 0 && (
               <>
                 <div className="form-section-title">
@@ -1000,14 +1072,14 @@ export function Composer({
                         <span>02 · 拍摄日期</span>
                         <div className="column-options">
                           {(project
-                            ? projectDates(
+                            ? [...new Set([...projectDates(
                                 {
                                   ...project,
                                 shootingDateStart:
                                   project.shootingDateStart || project.shootingDate || today(),
                                 },
                                 [],
-                              )
+                              ), ...(initial.project?.id === project.id && initial.shootingDate ? [shootingDateKey(initial.shootingDate)] : [])])].sort()
                             : [today()]
                           ).map((date) => (
                             <button
@@ -1035,44 +1107,39 @@ export function Composer({
                       <section>
                         <span>03 · 设备 / 机位</span>
                         <div className="column-options">
-                          {(project?.devices.length
-                            ? project.devices
-                            : ["FX3"]
-                          ).map((device) => (
+                          {dayDevices.map(({ device, positions, temporary }) => (
                             <button
                               key={device}
                               aria-pressed={camera === device}
                               className={camera === device ? "selected" : ""}
                               onClick={() => {
-                                const configured =
-                                  project?.devicePositions?.[device] || [];
+                                setDeviceSelectionNotice("");
                                 setCamera(device);
-                                setMultiPosition(Boolean(configured.length));
-                                setCameraPosition(configured[0] || "A");
+                                setMultiPosition(Boolean(positions.length));
+                                setCameraPosition(positions[0] || "A");
                               }}
                             >
                               <strong>{device}</strong>
                               <small>
-                                {project?.devicePositions?.[device]?.length
-                                  ? `${project.devicePositions[device].join(" / ")} 多机位`
-                                  : "单机位目录"}
+                                {temporary ? "当日临时设备 · " : ""}{positions.length ? `${positions.join(" / ")} 机位` : "单机位目录"}
                               </small>
                             </button>
                           ))}
                         </div>
+                        <Button className="temporary-device-open" kind="subtle" onClick={() => setTemporaryDeviceOpen(true)}><Plus size={14} />添加当日设备</Button>
                       </section>
                       <section>
                         <span>04 · 同型号机位</span>
-                        {project?.devicePositions?.[camera]?.length ? (
+                        {availablePositions.length ? (
                           <div className="column-options">
-                            <button
+                            {selectedDayDevice?.allowUnpositioned && <button
                               aria-pressed={!multiPosition}
                               className={!multiPosition ? "selected" : ""}
                               onClick={() => setMultiPosition(false)}
                             >
                               <strong>不分机位</strong>
                               <small>直接保存到 {camera}</small>
-                            </button>
+                            </button>}
                             {availablePositions.map((position) => (
                               <button
                                 key={position}
@@ -1320,6 +1387,7 @@ export function Composer({
                     : "任务名称"}
                   <input
                     aria-label="任务名称"
+                    disabled={busy || selectionBusy}
                     placeholder={
                       mode === "project" && project
                         ? `${project.volumePrefixByDevice?.[camera] || project.volumePrefix || `${camera}_`}${previewVolumeTimestamp()}`
@@ -1331,7 +1399,26 @@ export function Composer({
                     onChange={(e) => setName(e.target.value)}
                   />
                 </label>
-                <details className="backup-advanced">
+                {sources.map((source) => <BackupSelectionPanel
+                  key={`${source.path}:${mode}:${projectId}:${hidden}`}
+                  sourcePath={source.path}
+                  projectId={mode === "project" ? project?.id : undefined}
+                  plan={source.selection}
+                  disabled={busy || selectionBusy || !hidden}
+                  onBusy={setSelectionBusy}
+                  onDraft={(pending) => setSelectionDrafts((all) => ({ ...all, [source.path]: pending }))}
+                  onInspect={(pending) => setSelectionChecks((all) => ({ ...all, [source.path]: pending }))}
+                  onChange={(selection) => {
+                    if (selection) ownedSelectionIds.current.add(selection.id);
+                    if (selection && !hidden) {
+                      setError("日期筛选需要保留隐藏及关联文件，请先在高级选项开启完整文件范围后重新分析");
+                      return;
+                    }
+                    setSources((all) => all.map((item) => item.path === source.path ? { ...item, selection } : item));
+                  }}
+                />)}
+                {!hidden && <p className="small amber-text">日期筛选需要完整保留隐藏及关联文件，请先在高级选项开启“包含隐藏文件”。</p>}
+                <details className="backup-advanced" inert={selectionBusy || undefined}>
                   <summary>
                     高级选项{" "}
                     <span>
@@ -1494,7 +1581,7 @@ export function Composer({
                           {sources.length} 个来源 ·{" "}
                           {sources.reduce(
                             (sum, source) =>
-                              sum + (source.scan?.totalFiles || 0),
+                              sum + (source.selection?.includedPaths.length ?? source.scan?.totalFiles ?? 0),
                             0,
                           )}{" "}
                           个文件 · {sources.reduce(
@@ -1634,7 +1721,7 @@ export function Composer({
                 <dd>
                   {sources.some((s) => s.scan)
                     ? sources.reduce(
-                        (n, s) => n + (s.scan?.totalFiles || 0),
+                        (n, s) => n + (s.selection?.includedPaths.length ?? s.scan?.totalFiles ?? 0),
                         0,
                       ) + " 个"
                     : "—"}
@@ -1685,7 +1772,7 @@ export function Composer({
         <div className="modal-footer">
           <Button
             kind="subtle"
-            disabled={busy}
+            disabled={busy || selectionBusy}
             onClick={() =>
               step > 0 && !batch.current.length
                 ? setStep((s) => s - 1)
@@ -1707,6 +1794,8 @@ export function Composer({
               kind="primary"
               disabled={
                 busy ||
+                selectionBusy ||
+                (step === 2 && sources.some((source) => selectionDrafts[source.path] || selectionChecks[source.path])) ||
                 (step === 0 &&
                   (!sources.length || (mode === "project" && !project))) ||
                 (step === 1 && !dests.length)

@@ -5,7 +5,8 @@ import {
   updateSchedule,
 } from "../common/shooting-dates";
 import { groupLogicalVolumes } from "../common/logical-volumes";
-import { projectCloseoutSummary } from "./project-closeout";
+import { validateTemporaryDevicePlan } from "../common/project-day-devices";
+import { projectCloseoutSummary, projectDeviceCells } from "./project-closeout";
 export { groupLogicalVolumes } from "../common/logical-volumes";
 import type {
   BackupTask,
@@ -238,6 +239,7 @@ export function recordDailyPlanDecision(
     operator: string;
     note?: string;
     at?: number;
+    purpose?: "temporary-device";
   },
 ): ProjectConfig {
   if (!input.operator.trim()) throw new Error("请填写每日计划操作人");
@@ -261,6 +263,48 @@ export function recordDailyPlanDecision(
       input.scheduleKey.split("::").some((part) => !part.trim()))
   )
     throw new Error("设备或机位名称无效");
+  if (input.purpose === "temporary-device") {
+    if (input.decision !== "expected" || !input.scheduleKey)
+      throw new Error("添加当日设备必须明确加入当日计划");
+    const scheduleKey = validateTemporaryDevicePlan(project, date, input.scheduleKey);
+    input = { ...input, scheduleKey };
+    const alreadyExpected = Object.entries(project.expectedDevicesByDate || {})
+      .some(([day, entries]) => shootingDateKey(day) === date && entries.includes(scheduleKey));
+    const [device, position] = scheduleKey.split("::");
+    const parentUnused = Boolean(position) && Object.entries(project.unusedDevicesByDate || {})
+      .some(([day, entries]) => shootingDateKey(day) === date && entries.includes(device));
+    const markedUnused = Object.entries(project.unusedDevicesByDate || {})
+      .some(([day, entries]) => shootingDateKey(day) === date &&
+        (entries.includes(scheduleKey) || (!position && entries.includes(`${device}::unassigned`))));
+    const wasRest = project.restDays?.some((day) => shootingDateKey(day) === date);
+    // A repeated save is the same plan, not another device or audit decision.
+    if (alreadyExpected && !markedUnused && !parentUnused && !wasRest) return clone(project);
+    if (wasRest) project = recordDailyPlanDecision(project, {
+      date,
+      decision: "working",
+      operator: input.operator,
+      at: input.at,
+      note: "添加当日设备并恢复为拍摄日",
+    });
+    if (parentUnused) {
+      const preservedKeys = projectDeviceCells(project, [], date)
+        .filter((cell) => cell.device === device && cell.scheduleKey !== scheduleKey)
+        .map((cell) => cell.cameraPosition ? cell.scheduleKey : `${device}::unassigned`);
+      project = recordDailyPlanDecision(project, {
+        date, scheduleKey: device, decision: "clear", operator: input.operator, at: input.at,
+        note: `添加当日机位 ${position}，撤销整机未使用豁免；其他已知机位保持未使用`,
+      });
+      for (const preservedKey of new Set(preservedKeys)) project = recordDailyPlanDecision(project, {
+        date, scheduleKey: preservedKey, decision: "unused", operator: input.operator, at: input.at,
+        note: `新增机位 ${position} 不改变其他已知机位原来的未使用决定`,
+      });
+    } else if (!position && markedUnused) {
+      project = recordDailyPlanDecision(project, {
+        date, scheduleKey: `${device}::unassigned`, decision: "clear", operator: input.operator, at: input.at,
+        note: "添加当日未分机位设备，撤销该单元未使用豁免",
+      });
+    }
+  }
   let next = clone(project);
   if (input.decision === "rest" || input.decision === "working") {
     const isRest = next.restDays?.some((item) => shootingDateKey(item) === date);

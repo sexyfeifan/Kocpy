@@ -22,9 +22,13 @@ import {
 import { hashFile } from "./backup/BackupEngine";
 import { XxHash32 } from "./backup/XxHash32";
 import { driveInfo, volumeIdentity } from "./system";
-
-const mediaForEmbeddedDate =
-  /\.(mov|mp4|mxf|mkv|avi|m4v|mts|m2ts|jpg|jpeg|heic|tif|tiff|dng|arw|cr2|cr3|nef|wav|bwf|mp3|aac)$/i;
+import { conservativeSelectionFamilies } from "../common/backup-selection";
+import {
+  assertCompleteCardForDelivery as assertFullCardTask,
+  dailyDeliveryFamilyMustBeRetained as familyMustBeRetained,
+  dailyDeliveryMediaPattern as mediaForEmbeddedDate,
+  dailyDeliverySelectedRecords,
+} from "../common/date-allocation";
 
 const xml = (value: unknown) =>
   String(value ?? "")
@@ -74,17 +78,6 @@ function localDate(value: number) {
   return `${date.getFullYear()}-${part(date.getMonth() + 1)}-${part(date.getDate())}`;
 }
 
-function clipFamily(relativePath: string) {
-  const parsed = path.parse(relativePath.normalize("NFC"));
-  const stem = parsed.name
-    .replace(/\s*\(\d+\)$/i, "")
-    .replace(/(?:[_\-.](?:proxy|prox|preview|thumb|thumbnail))$/i, "")
-    .toLocaleLowerCase("en-US");
-  // Be conservative: matching clip names in different camera directories are
-  // not assumed to be related. A user can still assign both groups together.
-  return `${parsed.dir.normalize("NFC").toLocaleLowerCase("en-US")}\0${stem || parsed.name.toLocaleLowerCase("en-US")}`;
-}
-
 function evidenceDigest(task: BackupTask) {
   const facts = task.fileRecords
     .map((record) => ({
@@ -109,6 +102,7 @@ export function cardDateAllocationDigest(plan: CardDateAllocationPlan) {
             assignedDate: group.assignedDate || "",
             confirmedAt: group.confirmedAt || 0,
             confirmedBy: group.confirmedBy || "",
+            ...(group.requiredForDelivery ? { requiredForDelivery: true } : {}),
           }))
           .sort((left, right) => left.id.localeCompare(right.id)),
       }),
@@ -203,6 +197,7 @@ export async function buildCardDateAllocation(
     readEmbeddedDate?: (absolutePath: string) => Promise<string | undefined>;
   } = {},
 ): Promise<CardDateAllocationPlan> {
+  assertFullCardTask(task);
   if (!task.fileRecords.length) throw new Error("该素材卷没有可分配的文件记录");
   const { root, destinationIndex } = await verifiedSourceDestination(
     task,
@@ -210,21 +205,19 @@ export async function buildCardDateAllocation(
   );
   if (!(await fs.stat(root)).isDirectory())
     throw new Error("素材卷副本目录不可用");
-  const families = new Map<string, FileRecord[]>();
-  for (const record of task.fileRecords) {
-    const key = clipFamily(record.relativePath);
-    families.set(key, [...(families.get(key) || []), record]);
-  }
+  const byPath = new Map(task.fileRecords.map((record) => [record.relativePath, record]));
+  const families = conservativeSelectionFamilies([...byPath.keys()], task.sourcePath);
   const previous =
     task.dateAllocation?.sourceEvidenceDigest === evidenceDigest(task)
       ? new Map(task.dateAllocation.groups.map((group) => [group.id, group]))
       : new Map<string, CardDateAllocationGroup>();
   const groups = await mapWithConcurrency(
-    [...families.values()].sort((left, right) =>
-      left[0].relativePath.localeCompare(right[0].relativePath),
+    families.sort((left, right) =>
+      left.relativePaths[0].localeCompare(right.relativePaths[0]),
     ),
     4,
-    async (records): Promise<CardDateAllocationGroup> => {
+    async (family): Promise<CardDateAllocationGroup> => {
+      const records = family.relativePaths.map((relative) => byPath.get(relative)!);
       const relativePaths = records
           .map((record) => record.relativePath)
           .sort((left, right) => left.localeCompare(right)),
@@ -240,17 +233,18 @@ export async function buildCardDateAllocation(
           }
           return value;
         };
-      let embeddedDate: string | undefined;
-      const media = records.find((record) =>
+      const embeddedDates = new Set<string>();
+      const media = records.filter((record) =>
         mediaForEmbeddedDate.test(record.relativePath),
       );
-      if (media && options.readEmbeddedDate) {
-        const { absolute } = await readVerified(media);
-        embeddedDate = dateFromTimestamp(
-          await options.readEmbeddedDate(absolute).catch(() => undefined),
-        );
-        if (embeddedDate)
-          evidence.push(`媒体内嵌日期建议：${embeddedDate}（仍需人工确认）`);
+      let unreadEmbedded = false;
+      if (media.length && options.readEmbeddedDate) {
+        for (const record of media) {
+          const { absolute } = await readVerified(record);
+          const found = dateFromTimestamp(await options.readEmbeddedDate(absolute).catch(() => undefined));
+          if (found) embeddedDates.add(found); else unreadEmbedded = true;
+        }
+        if (embeddedDates.size) evidence.push(`媒体内嵌日期建议：${[...embeddedDates].join("、")}（仍需人工确认）`);
       }
       const modifiedDates = new Set<string>();
       for (const record of records) {
@@ -264,18 +258,20 @@ export async function buildCardDateAllocation(
       if (modifiedDates.size === 1)
         evidence.push(`文件修改日期：${[...modifiedDates][0]}（低置信度）`);
       const pathDate = pathDates.size === 1 ? [...pathDates][0] : undefined,
+        embeddedDate = embeddedDates.size === 1 ? [...embeddedDates][0] : undefined,
         modifiedDate =
           modifiedDates.size === 1 ? [...modifiedDates][0] : undefined;
       let suggestedDate: string | undefined,
         suggestionBasis: CardDateAllocationGroup["suggestionBasis"] = "unknown",
         suggestionConfidence: CardDateAllocationGroup["suggestionConfidence"] =
           "unknown";
-      if (embeddedDate && pathDate && embeddedDate === pathDate) {
+      const conflict = embeddedDates.size > 1 || pathDates.size > 1 || Boolean(embeddedDate && pathDate && embeddedDate !== pathDate);
+      if (conflict || unreadEmbedded) {
+        evidence.push("同组日期冲突或内嵌日期不完整，必须人工判定并完整保留关联文件");
+      } else if (embeddedDate && pathDate && embeddedDate === pathDate) {
         suggestedDate = embeddedDate;
         suggestionBasis = "embedded-media";
         suggestionConfidence = "high";
-      } else if (embeddedDate && pathDate && embeddedDate !== pathDate) {
-        evidence.push("内嵌日期与路径日期冲突，必须人工判定");
       } else if (embeddedDate) {
         suggestedDate = embeddedDate;
         suggestionBasis = "embedded-media";
@@ -289,6 +285,11 @@ export async function buildCardDateAllocation(
         suggestionBasis = "file-modified-time";
         suggestionConfidence = "review";
       }
+      const requiredForDelivery = Boolean(family.protectionReason) || familyMustBeRetained(relativePaths, family.packageProtected) || conflict || unreadEmbedded || !suggestedDate;
+      if (family.protectionReason) evidence.push(family.protectionReason);
+      if (requiredForDelivery) evidence.push(family.packageProtected
+        ? "相机素材包不可拆分，每次交付完整保留"
+        : "未知、共享或归属不可靠的关联内容，每次交付保守保留");
       const prior = previous.get(id);
       return {
         id,
@@ -306,6 +307,7 @@ export async function buildCardDateAllocation(
         assignedDate: prior?.assignedDate,
         confirmedAt: prior?.confirmedAt,
         confirmedBy: prior?.confirmedBy,
+        ...(requiredForDelivery ? { requiredForDelivery: true as const } : {}),
       };
     },
   );
@@ -327,6 +329,7 @@ export function applyCardDateAllocationDecisions(
   operator: string,
   now = Date.now(),
 ) {
+  assertFullCardTask(task);
   const actualOperator = operator.trim();
   if (!actualOperator) throw new Error("请填写实际确认人");
   if (
@@ -366,24 +369,12 @@ function selectedRecords(
   plan: CardDateAllocationPlan,
   shootingDate: string,
 ) {
-  if (!validDate(shootingDate)) throw new Error("请选择有效拍摄日期");
   if (
     plan.sourceTaskId !== task.id ||
     plan.sourceEvidenceDigest !== evidenceDigest(task)
   )
     throw new Error("日期归属依据已变化，请重新分析并确认");
-  const paths = new Set(
-    plan.groups
-      .filter((group) => group.assignedDate === shootingDate)
-      .flatMap((group) => group.relativePaths),
-  );
-  const records = task.fileRecords.filter((record) =>
-    paths.has(record.relativePath),
-  );
-  if (!records.length) throw new Error("该拍摄日没有已确认归属的文件");
-  if (records.length !== paths.size)
-    throw new Error("日期归属包含已不存在的文件记录");
-  return records;
+  return dailyDeliverySelectedRecords(task, plan, shootingDate);
 }
 
 function deliveryFolderName(task: BackupTask, shootingDate: string) {
@@ -458,7 +449,6 @@ export async function prepareDailyDeliveryRun(
         dev: destinationParentBinding.dev,
         ino: destinationParentBinding.ino,
       },
-      parents: {},
     },
     hashAlgorithm: "sha256",
     allocationDigest: cardDateAllocationDigest(plan),
@@ -3397,6 +3387,8 @@ export async function executeDailyDeliveryRun(
   if (run.sourceTaskId !== task.id) throw new Error("当日交付不属于该素材卷");
   if (run.allocationDigest !== cardDateAllocationDigest(plan))
     throw new Error("日期归属已被修改，请新建交付任务");
+  if (records.length !== run.totalFiles || records.reduce((sum, record) => sum + record.size, 0) !== run.totalBytes)
+    throw new Error("关联文件保护规则或交付范围已变化，请重新分析并新建交付任务；已有交付目录保持不变");
   const sourceDestinationIndex = task.destinations.findIndex(
       (destination) => destination.id === run.sourceDestinationId,
     ),

@@ -1,4 +1,5 @@
 import type { ArchiveScope } from "../../common/interaction";
+import type { BackupSelectionPreview, BackupSelectionPlan, BackupSelectionDecision, BackupSelectionProgress } from "../../common/backup-selection";
 import type { OperationRecord } from "../../main/operations";
 import type { BackgroundActivitySummary } from "../../main/background-activities";
 import type {
@@ -200,6 +201,12 @@ export interface API {
     schema: number;
   }>;
   createTask(config: TaskConfig): Promise<BackupTask>;
+  inspectBackupDates(sourcePath: string): Promise<{ dates: string[]; unknownGroups: number; groups: BackupSelectionPreview["groups"]; sourceFiles: number; totalBytes: number }>;
+  analyzeBackupSelection(sourcePath: string, projectId?: string): Promise<BackupSelectionPreview>;
+  confirmBackupSelection(id: string, decision: BackupSelectionDecision): Promise<BackupSelectionPlan>;
+  cancelBackupSelection(): Promise<void>;
+  discardBackupSelection(ids: string[]): Promise<void>;
+  onBackupSelectionProgress(callback: (progress: BackupSelectionProgress & { sourcePath: string }) => void): () => void;
   startTask(id: string): Promise<void>;
   cancelTask(id: string): Promise<void>;
   pauseTask(id: string): Promise<void>;
@@ -431,6 +438,7 @@ export interface API {
       decision: "expected" | "unused" | "clear" | "rest" | "working";
       operator: string;
       note?: string;
+      purpose?: "temporary-device";
     },
   ): Promise<ProjectConfig[]>;
   previewProjectDirectoryCleanup(
@@ -511,6 +519,7 @@ export interface API {
     projectId: string,
     device: string,
     prefixOverride?: string,
+    dayContext?: { shootingDate: string; position?: string },
   ): Promise<{
     label: string;
     timestamp: string;

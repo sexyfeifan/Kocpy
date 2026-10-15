@@ -1,0 +1,37 @@
+.temporary-device-form {
+  min-width: 0;
+  padding: 20px;
+  margin: 0 0 24px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--panel2);
+}
+.temporary-device-heading, .temporary-device-actions {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.temporary-device-heading > div { min-width: 0; }
+.temporary-device-heading p, .temporary-device-note {
+  font-size: 12px;
+  line-height: 1.65;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.temporary-device-heading p { margin: 8px 0 16px; }
+.temporary-device-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+.temporary-device-fields label { display: grid; gap: 8px; min-width: 0; }
+.temporary-device-fields input, .temporary-device-fields select { width: 100%; min-width: 0; }
+.temporary-device-note { margin: 16px 0; }
+.temporary-device-actions { justify-content: flex-end; flex-wrap: wrap; margin-top: 16px; }
+.temporary-device-open { margin-top: 12px; width: 100%; }
+.temporary-device-saved { margin: 0 0 20px; line-height: 1.65; overflow-wrap: anywhere; }
+@media (max-width: 680px) {
+  .temporary-device-fields { grid-template-columns: minmax(0, 1fr); }
+  .temporary-device-actions .btn { flex: 1 1 180px; }
+}

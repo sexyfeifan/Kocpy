@@ -4,6 +4,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { canonical, inside, safeChild, scan } from "./backup/safety";
 import { hashFile } from "./backup/BackupEngine";
 export { projectCoverage } from "../common/task-trust";
+import { detectBackupSelectionMarker } from "./backup-selection-marker";
 import type {
   BackupTask,
   ExternalManifestComparison,
@@ -317,6 +318,8 @@ export async function previewExistingBackup(
   root = await canonical(root);
   const stat = await fs.stat(root);
   if (!stat.isDirectory()) throw new Error("接管路径必须是文件夹");
+  if ((await detectBackupSelectionMarker(root)).detected)
+    throw new Error("此目录含选定范围备份声明或当日交付标记，属于范围派生目录，不能作为完整源卡重新接管。请在原工作站导出工作站包，再通过“项目模板与交接”预检并合并原任务记录；不要删除范围声明或修改原始 MHL 来消除提示。");
   const result = await scan(root, false),
     groupMap = new Map<string, ExistingImportPreview["groups"][number]>();
   for (const file of result.files) {

@@ -314,6 +314,16 @@ export function MixedDayDeliveryDialog({
       </div>
     );
 
+  if (task.selection && (!task.selection.wholeCardCovered || task.selection.excludedFiles.length > 0 ||
+    new Set(task.selection.includedPaths).size !== task.selection.sourceFiles.length))
+    return <div className="modal-backdrop top-layer">
+      <section className="form-modal mixed-day-dialog" role="dialog" aria-modal="true" aria-labelledby="mixed-day-selected-title">
+        <div className="modal-header"><h2 id="mixed-day-selected-title">此任务是选定范围备份</h2><Button kind="icon" title="关闭" onClick={onClose}><X size={18} /></Button></div>
+        <div className="mixed-day-body"><section className="mixed-day-section"><p>{task.name} 只包含开始备份前确认的文件范围，不能作为完整卡生成当日交付。</p><p>请先保留并校验原整卡副本，再从完整卡整理日期归属与交付。当前已完成的范围备份、源素材和原始清单保持原样。</p></section></div>
+        <div className="modal-footer"><Button kind="subtle" onClick={onClose}>关闭</Button></div>
+      </section>
+    </div>;
+
   return (
     <div className="modal-backdrop top-layer">
       <section
@@ -353,6 +363,7 @@ export function MixedDayDeliveryDialog({
               </select>
             </label>
             <p className="muted small">媒体内嵌日期、路径日期和修改时间只用于给出建议；Kocpy 不会自动把建议当作事实。</p>
+            <p className="muted small">跨目录同名素材与伴随文件成组处理；相机素材包不可拆分。未知、共享文件及未确认日期的组会随交付保留，因此交付范围可能包含其他日期的关联内容。</p>
           </section>
 
           {plan && (
@@ -386,7 +397,7 @@ export function MixedDayDeliveryDialog({
               <div className="mixed-day-groups">
                 {matchingGroups.slice(0, visibleGroups).map((group) => (
                   <div className="mixed-day-group" key={group.id}>
-                    <div><strong>{group.label}</strong><span>{group.files} 文件 · {bytes(group.bytes)}</span><small>{group.relativePaths[0]}</small></div>
+                    <div><strong>{group.label}</strong><span>{group.files} 文件 · {bytes(group.bytes)}{group.requiredForDelivery ? " · 每次交付保留" : ""}</span><small>{group.relativePaths[0]}</small></div>
                     <div className="mixed-day-suggestion">
                       <span>建议 {group.suggestedDate || "无"}</span>
                       <small>{group.evidence.join("；") || "没有可用日期证据"}</small>
@@ -415,6 +426,7 @@ export function MixedDayDeliveryDialog({
                 <label className="field-label">交付父目录<div className="path-input-row"><input value={destinationParent} onChange={(event) => setDestinationParent(event.target.value)} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); void acceptDroppedDirectory([...event.dataTransfer.files]); }} placeholder="选择或拖入文件夹" /><Button kind="subtle" onClick={() => void chooseDestination()}><FolderOpen size={14} />选择</Button></div></label>
               </div>
               <label className="mixed-day-ack"><input type="checkbox" checked={acknowledged} onChange={(event) => setAcknowledged(event.target.checked)} /><span>我确认这是从完整卡派生的交付副本；它不删除完整卡、不替代正式备份证据，也不证明未选择素材可以删除。</span></label>
+              <p className="muted small">最终交付还会包含必要的关联文件、未知或共享内容，以及未确认归属的素材组；不会为了缩小交付容量而拆开素材包。</p>
               <Button kind="primary" disabled={!acknowledged || !deliveryDate || !destinationParent || !operator.trim() || Boolean(busy)} onClick={() => void runDelivery()}><ShieldCheck size={15} />{busy === "deliver" ? "正在复制并独立回读" : "开始生成并校验当日交付"}</Button>
             </section>
           )}

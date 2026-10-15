@@ -267,6 +267,8 @@ export interface CardDateAllocationGroup {
   assignedDate?: string;
   confirmedAt?: number;
   confirmedBy?: string;
+  /** Shared/unknown files and indivisible camera packages are retained in every delivery. */
+  requiredForDelivery?: true;
 }
 
 export interface CardDateAllocationPlan {
@@ -485,6 +487,7 @@ export interface ExternalManifestComparison {
 }
 
 export interface BackupTask {
+  selection?: import("../common/backup-selection").BackupSelectionPlan;
   requestId?: string;
   provenance?:
     | "kocpy-transfer"
@@ -605,6 +608,10 @@ export interface BackupTask {
 }
 
 export interface TaskConfig {
+  /** Opaque, main-process-owned confirmation. Renderer plans are not accepted. */
+  selectionId?: string;
+  /** Only a main-process confirmed plan may populate this field. */
+  selection?: import("../common/backup-selection").BackupSelectionPlan;
   requestId?: string;
   projectId?: string;
   name: string;

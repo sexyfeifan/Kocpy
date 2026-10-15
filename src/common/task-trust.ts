@@ -5,6 +5,17 @@ import type {
   ProjectCoverage,
 } from "../main/types";
 import { copyEvidenceSummary } from "./copy-evidence";
+import { backupSelectionSummary } from "./backup-selection";
+
+/** A selected task protects only its confirmed range, even when omitted files
+ * were verified elsewhere. It is never evidence of a whole-card copy here. */
+export function taskHasPartialSelection(task: BackupTask): boolean {
+  return Boolean(task.selection && (
+    task.selection.wholeCardCovered !== true ||
+    !Array.isArray(task.selection.excludedFiles) ||
+    task.selection.excludedFiles.length > 0
+  ));
+}
 
 /** Decisions are derived from metadata shared by full records and paged IPC
  * summaries. Absence of fileRecords in a list response is not lost evidence. */
@@ -43,6 +54,7 @@ export function manifestRequirementMet(task: BackupTask): boolean {
 
 export function taskTrustState(task: BackupTask) {
   const copies = copyEvidenceSummary(task.destinations);
+  const partialSelection = taskHasPartialSelection(task);
   const permissionExclusions =
     task.inventoryScope?.exclusions?.filter(
       (item) => item.reason === "permission-denied",
@@ -76,7 +88,7 @@ export function taskTrustState(task: BackupTask) {
     verifiedAt,
     copies,
     countableCopies:
-      contentVerified && !permissionExclusions.length
+      contentVerified && !permissionExclusions.length && !partialSelection
         ? copies.independentCopies
         : 0,
   });
@@ -148,6 +160,16 @@ export function taskTrustState(task: BackupTask) {
         : "重新校验在线目标，补充完整校验证据。",
     );
   }
+  if (partialSelection && task.selection) {
+    const selection = backupSelectionSummary(task.selection);
+    return result(
+      "unverified",
+      `选定范围校验通过 · 未复制 ${selection.excludedFiles} 个文件`,
+      `仅证明本次选定的 ${selection.includedFiles} 个文件完成内容校验；另有 ${selection.historicalFiles} 个文件有预检时历史副本依据、${selection.unprotectedFiles} 个文件未证明已受保护。${permissionExclusions.length ? `源还有 ${permissionExclusions.length} 项权限排除。` : ""}本任务不计作整卡达标副本。`,
+      "查看备份范围与未复制清单；历史副本不在本次目标中，不得仅据此结果格式化源素材卡。",
+      true,
+    );
+  }
   if (permissionExclusions.length)
     return result(
       "unverified",
@@ -201,10 +223,11 @@ export function taskCompletionNotice(task: BackupTask) {
   const trust = taskTrustState(task);
   const passed = task.destinations.filter((destination) => destination.verified).length;
   const permissions = task.inventoryScope?.exclusions.filter((entry) => entry.reason === "permission-denied").length || 0;
+  const selection = task.selection && taskHasPartialSelection(task) ? backupSelectionSummary(task.selection) : undefined;
   return {
     title: trust.label,
     attention: trust.status !== "completed",
-    body: `${task.name} · ${task.totalFiles} 个纳入文件 · ${passed} 个目标通过校验${permissions ? ` · ${permissions} 项权限排除，源范围未完整，整卡达标副本 0 份` : ` · 当前任务可计 ${trust.countableCopies} 份副本`}`,
+    body: `${task.name} · ${task.totalFiles} 个纳入文件 · ${passed} 个目标通过校验${selection ? ` · 本次选定范围，未复制 ${selection.excludedFiles} 个文件（历史已验证 ${selection.historicalFiles} 个，未保护 ${selection.unprotectedFiles} 个），整卡达标副本 0 份；不得据此格式化源素材卡` : permissions ? ` · ${permissions} 项权限排除，源范围未完整，整卡达标副本 0 份` : ` · 当前任务可计 ${trust.countableCopies} 份副本`}`,
   };
 }
 

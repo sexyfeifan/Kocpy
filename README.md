@@ -6,7 +6,7 @@
 
 <p align="center"><a href="#中文">中文</a> · <a href="#english">English</a> · <a href="#日本語">日本語</a></p>
 
-当前版本：**0.1.48** · [下载](https://github.com/sexyfeifan/Kocpy/releases/latest) · [使用手册](docs/USER_GUIDE.md) · [文档导航](docs/README.md) · [0.1.48 更新](docs/RELEASE_NOTES_0.1.48.md)。正式安装包与公开状态以 GitHub Release 为准。
+当前版本说明：**0.1.49** · [下载](https://github.com/sexyfeifan/Kocpy/releases/latest) · [使用手册](docs/USER_GUIDE.md) · [文档导航](docs/README.md) · [0.1.49 更新](docs/RELEASE_NOTES_0.1.49.md)。正式安装包与公开状态以 GitHub Release 为准；源码和文档更新不表示附件已经发布或完成验收。
 
 ![Kocpy 工作台](docs/screenshots/dashboard.png)
 
@@ -16,12 +16,12 @@
 
 ### 下载与安装
 
-| 你的 Mac | 0.1.48 安装包 |
+| 你的 Mac | 0.1.49 安装包（以同版 Release 已公开附件为准） |
 | --- | --- |
-| Apple Silicon（M 系列） | [下载 arm64 DMG](https://github.com/sexyfeifan/Kocpy/releases/download/v0.1.48/Kocpy-0.1.48-arm64.dmg) |
-| Intel | [下载 x64 DMG](https://github.com/sexyfeifan/Kocpy/releases/download/v0.1.48/Kocpy-0.1.48-x64.dmg) |
+| Apple Silicon（M 系列） | [下载 arm64 DMG](https://github.com/sexyfeifan/Kocpy/releases/download/v0.1.49/Kocpy-0.1.49-arm64.dmg) |
+| Intel | [下载 x64 DMG](https://github.com/sexyfeifan/Kocpy/releases/download/v0.1.49/Kocpy-0.1.49-x64.dmg) |
 
-下载后先核对同一 Release 的 [SHA256SUMS.txt](https://github.com/sexyfeifan/Kocpy/releases/download/v0.1.48/SHA256SUMS.txt)，再打开 DMG，将 Kocpy 拖入“应用程序”。候选包不能用其摘要校验正式附件。
+下载后先核对同一 Release 的 [SHA256SUMS.txt](https://github.com/sexyfeifan/Kocpy/releases/download/v0.1.49/SHA256SUMS.txt)，再打开 DMG，将 Kocpy 拖入“应用程序”。候选包不能用其摘要校验正式附件。
 
 软件内“检查更新”打开与你的 Mac 架构匹配的官方 DMG 下载链接；下载并核对摘要后，正常退出 Kocpy，手动替换“应用程序”中的旧 App，再启动确认版本。
 
@@ -54,6 +54,8 @@
 | 暂停与恢复 | 暂停／继续、大文件断点恢复、异常退出恢复、只重试失败目标；离线、空间、权限与身份异常的检查引导 |
 | 后台任务 | 首页集中显示运行／待处理任务；独立页面按状态、类型和项目筛选近期历史，显示阶段、当前文件、路径、速度、用时、结果与错误 |
 | 拍摄项目 | 按拍摄日分组的设备／机位矩阵和素材卷明细；逻辑素材卷去重统计；收工副本要求；按需创建目录、安全空脚手架整理；日计划、规则版本、检查表与交接 |
+| 当日临时设备 | 从拍摄日直接添加设备／机位并开始备份；只影响选定日期，保留实际操作人和计划审计，不扩展常驻设备或预建其他日期的空目录 |
+| 混合日期范围 | 拷贝前只读查看日期线索；手动确认日期与范围；整组保护跨目录关联文件、未知／共享内容、摄影机包与独立录音；历史副本须重新在线验证，部分范围不等于整卡 |
 | 模板与项目记录 | 五个有差异说明的系统模板；自定义新建／编辑／导入导出／选择性应用；受保护的内部项目记录删除 |
 | 既有备份接管 | 单张素材卡、单日所有机位、整个项目；映射预览与修正；MHL／SHA 清单比对、首次基线、旧接管记录刷新 |
 | 清单差异处理 | 缺失／额外／大小／哈希差异明细；Finder 定位；健康副本修复；重要确认后的经审计 MHL 修订 |
@@ -79,24 +81,23 @@
 - **历史通过 ≠ 永久健康。** 长期保存需要重新读取归档盘校验；报告只代表其记录时点。
 - **完整范围 ≠ 目的地目录集合绝对相等。** 新任务保证冻结源素材范围的每一项都有已记录的目标映射，目标内容、精确文件字节与冻结空目录经过核对；冲突后缀模式会记录改名后的真实映射。Kocpy 不删除或否定目的地既有额外项，校验完成后写入的 `Kocpy报告` 也是带独立摘要的管理产物，不属于源卡素材范围。文件系统分配、ACL、扩展属性和时间戳不在内容校验结论内；主动排除隐藏项时会留下明确排除清单。
 - **每日交付 ≠ 新的完整备份。** 它从已校验完整卡派生并重新校验，但不增加素材卡、任务或物理独立副本数量。
+- **选定范围通过 ≠ 整卡完整。** 明确跳过的内容不会出现在本次目的地，历史副本证据不算作本次复制；部分范围不计为完整卡副本，不能据此清卡。随盘范围声明和报告保留已复制／未复制事实，不修改源素材或原 MHL。
 
 普通备份按只读原则处理素材源。修复副本、修订 MHL 等维护写入必须经过明确确认；MHL 修订保留原始清单与审计，不删除素材，也不允许豁免大小或哈希异常。删除项目只清理 Kocpy 内部记录，不删除磁盘素材、报告或清单。
 
-### 0.1.48 更新重点
+### 0.1.49 更新重点
 
-1. **冷银玻璃界面**：分层面板、银色主操作和蓝／青／紫功能图标，深浅主题使用同一套交互规则。原侧栏字号与图标尺寸保持稳定，密集内容独立滚动。
-2. **真实备份进度**：工作台显示实际素材源与各目的地；复制和独立回读分别展示，内容已校验与物理独立副本达标分别判断。
-3. **系统目录过滤**：新任务跳过 `.Spotlight-V100`、`.Trashes` 等 macOS 系统目录，普通隐藏素材继续遵循“包含隐藏文件”设置。
-4. **权限错误后继续扫描**：子目录或条目遇到 `EPERM`／`EACCES` 时保留排除证据，继续读取其余素材。权限遗漏标记范围风险，不算整卡完整副本，也不用于推出已完成素材卡。
-5. **旧任务兼容**：历史任务保留原冻结策略和路径；哈希、卷身份、最终源复扫与逐目标回读要求继续生效。Electron 仍锁定 44.5.1，安装包采用 ad-hoc，不宣称身份签名或公证。
+1. **界面留白与控件边界**：项目卡片、表单、操作区和长路径按可用宽度换行，减少贴边、拥挤和重叠；侧栏文字与图标保持原尺寸。
+2. **当日设备直接加入备份**：在拍摄日选择日期、名称、可选机位和操作人；保存后选中本次设备，不影响其他日期。取消备份不会悄悄删除已保存的日计划。
+3. **混合日期先检查再选择**：默认仍整卡备份；日期只是线索，用户核对并确认后才形成选定范围。未知／共享文件、不可拆摄影机包以及关联不明确的独立录音保守保留。
+4. **范围证据可追溯**：记录操作人、包含／排除文件、日期归属与历史依据；开始前和完成前复核源范围。内容已验证、整卡完整与物理独立副本达标继续分开判断。
+5. **整卡后交付更保守**：与拷贝前筛选共用关联文件分组，保留未确认归属；部分范围任务不能伪装成整卡再次生成每日交付。
 
-媒体执行文件从锁定对应源码编译，固定 ad-hoc 签名后冻结准确完整摘要；App 签名后再次核验。同一策略只支持 ad-hoc 发布，身份签名配置明确停止。0.1.46 保留未发布草稿，本版承接其改动。
-
-[完整更新说明](docs/RELEASE_NOTES_0.1.48.md) · [历史正式发布](https://github.com/sexyfeifan/Kocpy/releases)
+[完整更新说明](docs/RELEASE_NOTES_0.1.49.md) · [历史正式发布](https://github.com/sexyfeifan/Kocpy/releases)
 
 ### 验证范围与已知限制
 
-0.1.48 的自动测试、架构、准确安装包与桌面验收范围，以[验证记录](docs/VERIFICATION.md)和同版公开 Release 为准。历史或开发版本通过的检查不会自动计作本版正式附件通过；未执行项目保持明确标注。
+0.1.49 的自动测试、架构、准确安装包与桌面验收范围，以[验证记录](docs/VERIFICATION.md)和同版公开 Release 为准。历史或开发版本通过的检查不会自动计作本版正式附件通过；未执行项目保持明确标注。
 
 - 没有 Developer ID／Apple 公证，不宣称通过 App Store 审核。
 - 原生 Apple Silicon、Rosetta 与原生 Intel 分开记录；候选成功不等同于正式附件通过，准确附件摘要与回下载核验见[验证记录](docs/VERIFICATION.md)。
@@ -154,11 +155,11 @@ Kocpy is a local-first macOS workspace for verified media offload and production
 
 Project mode adds shooting days, cameras and positions, logical card volumes, closeout requirements, versioned rules, editable templates and handoff records. Existing backups can be adopted against MHL/SHA manifests, read into a first baseline, or imported as unverified structure. A first baseline does not prove historical completeness, and different volume UUIDs alone do not prove physical independence.
 
-Current features also include recovery, media relinking, evidence-backed H.264/ProRes proxies, delivery manifests, archive reverification, audited metadata exchange between workstations, opt-in completion actions and diagnostics. Version **0.1.48** adds cold silver glass surfaces, functional icon colors and actual source-to-destination progress. Copying, content verification and independent-copy compliance remain separate facts. New scans skip macOS system directories and record descendant permission failures while continuing readable media; permission omissions prevent whole-card compliance. Historical tasks retain their frozen policies. Light/dark themes, fixed sidebar sizing and reduced motion remain supported.
+Current features also include recovery, media relinking, evidence-backed H.264/ProRes proxies, delivery manifests, archive reverification, audited metadata exchange and diagnostics. Version **0.1.49** improves card/form spacing, adds audited day-only devices directly to the backup flow, and offers explicitly confirmed date-range selection before copying. Shared/unknown files, indivisible camera packages and independently recorded audio with uncertain association are retained conservatively. Cross-directory sidecars stay together. Online historical evidence must be reverified; a selected-range backup is not a whole-card copy and never authorizes formatting the source. Range declarations and reports preserve exclusions without rewriting source media or original manifests. Copying, verification and independent-copy compliance remain separate facts. Fixed sidebar sizing, light/dark themes and reduced motion remain supported.
 
 [Download](https://github.com/sexyfeifan/Kocpy/releases/latest) · [Installation](docs/INSTALLATION.md) · [Guide (Chinese)](docs/USER_GUIDE.md) · [Verification scope](docs/VERIFICATION.md)
 
-Use the published 0.1.48 Release's separate arm64 or x64 installer and matching `SHA256SUMS.txt`; public asset availability is determined by GitHub Releases. The update command opens the matching DMG download, after which you quit Kocpy and replace the installed App manually. Packages use ad-hoc signing, **not Developer ID signing or Apple notarization**. Automated tests and historical hardware results are not certification for every storage setup; real NAS/SMB and physical two-disk results require their own recorded evidence.
+Use the 0.1.49 Release's separate arm64 or x64 installer and matching `SHA256SUMS.txt` once publicly available; code and documentation do not establish publication or final-artifact acceptance. The update command opens the matching DMG download, after which you quit Kocpy and replace the installed App manually. Packages use ad-hoc signing, **not Developer ID signing or Apple notarization**. Automated tests and historical hardware results are not certification for every storage setup; real NAS/SMB and physical two-disk results require their own recorded evidence.
 
 ## 日本語
 
@@ -166,11 +167,11 @@ Kocpy は macOS 向けのローカル優先メディアバックアップ／プ�
 
 プロジェクトモードでは撮影日、カメラ／位置、素材巻、必要コピー数、ルール履歴、テンプレート、引き継ぎを管理できます。既存素材の取り込み、MHL／SHA 比較、復旧、プロキシ、納品リスト、長期再検証、監査付きメタデータ交換にも対応します。初回基準は取り込み以前の完全性を証明せず、異なる UUID だけでは物理的に独立したコピーと認定しません。
 
-バージョン **0.1.48** は、シルバーのガラス調パネル、機能別アイコン色、実際のソースと保存先の進捗を表示します。コピー、内容検証、物理的に独立したコピー数は別々に扱います。新規タスクは macOS システムディレクトリを除外し、子項目の権限エラーを記録して読み取り可能な素材を続けます。権限による欠落は完全なカードバックアップとして数えません。既存タスクの範囲は保持し、サイドバーの文字・アイコンサイズは縮小しません。
+バージョン **0.1.49** はカードとフォームの余白を改善し、当日だけの機材／カメラ位置をバックアップ画面から追加できます。コピー前の日付選択は手動確認が必要で、初期設定はカード全体です。共有／不明なファイル、分割できないカメラパッケージ、関連が不明な独立録音は保持し、別フォルダの関連ファイルもまとめて扱います。部分範囲の検証成功はカード全体の完全性を意味せず、カード初期化の根拠にはできません。範囲声明とレポートに除外を記録し、ソースや元の MHL は変更しません。コピー、内容検証、独立コピー数を分け、サイドバーの文字とアイコンは縮小しません。
 
 [ダウンロード](https://github.com/sexyfeifan/Kocpy/releases/latest) · [インストール（中国語）](docs/INSTALLATION.md) · [使用手冊（中国語）](docs/USER_GUIDE.md) · [検証範囲](docs/VERIFICATION.md)
 
-公開された 0.1.48 Release の Apple Silicon／Intel 用インストーラと、同版の `SHA256SUMS.txt` を使用してください。公開状態は GitHub Releases で確認できます。更新操作は適切な DMG のダウンロードを開き、終了後にインストール済み App を手動で置き換えます。現在は ad-hoc 署名のみで、**Developer ID 署名・Apple 公証はありません**。自動テストをあらゆる実機構成の検証とみなさないでください。実 NAS／SMB や物理的に独立した二台の結果には、それぞれの記録が必要です。
+0.1.49 Release が公開された後、Apple Silicon／Intel 用インストーラと同版の `SHA256SUMS.txt` を使用してください。ソースや文書の更新だけでは公開・最終パッケージ検証の完了を意味しません。更新操作は適切な DMG のダウンロードを開き、終了後にインストール済み App を手動で置き換えます。現在は ad-hoc 署名のみで、**Developer ID 署名・Apple 公証はありません**。自動テストをあらゆる実機構成の検証とみなさないでください。実 NAS／SMB や物理的に独立した二台の結果には、それぞれの記録が必要です。
 
 ## License
 

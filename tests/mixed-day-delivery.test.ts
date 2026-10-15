@@ -6,10 +6,13 @@ import path from "node:path";
 import type { BackupTask } from "../src/main/types";
 import { hashFile } from "../src/main/backup/BackupEngine";
 import * as system from "../src/main/system";
+import { dailyDeliverySelectedRecords } from "../src/common/date-allocation";
+import { sealWorkspaceState, validateWorkspaceState } from "../src/main/workspace-contract";
 import {
   applyCardDateAllocationDecisions,
   authorizeDailyDeliveryArtifact,
   buildCardDateAllocation,
+  cardDateAllocationDigest,
   dailyDeliveryReportFileName,
   dailyDeliveryReportHtml,
   estimateDailyDeliveryJournalBytes,
@@ -121,6 +124,15 @@ async function preparedDeliveryRun() {
   return { plan, run };
 }
 
+async function addFixtureFile(relativePath: string, content = "generated sidecar") {
+  const absolute = path.join(verifiedCard, relativePath);
+  await fs.mkdir(path.dirname(absolute), { recursive: true });
+  await fs.writeFile(absolute, content);
+  const checksum = await hashFile(absolute, "sha256"), size = Buffer.byteLength(content);
+  task.fileRecords.push({ name: path.basename(relativePath), relativePath, size, srcChecksum: checksum, destinations: [{ path: absolute, checksum, verified: true }] });
+  task.totalFiles += 1; task.completedFiles += 1; task.totalBytes += size; task.transferredBytes += size; task.destinations[0].bytesWritten += size;
+}
+
 function ownershipSidecar(run: {
   finalPath: string;
   destinationParent: string;
@@ -133,6 +145,86 @@ function ownershipSidecar(run: {
 }
 
 describe("mixed-day full-card allocation and delivery", () => {
+  it("persists a new pending run before the Media directory exists", async () => {
+    const { plan, run } = await preparedDeliveryRun();
+    task.dateAllocation = plan; task.dailyDeliveryRuns = [run];
+    expect(run.directoryBindings?.parents).toBeUndefined();
+    const sealed = sealWorkspaceState({ schemaVersion: 1, revision: 1, committedAt: 1, tasks: [task], projects: [], taskTombstones: [], projectTombstones: [] });
+    expect(validateWorkspaceState(JSON.parse(JSON.stringify(sealed))).tasks[0].dailyDeliveryRuns?.[0].id).toBe(run.id);
+    await expect(fs.access(run.finalPath)).rejects.toThrow();
+    const states: string[] = [];
+    const complete = await executeDailyDeliveryRun(task, plan, run, async (checkpoint) => {
+      task.dailyDeliveryRuns = [checkpoint];
+      const state = sealWorkspaceState({ schemaVersion: 1, revision: 1, committedAt: 1, tasks: [task], projects: [], taskTombstones: [], projectTombstones: [] });
+      validateWorkspaceState(JSON.parse(JSON.stringify(state)));
+      states.push(checkpoint.status);
+    });
+    expect(complete.status).toBe("completed");
+    expect(states).toContain("running");
+    expect(states.at(-1)).toBe("completed");
+  });
+  it("keeps cross-directory sidecars, unknown files, independent audio and camera packages in the delivery closure", async () => {
+    await addFixtureFile("META/C001M01.XML");
+    await addFixtureFile("SHARED/catalog.db");
+    await addFixtureFile("AUDIO/20260914/audio001.WAV");
+    await addFixtureFile("PRIVATE/20260914/old.MOV");
+    await addFixtureFile("PRIVATE/20260916/new.MOV");
+    const before = await Promise.all(task.fileRecords.map((record) => hashFile(record.destinations[0].path, "sha256")));
+    let plan = await buildCardDateAllocation(task, verifiedCard, { readEmbeddedDate: async () => "2026-09-15T12:00:00Z" });
+    expect(plan.groups.find((group) => group.relativePaths.includes("DCIM/20260915/C001.MOV"))?.relativePaths).toContain("META/C001M01.XML");
+    const packageGroup = plan.groups.find((group) => group.relativePaths.includes("PRIVATE/20260914/old.MOV"))!;
+    expect(packageGroup.relativePaths).toContain("PRIVATE/20260916/new.MOV");
+    expect(packageGroup.requiredForDelivery).toBe(true);
+    plan = applyCardDateAllocationDecisions(task, plan, plan.groups.map((group) => ({ groupId: group.id, shootingDate: group.relativePaths.includes("DCIM/20260915/C001.MOV") ? "2026-09-15" : "2026-09-14" })), "Fixture DIT");
+    const selected = dailyDeliverySelectedRecords(task, plan, "2026-09-15").map((record) => record.relativePath);
+    expect(selected).toEqual(expect.arrayContaining(["META/C001M01.XML", "SHARED/catalog.db", "AUDIO/20260914/audio001.WAV", "PRIVATE/20260914/old.MOV", "PRIVATE/20260916/new.MOV"]));
+    expect(selected).not.toContain("DCIM/20260915/C002.MOV");
+    const run = await prepareDailyDeliveryRun(task, plan, { shootingDate: "2026-09-15", sourceDestinationId: "verified-copy", destinationParent: deliveryParent, operator: "Fixture DIT" });
+    const result = await executeDailyDeliveryRun(task, plan, run);
+    expect(result.status).toBe("completed");
+    expect(result.files).toHaveLength(selected.length);
+    expect(result.files.every((file) => file.verified)).toBe(true);
+    expect(await Promise.all(task.fileRecords.map((record) => hashFile(record.destinations[0].path, "sha256")))).toEqual(before);
+  });
+
+  it("retains unconfirmed groups instead of interpreting no assignment as permission to discard", async () => {
+    let plan = await buildCardDateAllocation(task, verifiedCard, { readEmbeddedDate: async () => "2026-09-15T12:00:00Z" });
+    plan = applyCardDateAllocationDecisions(task, plan, [{ groupId: plan.groups.find((group) => group.label === "C001")!.id, shootingDate: "2026-09-15" }], "Fixture DIT");
+    expect(dailyDeliverySelectedRecords(task, plan, "2026-09-15")).toHaveLength(3);
+  });
+
+  it("loads an old pending delivery but refuses unsafe resumption before creating a destination", async () => {
+    await addFixtureFile("SHARED/catalog.db");
+    let plan = await buildCardDateAllocation(task, verifiedCard, { readEmbeddedDate: async () => "2026-09-15T12:00:00Z" });
+    plan = applyCardDateAllocationDecisions(task, plan, plan.groups.map((group) => ({ groupId: group.id, shootingDate: group.label === "C001" ? "2026-09-15" : "2026-09-14" })), "Fixture DIT");
+    // Historic plans had no explicit conservative-retention field.
+    plan.groups.forEach((group) => { delete group.requiredForDelivery; });
+    const run = await prepareDailyDeliveryRun(task, plan, { shootingDate: "2026-09-15", sourceDestinationId: "verified-copy", destinationParent: deliveryParent, operator: "Fixture DIT" });
+    const oldPaths = new Set(plan.groups.filter((group) => group.assignedDate === "2026-09-15").flatMap((group) => group.relativePaths));
+    const oldRecords = task.fileRecords.filter((record) => oldPaths.has(record.relativePath));
+    run.totalFiles = oldRecords.length;
+    run.totalBytes = oldRecords.reduce((sum, record) => sum + record.size, 0);
+    run.allocationDigest = cardDateAllocationDigest(plan);
+    task.dateAllocation = plan; task.dailyDeliveryRuns = [run];
+    const sealed = sealWorkspaceState({ schemaVersion: 1, revision: 1, committedAt: 1, tasks: [task], projects: [], taskTombstones: [], projectTombstones: [] });
+    expect(validateWorkspaceState(JSON.parse(JSON.stringify(sealed))).tasks[0].dailyDeliveryRuns?.[0].totalFiles).toBe(2);
+    await expect(executeDailyDeliveryRun(task, plan, run)).rejects.toThrow(/重新分析并新建/);
+    await expect(fs.access(run.finalPath)).rejects.toThrow();
+    expect(await fs.readdir(deliveryParent)).toEqual([]);
+  });
+
+  it("never treats a selected-range backup as a complete card for analysis, decisions or delivery", async () => {
+    const { plan, run } = await preparedDeliveryRun();
+    // Deliberately minimal hostile/partial boundary input: rejection must occur
+    // before any other plan field or source/destination access is required.
+    task.selection = { wholeCardCovered: false, includedPaths: task.fileRecords.map((record) => record.relativePath), sourceFiles: task.fileRecords, excludedFiles: [{ relativePath: "old.mov" }] } as unknown as BackupTask["selection"];
+    await expect(buildCardDateAllocation(task, verifiedCard)).rejects.toThrow(/不能作为完整卡/);
+    expect(() => applyCardDateAllocationDecisions(task, plan, [], "Fixture DIT")).toThrow(/不能作为完整卡/);
+    await expect(prepareDailyDeliveryRun(task, plan, { shootingDate: "2026-09-15", sourceDestinationId: "verified-copy", destinationParent: deliveryParent, operator: "Fixture DIT" })).rejects.toThrow(/不能作为完整卡/);
+    await expect(executeDailyDeliveryRun(task, plan, run)).rejects.toThrow(/不能作为完整卡/);
+    expect(await fs.readdir(deliveryParent)).toEqual([]);
+  });
+
   it("keeps date detection advisory and preserves clip sidecars as one group", async () => {
     const plan = await buildCardDateAllocation(task, verifiedCard, {
       now: 100,
