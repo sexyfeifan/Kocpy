@@ -351,7 +351,7 @@ async function syntheticSelectionTask(directory: string) {
   const engine = new BackupEngine(), task = engine.createTask({
     projectId: project.id, projectName: project.name, name: "选定范围合成任务 · 保留共享关联文件",
     namingTemplate: "QA-selected", sourcePath, selection, hashAlgorithm: "sha256",
-    devices: project.devices, shootingDate: "2026-09-19",
+    devices: project.devices, cameraPosition: "B", shootingDate: "2026-09-19",
     destinationPaths: [`${syntheticRoot}/NAS/客户交付/长路径/${longPart}/${longPart}`],
     generateThumbnails: false,
   });
@@ -545,6 +545,8 @@ async function main() {
       const text = html.toString();
       for (const required of ["完整源扫描 8 个文件", "本次选择 4 个", "未复制 4 个", "未保护 4 个", "合成操作人 &lt;排版检查&gt;"])
         if (!text.includes(required)) throw new Error(`${filename} 缺少范围证据：${required}`);
+      if (!text.includes("A机 · FX6 临时设备 · B"))
+        throw new Error(`${filename} 缺少设备或机位信息`);
       results.push(await saveArtifact(directory, filename, "pdf", label, await renderPdf(html)));
     }
     const manifest = Buffer.from(

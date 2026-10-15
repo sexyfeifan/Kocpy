@@ -151,6 +151,10 @@ export function Composer({
       Record<string, Scan | "loading" | "error">
     >({});
   const [draggingDestination, setDraggingDestination] = useState(false);
+  const errorNotice = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (error) errorNotice.current?.scrollIntoView({ block: "nearest" });
+  }, [error]);
   const [draggingSource, setDraggingSource] = useState(false);
   const [projectUpdates, setProjectUpdates] = useState<Record<string, ProjectConfig>>({});
   const [temporaryDeviceOpen, setTemporaryDeviceOpen] = useState(Boolean(initial.addTemporaryDevice));
@@ -1679,7 +1683,7 @@ export function Composer({
               </div>
             )}
             {error && (
-              <div role="alert" className="error-box">
+              <div ref={errorNotice} role="alert" className="error-box">
                 <AlertTriangle size={17} />
                 {error}
               </div>

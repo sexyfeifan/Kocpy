@@ -1,0 +1,18 @@
+.modal-notices { display: grid; gap: 8px; min-width: 0; }
+.modal-notices.is-floating { position: fixed; right: 24px; bottom: 24px; z-index: 80; width: min(680px, calc(100vw - 48px)); max-height: min(36vh, 260px); overflow-y: auto; }
+/* The body is the shrinkable scroll region; a long task must not squeeze this
+   bounded notice region below its controls or underneath quick navigation. */
+.modal-notices-host { flex: 0 0 auto; min-height: 0; max-height: min(30vh, 220px); overflow-y: auto; padding: 12px 24px; border-bottom: 1px solid var(--border); }
+.modal-notices-host:empty { display: none; }
+.modal-notices .toast, .modal-notices .completion-banner { position: static; transform: none; width: 100%; max-width: 100%; min-width: 0; margin: 0; box-shadow: none; animation: none; }
+.modal-notices .toast { display: grid; grid-template-columns: 18px minmax(0, 1fr) 30px; align-items: start; }
+.modal-notices .toast > span { min-width: 0; white-space: normal; overflow-wrap: anywhere; }
+.modal-notices .toast > button { width: 30px; min-height: 30px; margin: -4px 0 0; align-items: center; justify-content: center; }
+.modal-notices .completion-banner { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: start; }
+.modal-notices .completion-banner > span { min-width: 0; white-space: normal; overflow-wrap: anywhere; }
+.modal-notices .completion-banner > button { margin: 0; white-space: nowrap; }
+@media (max-width: 760px) {
+  .modal-notices .completion-banner { grid-template-columns: minmax(0, 1fr) auto; }
+  .modal-notices .completion-banner > span { grid-column: 1 / -1; }
+  .modal-notices-host { padding: 10px 14px; }
+}

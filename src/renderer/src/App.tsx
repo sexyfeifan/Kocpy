@@ -14,6 +14,8 @@ import {
   matchesTransferFilter,
 } from "./task-state";
 import { TransferEvidence } from "./TransferEvidence";
+import { BackupSelectionEvidence } from "./BackupSelectionEvidence";
+import { ModalNotices } from "./ModalNotices";
 import {
   LayoutDashboard,
   ArrowLeftRight,
@@ -3521,6 +3523,7 @@ export function App() {
               )}
               <section className="detail-scope-section" id="task-detail-scope" aria-label="扫描与接收范围">
                 <h3 className="detail-label">扫描与接收范围</h3>
+                <BackupSelectionEvidence task={selected} />
                 {selected.inventoryScope ? (
                   <>
                     <div className="scope-summary">
@@ -3544,7 +3547,7 @@ export function App() {
                           ))}
                         </div>
                       </details>
-                    ) : <p className="muted small">此冻结范围没有记录排除条目。</p>}
+                    ) : <p className="muted small">没有记录系统或权限扫描排除。{selected.selection ? "日期筛选未复制内容请查看上方备份范围记录。" : "此项只描述扫描策略，不单独证明整卡副本达标。"}</p>}
                   </>
                 ) : <p className="muted small">此记录没有保存冻结的扫描范围；不能据文件数推断范围外没有遗漏。</p>}
               </section>
@@ -4192,6 +4195,7 @@ export function App() {
           </section>
         </div>
       )}
+      {(completion || toast) && <ModalNotices>
       {completion && (
         <div className={`completion-banner ${taskCompletionNotice(completion).attention ? "attention" : ""}`} role="status">
           <span>{taskCompletionNotice(completion).title}：{completion.name}</span>
@@ -4222,6 +4226,7 @@ export function App() {
           </button>
         </div>
       )}
+      </ModalNotices>}
     </div>
   );
 }
@@ -5824,6 +5829,7 @@ function HelpPage({
         "展开素材组，核对日期依据和关联路径；跨午夜、相机时钟不准时可手动指定拍摄日。勾选需要的日期并填写范围确认人，点击确认同时确认显示的日期归属。",
         "同名关联文件按组处理，未知文件、共享索引、不可安全拆分的摄影机包及不能判定关联的独立音频保留。只有同项目、在线、内容一致且满足物理独立副本要求的历史内容，才可作为已保护的跳过依据。",
         "未能证明已有足够备份的未选素材，必须单独确认风险。开始前和完成时再次核对冻结范围；源文件或历史依据变化会停止任务。",
+        "完成后在任务详情的“读取范围”查看纳入及未复制数量，展开确认记录可核对操作人、拍摄日、未复制路径、关联组和历史依据。扫描策略排除与主动日期筛选分别列出。",
       ],
       tips: [
         "筛选只决定写入哪些文件，不删除、移动或改名源素材，也不修改原始 MHL。文件名、日期或大小相同不等于历史副本安全。",
@@ -6298,6 +6304,8 @@ function HelpPage({
         "项目详情可添加仅当日使用的临时设备并进入备份，自动纳入当日计划与项目汇总，不扩散到其他日期。",
         "整卡备份仍为默认。可只读分析多日素材、确认拍摄日与文件组后选择范围；关联文件、未知文件、共享索引及不可安全拆分的包保守保留。",
         "逐文件校验、历史在线独立副本核对及执行前后范围复核保持开启；部分备份保留范围声明和审计，不能伪装为整卡完整或允许清空源卡。",
+        "任务详情可展开未复制明细；长可信状态换行，通知跟随当前对话框显示，避免遮住底部操作。扫描失败自动定位错误。",
+        "任务及拍摄日报告补齐机位；短片和图片使用更合适的截帧位置，取图失败时尝试首帧，缩略图只写入缓存。",
       ],
     },
     {

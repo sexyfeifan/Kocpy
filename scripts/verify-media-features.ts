@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { ffmpegPath } from "../src/main/ffmpeg";
@@ -23,6 +24,27 @@ async function main() {
       assert(image); assert((await fs.stat(image)).size > 0);
     }
     cases.push("metadata, thumbnail, waveform, AAC decode");
+    // Real one-second clips previously sought to EOF; verify both the boundary
+    // and a sub-second clip with the exact final bundled runtime.
+    for (const duration of ["0.25", "1"]) {
+      const clip = path.join(root, `short-${duration}.mp4`);
+      await exec(binary, ["-nostdin", "-f", "lavfi", "-i", "testsrc2=size=160x90:rate=24", "-t", duration, "-c:v", "libx264", clip]);
+      const before = createHash("sha256").update(await fs.readFile(clip)).digest("hex");
+      const inspected = await inspectMedia(clip, path.join(root, "short-cache"));
+      assert(inspected.thumbnailPath); assert.equal(inspected.thumbnailError, undefined);
+      const decoded = await exec(binary, ["-v", "error", "-i", inspected.thumbnailPath, "-f", "null", "-"]);
+      assert.equal(decoded.stderr, "");
+      assert.equal(createHash("sha256").update(await fs.readFile(clip)).digest("hex"), before);
+      cases.push(`${duration}s short clip: thumbnail full decode; source SHA256 unchanged`);
+    }
+    const still = path.join(root, "still.jpg");
+    await exec(binary, ["-nostdin", "-f", "lavfi", "-i", "testsrc2=size=160x90:rate=24", "-frames:v", "1", "-update", "1", still]);
+    const stillSha = createHash("sha256").update(await fs.readFile(still)).digest("hex");
+    const inspectedStill = await inspectMedia(still, path.join(root, "still-cache"));
+    assert(inspectedStill.thumbnailPath); assert.equal(inspectedStill.thumbnailError, undefined);
+    assert.equal((await exec(binary, ["-v", "error", "-i", inspectedStill.thumbnailPath, "-f", "null", "-"])).stderr, "");
+    assert.equal(createHash("sha256").update(await fs.readFile(still)).digest("hex"), stillSha);
+    cases.push("still JPEG: first-frame thumbnail full decode; source SHA256 unchanged");
     for (const [format, container] of [["h264", "mp4"], ["h264", "mov"], ["h264", "mkv"], ["prores", "mov"]] as const) {
       const result = await makeProxy(input, path.join(root, "proxy"), format, "720p", { container });
       assert(result.size > 0);

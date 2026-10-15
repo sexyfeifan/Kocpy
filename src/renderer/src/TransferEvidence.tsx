@@ -1,6 +1,7 @@
 import { ArrowRight, Check, ClipboardCheck, Copy, FolderSearch, HardDrive, ShieldCheck, Unplug, TriangleAlert } from "lucide-react";
 import type { BackupTask } from "./api";
 import { transferEvidenceModel } from "./transfer-evidence-state";
+import { taskHasPartialSelection } from "../../common/task-trust";
 
 /** Read-only view of recorded transfer evidence. It never starts or changes a task. */
 export function TransferEvidence({ task, compact = false }: { task: BackupTask; compact?: boolean }) {
@@ -12,6 +13,7 @@ export function TransferEvidence({ task, compact = false }: { task: BackupTask; 
         <strong>{model.imported ? "接管与校验证据" : "传输与副本证据"}</strong>
         <span className="transfer-evidence-caption">{model.caption}</span>
       </div>
+      {taskHasPartialSelection(task) && <p className="transfer-evidence-scope-warning"><TriangleAlert size={16} aria-hidden="true" /><span>选定范围备份 · 本次未复制 {task.selection!.excludedFiles.length} 个文件。仅校验已纳入内容，不计整卡达标副本，不得据此格式化源素材卡。</span></p>}
       <ol className="transfer-evidence-phases" aria-label="任务阶段">
         {model.phases.map((phase) => {
           const Icon = phaseIcons[phase.key as keyof typeof phaseIcons];

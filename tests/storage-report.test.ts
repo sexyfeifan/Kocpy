@@ -247,6 +247,22 @@ describe("Persistence and reports", () => {
     expect(html).toContain("项目一");
     expect(html).toContain("项目二");
   });
+  it("keeps the selected camera position in task and daily reports", async () => {
+    const task = new BackupEngine().createTask({
+      name: "position-report", namingTemplate: "position-report",
+      sourcePath: "/tmp/position-source", destinationPaths: ["/tmp/position-target"],
+      devices: ["临时航拍设备"], cameraPosition: "B", hashAlgorithm: "sha256",
+      shootingDate: "2026-10-15",
+    });
+    task.totalFiles = 1;
+    task.totalBytes = 1;
+    task.fileRecords = [{ name: "clip.mov", relativePath: "clip.mov", size: 1,
+      srcChecksum: "abc", destinations: [] }];
+    expect((await generateReport(task)).toString()).toContain("临时航拍设备 · B");
+    expect((await generateDailyReport([task], "2026-10-15")).toString()).toContain("临时航拍设备 · B");
+    task.cameraPosition = "B<&";
+    expect((await generateReport(task)).toString()).toContain("临时航拍设备 · B&lt;&amp;");
+  });
   it("excludes Time Machine snapshot and localized backup volume names", () => {
     expect(isTimeMachineVolume("com.apple.TimeMachine.localsnapshots")).toBe(
       true,

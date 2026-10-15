@@ -72,6 +72,9 @@ export function useModalStack() {
       );
     const click = (event: MouseEvent) => {
       const button = (event.target as Element).closest?.("button");
+      // Notices can live inside a dialog for accessible, non-overlapping layout.
+      // Dismissing/viewing them is not a form edit or a dialog-close request.
+      if (button?.closest(".modal-notices")) return;
       const dialog = button?.closest<HTMLElement>(modalDialogSelector);
       if (
         button &&
@@ -105,7 +108,7 @@ export function useModalStack() {
           ...dialog.querySelectorAll<HTMLButtonElement>(
             "button:not(:disabled)",
           ),
-        ].find(isDialogCloseControl);
+        ].find(button => !button.closest(".modal-notices") && isDialogCloseControl(button));
         close?.click();
         return;
       }

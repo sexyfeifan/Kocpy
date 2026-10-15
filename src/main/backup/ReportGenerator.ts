@@ -47,6 +47,11 @@ function esc(s: string): string {
     .replace(/"/g, "&quot;");
 }
 
+function devicePositionLabel(task: BackupTask): string {
+  const device = (task.devices || []).join(" / ") || "-";
+  return task.cameraPosition ? `${device} · ${task.cameraPosition}` : device;
+}
+
 function selectionReportText(task: BackupTask): string {
   const plan = task.selection;
   if (!plan) return "";
@@ -399,7 +404,7 @@ ${eventRows ? `<div class="section"><h2>任务事件时间线</h2><table class="
     <span class="label">报告上下文来源</span><span class="value">项目：${esc(context.projectNameSource)} · 日期：${esc(context.shootingDateSource)}</span>
     ${task.errorMessage ? `<span class="label">异常说明</span><span class="value">${esc(task.errorMessage)}</span>` : ""}
     <span class="label">源路径</span><span class="value">${esc(task.sourcePath)}</span>
-    <span class="label">机位</span><span class="value">${esc((task.devices || []).join(" / ") || "-")}</span>
+    <span class="label">设备 / 机位</span><span class="value">${esc(devicePositionLabel(task))}</span>
     <span class="label">哈希算法</span><span class="value">${task.hashAlgorithm.toUpperCase()}</span>
     <span class="label">总文件数</span><span class="value">${task.totalFiles} 个</span>
     <span class="label">总数据量</span><span class="value">${formatBytes(task.totalBytes)}</span>
@@ -477,7 +482,7 @@ export async function generateDailyReport(
           : contribution.scope === "daily-allocation"
           ? `当日分配${contribution.pendingAllocation ? ` · ${contribution.pendingGroups} 组待分配` : ""}`
           : "整卡";
-        return `<tbody class="task-group"><tr><td>${esc(projectLabel(t))}</td><td>${esc(t.name)}</td><td>${esc((t.devices || []).join(" / ") || "-")}</td><td>${contribution.files}</td><td>${formatBytes(contribution.bytes)}<br>${scope}</td><td style="color:${trust.status === "completed" ? "#21b76b" : "#d9545d"}">${esc(trust.label)}<br>${trust.countableCopies} 份可计数副本</td></tr>${summaryTaskDetailRow(t, 6)}</tbody>`;
+        return `<tbody class="task-group"><tr><td>${esc(projectLabel(t))}</td><td>${esc(t.name)}</td><td>${esc(devicePositionLabel(t))}</td><td>${contribution.files}</td><td>${formatBytes(contribution.bytes)}<br>${scope}</td><td style="color:${trust.status === "completed" ? "#21b76b" : "#d9545d"}">${esc(trust.label)}<br>${trust.countableCopies} 份可计数副本</td></tr>${summaryTaskDetailRow(t, 6)}</tbody>`;
       },
     )
     .join("");

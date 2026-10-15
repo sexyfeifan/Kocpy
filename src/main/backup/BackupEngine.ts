@@ -1131,10 +1131,11 @@ export class BackupEngine extends EventEmitter {
       if (!readable) continue;
       try {
         record.thumbnailPath = (
-          await inspectMedia(readable, this.thumbnailDir)
+          await inspectMedia(readable, this.thumbnailDir, { signal })
         ).thumbnailPath;
         if (!record.thumbnailPath) failures++;
       } catch {
+        signal.throwIfAborted();
         failures++;
       }
     }
