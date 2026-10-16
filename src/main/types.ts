@@ -681,6 +681,9 @@ export interface ExistingImportProgress {
 export interface ExistingReanalysisResult {
   importedTasks: number;
   metadataUpdated: number;
+  /** Refresh preserves confirmed shooting day/device/position/volume mapping. */
+  metadataPreserved?: boolean;
+  metadataNote?: string;
   baselinesNeeded: number;
   duplicatesFound: number;
   duplicatesMerged: number;

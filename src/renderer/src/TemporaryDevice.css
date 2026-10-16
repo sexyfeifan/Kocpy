@@ -30,6 +30,8 @@
 .temporary-device-note { margin: 16px 0; }
 .temporary-device-actions { justify-content: flex-end; flex-wrap: wrap; margin-top: 16px; }
 .temporary-device-open { margin-top: 12px; width: 100%; }
+.project-column-browser .temporary-device-open { display: flex; flex-direction: row; align-items: center; gap: 8px; min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+.project-column-browser .temporary-device-open > svg { flex: 0 0 auto; }
 .temporary-device-saved { margin: 0 0 20px; line-height: 1.65; overflow-wrap: anywhere; }
 @media (max-width: 680px) {
   .temporary-device-fields { grid-template-columns: minmax(0, 1fr); }

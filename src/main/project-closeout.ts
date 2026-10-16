@@ -219,7 +219,7 @@ export function projectDaySummary(
   project: ProjectConfig,
   tasks: BackupTask[],
   shootingDate: string,
-  referenceDate = new Date().toISOString().slice(0, 10),
+  referenceDate = new Date().toLocaleDateString("sv-SE"),
 ) {
   const day = shootingDateKey(shootingDate),
     rows = tasks.filter((task) => Boolean(taskDateContribution(task, day))),

@@ -1,6 +1,7 @@
 import { previewProjectPath } from "../../common/project-layout";
-import { projectDates, shootingDateKey } from "../../common/shooting-dates";
 import { projectDayDevices } from "../../common/project-day-devices";
+import { priorMaxCollision } from "../../common/volume-claims";
+import { projectShootingDates, readProjectShootingChoice, resolveProjectShootingChoice } from "./project-shooting-choice";
 import {
   submitBatch,
   readableOperationError,
@@ -38,6 +39,7 @@ import {
   type Volume,
   type Settings,
   type Scan,
+  type BackupTask,
 } from "./api";
 import { Button } from "./Ui";
 import { TemporaryDeviceForm } from "./TemporaryDeviceForm";
@@ -68,10 +70,18 @@ export function composerDefaultsFromSettings(settings: Settings) {
   } as const;
 }
 
+/** Preview only: the main process claims and persists the final name at start. */
+export function previewProjectVolumeName(prefix: string, timestamp: string, project: ProjectConfig | undefined, index: number) {
+  const previous = priorMaxCollision(timestamp, project?.lastVolumeTimestampByDevice, project?.volumeTimestampCollisionByDevice);
+  const collision = previous + index + 1;
+  return `${prefix}${timestamp}${collision > 0 ? `_${String(collision + 1).padStart(2, "0")}` : ""}`;
+}
+
 export function Composer({
   initial,
   volumes,
   projects,
+  tasks = [],
   settings,
   onClose,
   onCreated,
@@ -81,6 +91,7 @@ export function Composer({
   initial: { source?: string; project?: ProjectConfig; shootingDate?: string; device?: string; position?: string; addTemporaryDevice?: boolean };
   volumes: Volume[];
   projects: ProjectConfig[];
+  tasks?: BackupTask[];
   settings: Settings;
   onClose: () => void;
   onCreated: () => Promise<void>;
@@ -93,6 +104,13 @@ export function Composer({
   const [initialDefaults] = useState(() =>
     composerDefaultsFromSettings(settings),
   );
+  // Resolve a remembered human choice before any preference-writing effect.
+  // Opening a dialog or crossing midnight must not silently choose a new day.
+  const [initialShootingChoice] = useState(() => initial.project
+    ? resolveProjectShootingChoice(initial.project, tasks, today(), initial,
+      readProjectShootingChoice(initial.project.id))
+    : { shootDate: today(), camera: "A机", multiPosition: false, cameraPosition: "A", shootDateExplicit: false });
+  const [shootDateExplicit, setShootDateExplicit] = useState(Boolean(initialShootingChoice.shootDateExplicit));
   const [nasPresets, setNasPresets] = useState<import("./api").NasPreset[]>([]);
   useEffect(() => {
     void api
@@ -123,19 +141,10 @@ export function Composer({
       initial.project ? "project" : "card",
     ),
     [projectId, setProjectId] = useState(initial.project?.id || ""),
-    [shootDate, setShootDate] = useState(initial.shootingDate || today()),
-    [camera, setCamera] = useState(initial.device || initial.project?.devices[0] || "A机"),
-    [multiPosition, setMultiPosition] = useState(
-      Boolean(
-        initial.project?.devicePositions?.[initial.project?.devices[0] || ""]
-          ?.length,
-      ),
-    ),
-    [cameraPosition, setCameraPosition] = useState(
-      initial.project?.devicePositions?.[
-        initial.project?.devices[0] || ""
-      ]?.[0] || "A",
-    ),
+    [shootDate, setShootDate] = useState(initialShootingChoice.shootDate),
+    [camera, setCamera] = useState(initialShootingChoice.camera),
+    [multiPosition, setMultiPosition] = useState(initialShootingChoice.multiPosition),
+    [cameraPosition, setCameraPosition] = useState(initialShootingChoice.cameraPosition),
     [name, setName] = useState(""),
     [algorithm, setAlgorithm] = useState(initialDefaults.algorithm),
     [duplicate, setDuplicate] = useState(initialDefaults.duplicate),
@@ -177,18 +186,11 @@ export function Composer({
       (item) => item.id === historicalSuggestion.projectId,
     );
     if (!suggestedProject) return;
-    const available = projectDayDevices(suggestedProject, shootDate);
-    const suggestedDevice = available.some((entry) => entry.device === historicalSuggestion.device)
-      ? historicalSuggestion.device! : available[0]?.device || "A机";
-    const positions = available.find((entry) => entry.device === suggestedDevice)?.positions || [];
     setMode("project");
-    setProjectId(suggestedProject.id);
-    setCamera(suggestedDevice);
-    setMultiPosition(Boolean(positions.length));
-    setCameraPosition(
-      historicalSuggestion.cameraPosition || positions[0] || "A",
-    );
-    setDests(suggestedProject.destinationPaths || []);
+    chooseProject(suggestedProject.id, {
+      device: historicalSuggestion.device,
+      position: historicalSuggestion.cameraPosition,
+    });
   };
   const previewStamp = previewVolumeTimestamp(new Date(clock));
   const capacity = capacityReadiness(dests, spaces, total);
@@ -203,45 +205,19 @@ export function Composer({
     project?.volumePrefix ||
     `${camera}_`;
   const previewPrefix = `${previewPrefixRaw.replace(/_+$/, "")}_`;
-  const previewVolumeName = (index: number) => {
-    const previous =
-      project?.lastVolumeTimestampByDevice?.[camera] === previewStamp
-        ? project?.volumeTimestampCollisionByDevice?.[camera] || 0
-        : -1;
-    const collision = previous + index + 1;
-    return `${previewPrefix}${previewStamp}${collision > 0 ? `_${String(collision + 1).padStart(2, "0")}` : ""}`;
-  };
-  useEffect(() => {
-    if (!initial.project?.id) return;
-    setMode("project");
-    setProjectId(initial.project.id);
-    setDests(initial.project.destinationPaths || []);
-    const start = shootingDateKey(initial.project.shootingDateStart || initial.project.shootingDate || today());
-    const end = shootingDateKey(initial.project.shootingDateEnd || start);
-    const now = today();
-    const date = initial.shootingDate
-      ? shootingDateKey(initial.shootingDate) : now >= start && now <= end ? now : start;
-    const available = projectDayDevices(initial.project, date);
-    const firstDevice = available.some((entry) => entry.device === initial.device)
-      ? initial.device! : available[0]?.device || "FX3";
-    setCamera(firstDevice);
-    const configuredPositions = available.find((entry) => entry.device === firstDevice)?.positions || [];
-    setMultiPosition(Boolean(configuredPositions.length));
-    setCameraPosition(initial.position && configuredPositions.includes(initial.position) ? initial.position : configuredPositions[0] || "A");
-    setShootDate(date);
-  }, [initial.project?.id, initial.shootingDate, initial.device, initial.position]);
+  const previewVolumeName = (index: number) => previewProjectVolumeName(previewPrefix, previewStamp, project, index);
   useEffect(() => {
     if (!project) return;
     const available = projectDayDevices(project, shootDate);
     const selected = available.find((entry) => entry.device === camera);
     if (!selected) {
       const first = available[0];
-      if (camera) setDeviceSelectionNotice(`「${camera}」未加入 ${shootDate} 的设备计划，已切换到「${first?.device || "未选择"}」。需要继续使用时请先添加当日设备。`);
+      if (camera) setDeviceSelectionNotice(`「${camera}」未加入 ${shootDate} 的设备计划，已切换到「${first?.device || "未选择"}」。需要继续使用时请先添加该拍摄日临时设备。`);
       setCamera(first?.device || "");
       setMultiPosition(Boolean(first?.positions.length));
       setCameraPosition(first?.positions[0] || "A");
     } else if (multiPosition && !selected.positions.includes(cameraPosition)) {
-      setDeviceSelectionNotice(`「${camera} · ${cameraPosition}」未加入 ${shootDate} 的机位计划，请核对已切换的机位，或添加当日机位。`);
+      setDeviceSelectionNotice(`「${camera} · ${cameraPosition}」未加入 ${shootDate} 的机位计划，请核对已切换的机位，或添加该拍摄日临时机位。`);
       setMultiPosition(Boolean(selected.positions.length));
       setCameraPosition(selected.positions[0] || "A");
     } else if (!multiPosition && !selected.allowUnpositioned) {
@@ -258,12 +234,12 @@ export function Composer({
     setSelectionDrafts({});
   }, [mode, projectId, hidden]);
   useEffect(() => {
-    if (!projectId) return;
-    localStorage.setItem(
+    if (!project || !projectShootingDates(project, tasks).includes(shootDate)) return;
+    try { localStorage.setItem(
       `kocpy-project-choice-${projectId}`,
-      JSON.stringify({ shootDate, camera, multiPosition, cameraPosition }),
-    );
-  }, [projectId, shootDate, camera, multiPosition, cameraPosition]);
+      JSON.stringify({ shootDate, camera, multiPosition, cameraPosition, shootDateExplicit }),
+    ); } catch { /* A preference-storage failure must not block a backup. */ }
+  }, [projectId, shootDate, camera, multiPosition, cameraPosition, shootDateExplicit]);
   async function attempt(fn: () => Promise<void>) {
     setError("");
     setBusy(true);
@@ -481,7 +457,7 @@ export function Composer({
       position: multiPosition ? cameraPosition : undefined,
       card: folder,
     });
-  function chooseProject(id: string) {
+  function chooseProject(id: string, explicit: { device?: string; position?: string } = {}) {
     setProjectId(id);
     setTemporaryDeviceOpen(false);
     setTemporaryDeviceSaved("");
@@ -489,41 +465,12 @@ export function Composer({
     const p = onProjectsChanged ? projects.find((p) => p.id === id) : projectUpdates[id] || projects.find((p) => p.id === id);
     if (p) {
       setDests(p.destinationPaths || []);
-      const start = shootingDateKey(p.shootingDateStart || p.shootingDate || today()),
-        end = shootingDateKey(p.shootingDateEnd || start),
-        now = today();
-      let recent: {
-        shootDate?: string;
-        camera?: string;
-        multiPosition?: boolean;
-        cameraPosition?: string;
-      } = {};
-      try {
-        recent = JSON.parse(
-          localStorage.getItem(`kocpy-project-choice-${id}`) || "{}",
-        );
-      } catch {
-        /* Ignore damaged local preference. */
-      }
-      const selectedDate = recent.shootDate && recent.shootDate >= start && recent.shootDate <= end
-        ? recent.shootDate : now >= start && now <= end ? now : start;
-      const available = projectDayDevices(p, selectedDate);
-      const selectedCamera =
-        recent.camera && available.some((entry) => entry.device === recent.camera)
-          ? recent.camera
-          : p.devices[0] || "FX3";
-      const configuredPositions = available.find((entry) => entry.device === selectedCamera)?.positions || [];
-      setCamera(selectedCamera);
-      setMultiPosition(
-        Boolean(configuredPositions.length) && recent.multiPosition !== false,
-      );
-      setCameraPosition(
-        recent.cameraPosition &&
-          configuredPositions.includes(recent.cameraPosition)
-          ? recent.cameraPosition
-          : configuredPositions[0] || "A",
-      );
-      setShootDate(selectedDate);
+      const choice = resolveProjectShootingChoice(p, tasks, today(), explicit, readProjectShootingChoice(id));
+      setCamera(choice.camera);
+      setMultiPosition(choice.multiPosition);
+      setCameraPosition(choice.cameraPosition);
+      setShootDate(choice.shootDate);
+      setShootDateExplicit(Boolean(choice.shootDateExplicit));
     }
   }
   return (
@@ -595,6 +542,7 @@ export function Composer({
               <TemporaryDeviceForm
                 key={`${project.id}:${shootDate}`}
                 project={project}
+                tasks={tasks}
                 shootingDate={shootDate}
                 operator={settings.operator}
                 onBusyChange={setBusy}
@@ -604,12 +552,13 @@ export function Composer({
                   if (saved) setProjectUpdates((previous) => ({ ...previous, [saved.id]: saved }));
                   onProjectsChanged?.(updated);
                   setShootDate(choice.shootingDate);
+                  setShootDateExplicit(true);
                   setCamera(choice.device);
                   setMultiPosition(Boolean(choice.position));
                   setCameraPosition(choice.position || "A");
                   setTemporaryDeviceOpen(false);
                   setDeviceSelectionNotice("");
-                  setTemporaryDeviceSaved(`${choice.shootingDate} · ${choice.device}${choice.position ? ` · ${choice.position}` : ""} 已加入当日计划并选中。取消本次备份后日计划仍保留，可在项目详情撤销。`);
+                  setTemporaryDeviceSaved(`${choice.shootingDate} · ${choice.device}${choice.position ? ` · ${choice.position}` : ""} 已加入该拍摄日计划并选中。取消本次备份后日计划仍保留，可在项目详情撤销。`);
                 }}
               />
             )}
@@ -1064,6 +1013,7 @@ export function Composer({
                         更换项目
                       </Button>
                     </div>
+                    <p className="muted small">拍摄归属日决定本次项目目录，可选择项目内的历史或未来拍摄日；大夜拍摄不会随零点自动切换。文件时间仅供筛选参考，实际备份时间另行记录。</p>
                     <div className="project-column-browser">
                       <section>
                         <span>01 · 项目</span>
@@ -1073,29 +1023,22 @@ export function Composer({
                         </button>
                       </section>
                       <section>
-                        <span>02 · 拍摄日期</span>
+                        <span>02 · 拍摄归属日</span>
                         <div className="column-options">
                           {(project
-                            ? [...new Set([...projectDates(
-                                {
-                                  ...project,
-                                shootingDateStart:
-                                  project.shootingDateStart || project.shootingDate || today(),
-                                },
-                                [],
-                              ), ...(initial.project?.id === project.id && initial.shootingDate ? [shootingDateKey(initial.shootingDate)] : [])])].sort()
+                            ? projectShootingDates(project, tasks)
                             : [today()]
                           ).map((date) => (
                             <button
                               key={date}
                               aria-pressed={shootDate === date}
                               className={shootDate === date ? "selected" : ""}
-                              onClick={() => setShootDate(date)}
+                              onClick={() => { setShootDate(date); setShootDateExplicit(true); }}
                             >
                               <strong>{date.replace(/-/g, "")}</strong>
                               <small>
                                 {date === today()
-                                  ? "今天"
+                                  ? "自然日今天"
                                   : new Date(
                                       `${date}T12:00:00`,
                                     ).toLocaleDateString("zh-CN", {
@@ -1125,12 +1068,12 @@ export function Composer({
                             >
                               <strong>{device}</strong>
                               <small>
-                                {temporary ? "当日临时设备 · " : ""}{positions.length ? `${positions.join(" / ")} 机位` : "单机位目录"}
+                                {temporary ? "该拍摄日临时设备 · " : ""}{positions.length ? `${positions.join(" / ")} 机位` : "单机位目录"}
                               </small>
                             </button>
                           ))}
                         </div>
-                        <Button className="temporary-device-open" kind="subtle" onClick={() => setTemporaryDeviceOpen(true)}><Plus size={14} />添加当日设备</Button>
+                        <Button className="temporary-device-open" kind="subtle" onClick={() => setTemporaryDeviceOpen(true)}><Plus size={14} />添加该拍摄日临时设备</Button>
                       </section>
                       <section>
                         <span>04 · 同型号机位</span>
@@ -1346,9 +1289,10 @@ export function Composer({
                     <div className="dest-heading">
                       <span>最终保存路径</span>
                       <small>
-                        素材卷时间戳随当前时间更新，开始任务时最终确认
+                        卷名时间戳按实际备份时间生成
                       </small>
                     </div>
+                    <p className="muted small">开始任务时最终确认卷名；拍摄归属日保持为 {shootDate}，不会随零点切换。</p>
                     {dests.flatMap((destination) =>
                       (sources.length ? sources : [{ path: "素材源" }]).map(
                         (source, index) => {
@@ -1407,6 +1351,7 @@ export function Composer({
                   key={`${source.path}:${mode}:${projectId}:${hidden}`}
                   sourcePath={source.path}
                   projectId={mode === "project" ? project?.id : undefined}
+                  shootingDate={mode === "project" ? shootDate : undefined}
                   plan={source.selection}
                   disabled={busy || selectionBusy || !hidden}
                   onBusy={setSelectionBusy}

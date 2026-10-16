@@ -19,3 +19,9 @@
 .backup-selection-actions button { flex: 0 1 auto; min-height: 40px; }
 .backup-selection-progress { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
 .backup-selection-progress span { flex: 1 1 220px; min-width: 0; overflow-wrap: anywhere; font-size: 12px; }
+.backup-selection-batch { margin-block: 16px; padding: 14px; border: 1px solid var(--border); border-radius: 12px; min-width: 0; }
+.backup-selection-batch > summary { cursor: pointer; line-height: 1.6; overflow-wrap: anywhere; }
+.backup-selection-batch-fields { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; margin-top: 12px; }
+.backup-selection-batch-fields > label { flex: 1 1 210px; min-width: 0; display: grid; gap: 8px; }
+.backup-selection-batch-fields input, .backup-selection-batch-fields select { width: 100%; min-width: 0; }
+.backup-selection-batch-fields > button { flex: 0 1 auto; min-height: 40px; white-space: normal; }

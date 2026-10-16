@@ -1,3 +1,5 @@
+import { compactCalendarDate } from "./calendar-date";
+
 export type ProjectPathValues = {
   projectFolderName: string;
   projectName: string;
@@ -16,11 +18,8 @@ const segment = (value: string) => {
     throw new Error("目录名称无效");
   return result;
 };
-const date = (value: string) => {
-  const result = value.replace(/[^0-9]/g, "");
-  if (!/^\d{8}$/.test(result)) throw new Error("项目拍摄日期无效");
-  return result;
-};
+const date = (value: string) =>
+  compactCalendarDate(value, "项目拍摄日期无效");
 /** Shared by the renderer and the filesystem writer; never maintains a second preview tree. */
 export function renderProjectCardPath(
   rule: string | undefined,

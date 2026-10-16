@@ -70,6 +70,75 @@ function importedTask(
 }
 
 describe("existing backup record consolidation", () => {
+  it("does not collapse distinct historical mappings at the same path or with identical hashes", () => {
+    const differentMappings: Array<Partial<BackupTask>> = [
+      { projectId: "different-project" },
+      { projectRuleSnapshotId: "different-snapshot" },
+      { shootingDate: "2026-08-26" },
+      { devices: ["POCKET"] },
+      { devices: [] },
+      { cameraPosition: "B" },
+      { name: "Operator mapped roll" },
+    ];
+    for (const mapping of differentMappings) {
+      for (const samePath of [true, false]) {
+        const first = importedTask("first", { checksum: "a".repeat(64), status: "completed", confidence: "baseline", importedAt: 1 });
+        const second = { ...importedTask("second", { checksum: "a".repeat(64), status: "completed", confidence: "baseline", importedAt: 2,
+          sourcePath: samePath ? first.sourcePath : "/Volumes/Other/Card" }), ...mapping };
+        const before = structuredClone([first, second]);
+        const result = consolidateExistingRecords([first, second]);
+        expect(result.records.map((task) => task.id)).toEqual(["first", "second"]);
+        expect(result.duplicateIds).toEqual([]);
+        expect(result.aggregateIds).toEqual([]);
+        expect([first, second]).toEqual(before);
+      }
+    }
+  });
+
+  it("only removes a true parent union when historical project/day/device/position/rule mapping agrees", () => {
+    const parentRoot = "/Volumes/Generated/20260825/FX3";
+    const differentMappings: Array<Partial<BackupTask>> = [
+      { projectId: "different-project" }, { projectRuleSnapshotId: "different-snapshot" },
+      { shootingDate: "2026-08-26" }, { devices: ["POCKET"] }, { devices: [] }, { cameraPosition: "B" },
+    ];
+    for (const mapping of [{}, ...differentMappings]) {
+      const child = importedTask("child", { sourcePath: `${parentRoot}/CARD01` });
+      child.name = "Actual roll";
+      const parent = { ...importedTask("parent", { sourcePath: parentRoot }), ...mapping };
+      parent.name = "Device summary";
+      parent.fileRecords = structuredClone(child.fileRecords).map((file) => ({ ...file, relativePath: `CARD01/${file.relativePath}` }));
+      const result = consolidateExistingRecords([parent, child]);
+      expect(result.aggregateIds).toEqual(Object.keys(mapping).length ? [] : ["parent"]);
+      expect(result.records.map((task) => task.id)).toEqual(Object.keys(mapping).length ? ["parent", "child"] : ["child"]);
+      expect(result.duplicateIds).toEqual([]);
+    }
+  });
+
+  it("preserves different per-file assignments and selection confirmations even with identical task-level metadata", () => {
+    for (const key of ["dateAllocation", "selection"] as const) {
+      for (const samePath of [true, false]) {
+        const first = importedTask("first", { checksum: "a".repeat(64), status: "completed", confidence: "baseline" });
+        const second = importedTask("second", { checksum: "a".repeat(64), status: "completed", confidence: "baseline",
+          sourcePath: samePath ? first.sourcePath : "/Volumes/Other/Card" });
+        if (key === "dateAllocation") {
+          first.dateAllocation = { schemaVersion: 1, sourceTaskId: first.id, sourceEvidenceDigest: "a".repeat(64), generatedAt: 1, updatedAt: 2,
+            groups: [{ id: "clip", label: "clip", relativePaths: [first.fileRecords[0].relativePath], files: 1, bytes: first.fileRecords[0].size,
+              suggestionBasis: "user-confirmed", suggestionConfidence: "high", evidence: [], assignedDate: "2026-08-25", confirmedAt: 2, confirmedBy: "DIT" }] };
+          second.dateAllocation = structuredClone(first.dateAllocation);
+          second.dateAllocation.sourceTaskId = second.id;
+          second.dateAllocation.groups[0].assignedDate = "2026-08-26";
+        } else {
+          first.selection = { assignedDates: { clip: "2026-08-25" }, operator: "DIT", confirmedAt: 2 } as unknown as BackupTask["selection"];
+          second.selection = { assignedDates: { clip: "2026-08-26" }, operator: "DIT", confirmedAt: 2 } as unknown as BackupTask["selection"];
+        }
+        const result = consolidateExistingRecords([first, second]);
+        expect(result.records).toHaveLength(2);
+        expect(result.duplicateIds).toEqual([]);
+        expect(result.aggregateIds).toEqual([]);
+      }
+    }
+  });
+
   it("turns five imports of the same folder into one trusted material roll", () => {
     const records = [
       importedTask("manifest", {

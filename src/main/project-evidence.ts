@@ -6,6 +6,7 @@ import {
 } from "../common/shooting-dates";
 import { groupLogicalVolumes } from "../common/logical-volumes";
 import { validateTemporaryDevicePlan } from "../common/project-day-devices";
+import { taskBelongsToShootingDay } from "../common/shooting-day-records";
 import { projectCloseoutSummary, projectDeviceCells } from "./project-closeout";
 export { groupLogicalVolumes } from "../common/logical-volumes";
 import type {
@@ -396,7 +397,7 @@ export function appendProjectHandoffEvidence(
   const scopedTasks =
       scope === "day"
         ? tasks.filter(
-            (task) => shootingDateKey(task.shootingDate || "") === shootingDate,
+            (task) => taskBelongsToShootingDay(task, shootingDate!),
           )
         : tasks,
     dates = scope === "day" ? [shootingDate!] : projectDates(project, tasks),

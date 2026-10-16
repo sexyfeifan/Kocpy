@@ -153,12 +153,24 @@ describe("temporary devices belong to their selected shooting day", () => {
     const { TemporaryDeviceForm } = await import("../src/renderer/src/TemporaryDeviceForm");
     const value = project();
     const dayMarkup = renderToStaticMarkup(<ProjectDayGroups project={value} summaries={[projectDaySummary(value, [], "2026-10-15", "2026-10-15")]} expandedSafeDays={{}} onToggleSafeDay={() => {}} onUpdateSchedule={() => {}} onOpenTask={() => {}} onManifestIssue={() => {}} onBaseline={() => {}} onNewBackup={() => {}} />);
-    expect(dayMarkup).toContain("当日新建备份");
-    expect(dayMarkup).toContain("添加当日设备并备份");
+    expect(dayMarkup).toContain("为该拍摄日新建备份");
+    expect(dayMarkup).toContain("添加该拍摄日临时设备并备份");
     const formMarkup = renderToStaticMarkup(<TemporaryDeviceForm project={value} shootingDate="2026-10-15" operator="Fixture DIT" onClose={() => {}} onSaved={() => {}} />);
     expect(formMarkup).toContain('value="2026-10-15" selected=""');
     expect(formMarkup).toContain("实际操作人");
     expect(formMarkup).toContain("已保存的日计划仍保留");
     expect(formMarkup).toContain("不提前创建空文件夹");
+  });
+
+  it("retains invalid legacy date risk groups without offering a silently re-dated backup action", async () => {
+    vi.stubGlobal("window", { api: {} });
+    const { ProjectDayGroups } = await import("../src/renderer/src/App");
+    const value = project();
+    const summary = { ...projectDaySummary(value, [], "2026-10-15", "2026-10-15"), shootingDate: "2026-02-31" };
+    const html = renderToStaticMarkup(<ProjectDayGroups project={value} summaries={[summary]} expandedSafeDays={{}} onToggleSafeDay={() => {}} onUpdateSchedule={() => {}} onOpenTask={() => {}} onManifestIssue={() => {}} onBaseline={() => {}} onNewBackup={() => {}} />);
+    expect(html).toContain("20260231");
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>[^<]*(?:<svg[\s\S]*?<\/svg>)?为该拍摄日新建备份<\/button>/);
+    expect(html).toContain("不会改用其他日期创建备份");
+    expect(html).toContain("不会改用其他日期添加设备");
   });
 });

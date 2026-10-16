@@ -7,6 +7,8 @@ import {
 import { OperationRegistry } from "./operations";
 import { inspectTaskRecovery } from "./recovery";
 import { assertVolumeIdentity } from "../common/volume-identity";
+import { existingRefreshContext, existingRefreshMetadataNote, existingRefreshObservation } from "./existing-refresh-context";
+import { recordsForShootingDay, requireShootingDay, shootingDayArchiveScopeNote, taskBelongsToShootingDay } from "../common/shooting-day-records";
 import {
   app,
   BrowserWindow,
@@ -146,7 +148,7 @@ import {
 import { repairArchiveFile } from "./archive-repair";
 import { compareVersions, selectMacAsset, type GitHubRelease } from "./update";
 import {
-  claimTimestampedVolume,
+  claimProjectTimestampedVolume,
   createProjectStructure,
   formatVolumeTimestamp,
   inspectProjectStructure,
@@ -177,6 +179,8 @@ import {
 import { taskTrustState, taskCompletionNotice } from "../common/task-trust";
 import { projectDates, shootingDateKey } from "../common/shooting-dates";
 import { assertProjectDayDeviceAllowed } from "../common/project-day-devices";
+import { authorizeProjectTaskConfig } from "./project-task-authority";
+import { scopedArchiveTransferContext } from "./archive-transfer-context";
 import { groupLogicalVolumes } from "../common/logical-volumes";
 import {
   benchmarkDirectory,
@@ -648,35 +652,20 @@ const persist = (syncCatalog = false, syncCompatibility = true) =>
 const readProjects = async () => workspace.getProjects();
 const archiveTransferContext = async (
   projectId?: string,
+  sourcePath?: string,
 ): Promise<ArchiveTransferContext | undefined> => {
   if (!projectId) return undefined;
   const project = (await readProjects()).find((item) => item.id === projectId);
   if (!project) throw new Error("关联项目不存在，请重新选择");
-  const related = engine
-      .getAllTasks()
-      .filter((task) => task.projectId === project.id),
-    dates = projectDates(project, related),
-    historicalEvidence = related.flatMap((task) => {
-      const messages: string[] = [];
-      if (["failed", "cancelled", "unverified"].includes(task.status))
-        messages.push(`${task.name} 的历史任务状态为 ${task.status}`);
-      const manifest = task.externalManifest;
-      if (manifest && manifest.status !== "verified")
-        messages.push(
-          `${task.name} 的既有清单状态为 ${manifest.status}（缺失 ${manifest.missing.length}、额外 ${manifest.extra.length}、大小异常 ${manifest.sizeMismatches.length}、哈希异常 ${manifest.checksumMismatches.length}）`,
-        );
-      return messages;
-    });
-  return {
-    projectId: project.id,
-    archiveName: project.name,
-    archiveNameSource: "project",
-    shootingDate:
-      dates.length > 1
-        ? `${dates[0]} 至 ${dates.at(-1)}`
-        : dates[0] || undefined,
-    historicalEvidence: [...new Set(historicalEvidence)].slice(0, 200),
-  };
+  if (!sourcePath) throw new Error("请选择本次归档转存的源目录");
+  const source = await canonical(sourcePath),
+    roots = project.projectFolderName ? (await Promise.all(
+      (project.destinationPaths || []).map(async (destination) => {
+        try { return await canonical(path.join(destination, project.projectFolderName!)); }
+        catch { return undefined; } // Unavailable association is not source-date evidence.
+      }),
+    )).filter((root): root is string => Boolean(root)) : [];
+  return scopedArchiveTransferContext(project, engine.getAllTasks(), source, roots);
 };
 const writeProjects = (projects: ProjectConfig[]) =>
   workspace
@@ -2203,7 +2192,7 @@ app.whenReady().then(async () => {
       const preview = await archiveTransferManager.preview(
           input.sourcePath,
           input.destinationParent,
-          await archiveTransferContext(input.projectId),
+          await archiveTransferContext(input.projectId, input.sourcePath),
         ),
         { files: _files, directories: _directories, emptyDirectories, ...inventory } =
           preview.inventory;
@@ -2226,7 +2215,7 @@ app.whenReady().then(async () => {
     }) => {
       if (!input?.previewDigest) throw new Error("请先完成源与目标预检");
       const context =
-          (await archiveTransferContext(input.projectId)) ||
+          (await archiveTransferContext(input.projectId, input.sourcePath)) ||
           ({
             archiveName: "",
             archiveNameSource: "folder",
@@ -2387,11 +2376,9 @@ app.whenReady().then(async () => {
         );
       let project = projects[projectIndex];
       if (!project) throw new Error("拍摄项目不存在");
-      if (!projectDates(project, engine.getAllTasks().filter((task) => task.projectId === project.id)).includes(shootingDateKey(config.shootingDate)))
-        throw new Error("拍摄日期不在当前项目拍摄周期内");
-      if (config.devices.length !== 1)
-        throw new Error("项目备份必须选择一个设备和对应机位");
-      assertProjectDayDeviceAllowed(project, config.shootingDate, config.devices[0], config.cameraPosition);
+      // Compare the reviewed metadata before attaching current rule evidence.
+      // A stale composer must not silently write using a different path rule.
+      config = authorizeProjectTaskConfig(project, engine.getAllTasks(), config);
       if (!hasProjectRuleEvidence(project)) {
         project = ensureProjectRuleEvidence(project);
         projects[projectIndex] = project;
@@ -3183,9 +3170,7 @@ app.whenReady().then(async () => {
       tasks = tasks.filter((task) => task.projectId === scope.projectId);
     if (scope.shootingDate)
       tasks = tasks.filter(
-        (task) =>
-          shootingDateKey(task.shootingDate) ===
-          shootingDateKey(scope.shootingDate),
+        (task) => taskBelongsToShootingDay(task, scope.shootingDate!),
       );
     if (scope.taskId) tasks = tasks.filter((task) => task.id === scope.taskId);
     if (scope.volumePath)
@@ -3310,7 +3295,10 @@ app.whenReady().then(async () => {
           tasks.map((task) => taskArchiveBaseline(task)),
         ),
         resultDigest: archiveResultDigest(taskResults),
-        notes: taskResults.flatMap((item) => item.issues),
+        notes: [
+          ...(scope.shootingDate ? [shootingDayArchiveScopeNote(scope.shootingDate)] : []),
+          ...taskResults.flatMap((item) => item.issues),
+        ],
       },
       durationMs = Math.max(1, completedAt - started),
       record: ArchiveHealthRecord = {
@@ -4240,7 +4228,7 @@ app.whenReady().then(async () => {
       const workingTasks: BackupTask[] = apply
         ? importedTasks
         : structuredClone(importedTasks);
-      let metadataUpdated = 0;
+      const metadataUpdated = 0;
       const devicesDetected = new Set<string>(),
         unavailableSources = new Set<string>(),
         previewCache = new Map<
@@ -4248,37 +4236,25 @@ app.whenReady().then(async () => {
           ReturnType<typeof previewExistingBackup>
         >();
       for (const task of workingTasks) {
-        const sourceKey = existingSourceKey(task.sourcePath);
-        let request = previewCache.get(sourceKey);
+        const sourceKey = existingSourceKey(task.sourcePath),
+          context = existingRefreshContext(task, project);
+        let request = previewCache.get(context.cacheKey);
         if (!request) {
           request = previewExistingBackup(
             task.sourcePath,
-            project,
+            context.project,
             "card",
             task.shootingDate,
           );
-          previewCache.set(sourceKey, request);
+          previewCache.set(context.cacheKey, request);
         }
         try {
           const preview = await request,
-            inferred = preview.candidates[0],
-            nextDevice = inferred?.device || task.devices[0],
-            nextPosition = inferred?.cameraPosition || task.cameraPosition,
-            nextDate = inferred?.shootingDate || task.shootingDate,
-            nextCard = inferred?.card || task.name;
-          if (nextDevice) devicesDetected.add(nextDevice);
-          const changed =
-            nextDevice !== task.devices[0] ||
-            nextPosition !== task.cameraPosition ||
-            nextDate !== task.shootingDate ||
-            nextCard !== task.name;
-          if (changed) {
-            metadataUpdated++;
-            task.devices = [nextDevice || "未分类设备"];
-            task.cameraPosition = nextPosition;
-            task.shootingDate = nextDate;
-            task.name = nextCard;
-          }
+            observation = existingRefreshObservation(task, preview);
+          // Metadata is historical evidence, including explicit import mapping
+          // and deliberately unknown fields. Refresh is not mapping approval.
+          // Live stat counts must not overwrite original hashes or totals.
+          observation.metadata.devices.filter(Boolean).forEach((device) => devicesDetected.add(device));
         } catch {
           unavailableSources.add(sourceKey);
           if (task.devices[0]) devicesDetected.add(task.devices[0]);
@@ -4369,6 +4345,7 @@ app.whenReady().then(async () => {
             details: {
               importedTasks: importedTasks.length,
               metadataUpdated,
+              metadataPreserved: true,
               duplicatesMerged: consolidated.duplicateIds.length,
               aggregateRecordsRemoved: consolidated.aggregateIds.length,
               unavailableSources: unavailableSources.size,
@@ -4390,6 +4367,8 @@ app.whenReady().then(async () => {
       return {
         importedTasks: importedTasks.length,
         metadataUpdated,
+        metadataPreserved: true,
+        metadataNote: existingRefreshMetadataNote,
         baselinesNeeded: consolidated.records.filter(
           (task) => task.confidence === "unverified",
         ).length,
@@ -5340,8 +5319,7 @@ app.whenReady().then(async () => {
         status.unconfirmed.length ||
         groupLogicalVolumes(
           related.filter(
-            (task) =>
-              shootingDateKey(task.shootingDate) === shootingDateKey(run.date),
+            (task) => taskBelongsToShootingDay(task, run.date),
           ),
           project.requiredCopies || 2,
         ).some((volume) => !volume.compliant)
@@ -6686,11 +6664,11 @@ app.whenReady().then(async () => {
           ? cleanOverride
           : `${cleanOverride}_`
         : configuredPrefix;
-      const claimed = claimTimestampedVolume(
+      const claimed = claimProjectTimestampedVolume(
         prefix,
         timestamp,
-        project.lastVolumeTimestampByDevice[device],
-        project.volumeTimestampCollisionByDevice[device],
+        project.lastVolumeTimestampByDevice,
+        project.volumeTimestampCollisionByDevice,
       );
       project.lastVolumeTimestampByDevice[device] = timestamp;
       project.volumeTimestampCollisionByDevice[device] = claimed.collision;
@@ -6852,6 +6830,7 @@ app.whenReady().then(async () => {
   handle(
     "report:resolve-csv",
     async (shootingDate: string, projectId?: string) => {
+      shootingDate = requireShootingDay(shootingDate);
       operations.progress({
         phase: "reporting",
         message: `正在生成 ${shootingDate} Resolve 媒体清单`,
@@ -6860,21 +6839,17 @@ app.whenReady().then(async () => {
       });
       const tasks = engine
         .getAllTasks()
-        .filter(
-          (t) =>
-            (!projectId || t.projectId === projectId) &&
-            (t.shootingDate ||
-              new Date(t.completedAt || t.createdAt || 0).toLocaleDateString(
-                "sv-SE",
-              )) === shootingDate,
-        );
+        .filter((task) => !projectId || task.projectId === projectId);
       const videos = tasks
         .flatMap((task) =>
-          task.fileRecords
-            .filter((file) => /\.(mov|mp4|mxf|mkv|avi|m4v)$/i.test(file.name))
-            .map((file) => ({
+          recordsForShootingDay(task, shootingDate)
+            .filter(({ file }) => /\.(mov|mp4|mxf|mkv|avi|m4v)$/i.test(file.name))
+            .map(({ file, shootingDate: assignedDate, dateStatus, reportDate }) => ({
               task,
               file,
+              assignedDate,
+              dateStatus,
+              reportDate,
               mediaPath: file.destinations.find(
                 (destination) => destination.verified && destination.path,
               )?.path,
@@ -6893,7 +6868,7 @@ app.whenReady().then(async () => {
         return '"' + safe.replace(/"/g, '""') + '"';
       };
       const rows = [
-        "Media Path,Clip Name,Reel,Camera,Shooting Date,Kocpy Task",
+        "Media Path,Clip Name,Reel,Camera,Shooting Date,Kocpy Task,Date Assignment Status,Selected Report Date",
       ];
       for (const row of videos) {
         const metadata = await inspectMedia(
@@ -6906,8 +6881,12 @@ app.whenReady().then(async () => {
             row.file.name,
             row.task.devices[0] || "",
             metadata.camera || "",
-            row.task.shootingDate || shootingDate,
+            row.assignedDate || "",
             row.task.name,
+            row.dateStatus === "pending-allocation" ? "待确认日期；保留同卷未归属素材" :
+              row.dateStatus === "confirmed-assignment" ? "人工确认拍摄日" :
+                row.dateStatus === "legacy-completion-date" ? "旧任务完成日回退；非媒体拍摄日期" : "任务拍摄日",
+            row.reportDate,
           ]
             .map(cell)
             .join(","),

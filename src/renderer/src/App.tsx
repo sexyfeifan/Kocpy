@@ -139,6 +139,8 @@ import {
   savedDestinationBytes,
 } from "../../common/task-trust";
 import { projectDates, shootingDateKey } from "../../common/shooting-dates";
+import { canonicalCalendarDate } from "../../common/calendar-date";
+import { existingRefreshConfirmation } from "./existing-refresh-notice";
 import { groupLogicalVolumes } from "../../common/logical-volumes";
 import { Badge, Button, Empty } from "./Ui";
 import { modalDialogSelector } from "../../common/dialog";
@@ -483,7 +485,7 @@ export function ProjectDayGroups({
               <span className="project-day-title">
                 <CalendarDays size={17} />
                 <strong>{summary.shootingDate.replace(/-/g, "")}</strong>
-                {summary.current && <em>今天</em>}
+                {summary.current && <em>自然日今天</em>}
                 {planned && <em>计划日</em>}
               </span>
               <span className="project-day-summary-metrics">
@@ -612,8 +614,8 @@ export function ProjectDayGroups({
                 </div>
                 <div className="project-day-actions">
                   {onNewBackup && project.status !== "archived" && <>
-                    <Button kind="primary" onClick={() => onNewBackup(summary.shootingDate)}><Plus size={13} />当日新建备份</Button>
-                    <Button kind="subtle" onClick={() => onNewBackup(summary.shootingDate, true)}><Plus size={13} />添加当日设备并备份</Button>
+                    <Button kind="primary" disabled={canonicalCalendarDate(summary.shootingDate) !== summary.shootingDate} disabledReason="旧记录中的拍摄日期无效，请先核对；不会改用其他日期创建备份" onClick={() => onNewBackup(summary.shootingDate)}><Plus size={13} />为该拍摄日新建备份</Button>
+                    <Button kind="subtle" disabled={canonicalCalendarDate(summary.shootingDate) !== summary.shootingDate} disabledReason="旧记录中的拍摄日期无效，请先核对；不会改用其他日期添加设备" onClick={() => onNewBackup(summary.shootingDate, true)}><Plus size={13} />添加该拍摄日临时设备并备份</Button>
                   </>}
                   <Button
                     kind="subtle"
@@ -1309,6 +1311,7 @@ export function App() {
   const projectDetailDates = projectDetail
     ? projectDates(projectDetail, projectDetailTasks)
     : [];
+  const projectDetailSelectableDates = projectDetailDates.filter(date => canonicalCalendarDate(date) === date);
   const projectDetailDaySummaries = projectDetail
     ? projectDetailDates.map((shootingDate) =>
         projectDaySummary(
@@ -2738,17 +2741,17 @@ export function App() {
                           />
                         </label>
                         <label>
-                          临时设备所属拍摄日
-                          <input
-                            type="date"
+                          临时设备的拍摄归属日
+                          <select
                             value={dailyPlanDate}
-                            min={projectDetailStart || undefined}
-                            max={projectDetailEnd || undefined}
                             onChange={(event) =>
                               setDailyPlanDate(event.target.value)
                             }
-                            aria-label="每日计划拍摄日期"
-                          />
+                            aria-label="每日计划拍摄归属日"
+                          >
+                            {!projectDetailSelectableDates.includes(dailyPlanDate) && <option value={dailyPlanDate} disabled>请选择有效拍摄归属日；旧日期记录仍保留待核对</option>}
+                            {projectDetailSelectableDates.map(date => <option key={date} value={date}>{date}</option>)}
+                          </select>
                         </label>
                         <span>
                           “应该有素材 / 当天未使用 /
@@ -2775,7 +2778,8 @@ export function App() {
                             kind="subtle"
                             disabled={
                               !dailyPlanOperator.trim() ||
-                              !temporaryDailyDevice.trim()
+                              !temporaryDailyDevice.trim() ||
+                              !projectDetailSelectableDates.includes(dailyPlanDate)
                             }
                             onClick={() =>
                               void updateProjectSchedule(
@@ -2797,7 +2801,7 @@ export function App() {
                             }
                           >
                             <Plus size={13} />
-                            加入当日临时设备
+                            加入该拍摄日临时设备
                           </Button>
                         </div>
                       </div>
@@ -2875,7 +2879,7 @@ export function App() {
                                   false,
                                 );
                               setConfirm({
-                                text: `检测到 ${analysis.importedTasks} 条接管记录；将修正 ${analysis.metadataUpdated} 条目录元数据、合并 ${analysis.duplicatesFound} 条重复素材卷记录，并移除 ${analysis.aggregateRecordsFound} 条误生成的日期/设备父级汇总记录。已读取 ${analysis.manifestsInspected} 份卡卷清单，其中 ${analysis.manifestDifferences} 份存在真实的路径或大小差异；另有 ${analysis.baselinesNeeded} 条记录仍需建立基线${analysis.unavailableSources ? `，${analysis.unavailableSources} 个来源当前离线，将保留原记录` : ""}。刷新只整理 Kocpy 记录并按清单元数据核对，不重新计算文件哈希、不移动或删除素材文件。`,
+                                text: existingRefreshConfirmation(analysis),
                                 run: async () => {
                                   const result =
                                     await api.reanalyzeExistingProject(
@@ -3385,6 +3389,7 @@ export function App() {
           initial={composer}
           volumes={volumes}
           projects={projects}
+          tasks={tasks}
           settings={settings}
           onClose={() => setComposer(null)}
           onCreated={async () => {
@@ -5818,13 +5823,34 @@ function HelpPage({
     page?: Page;
   }> = [
     {
+      id: "production-day-overnight",
+      icon: CalendarDays,
+      title: "拍摄归属日、大夜与历史日补录",
+      purpose: "把项目拍摄日、文件时间和实际备份时刻分开，跨零点仍按明确归属管理。",
+      steps: [
+        "拍摄归属日不是电脑上的今天。可在项目已配置的日期或合法历史记录日期中选择；需要扩展项目周期时先编辑项目，不因跨零点自动加一天。",
+        "例如 15 日晚开拍至 16 日凌晨，若仍属于 15 日场次，继续选择 15 日，并为这个拍摄日添加临时设备或机位；不必加入 16 日计划，也不在其他日创建空目录。",
+        "从具体拍摄日进入备份会保留该日。再次打开项目备份优先采用有效的最近明确选择；开始前仍要核对归属日、设备、机位和每个最终路径。",
+        "文件内嵌日期、路径日期和修改时间只是日期线索。混合日期分析后可展开“批量修正拍摄归属日”，把某个已识别日期的可调整素材组明确归到开拍日，再逐组检查并填写范围确认人。",
+        "批量调整只改未确认的归属草稿，不自动取消任何日期的勾选；未知、共享和必须保留的素材不被强行分日。确认范围后才生效，源文件及其时间不变。",
+        "任务目录以本次选择的拍摄归属日为准；素材卷名中的时间戳是实际分配时间，项目根日期是项目开始日，三者可以不同。已完成任务、历史目录和首次报告不会随日期修正被搬动或重写。",
+      ],
+      tips: [
+        "默认整卡备份。大夜跨零点本身不是遗漏或重复依据；不要仅按自然日期把凌晨素材剔除。",
+        "一个整卡任务可按人工确认归属贡献到多个拍摄日，不代表多张卡或新增独立副本。不能确认的素材继续显示待确认。",
+        "按拍摄日归档复校验会先选择有该日贡献的任务，再保守检查相关整卷；因此可能包含同卷其他日期，并会明确说明。",
+        "若项目目录配置在确认后发生变化，新建任务将停止并要求重新选择项目、核对路径；不会悄悄改用另一套目录规则。",
+      ],
+      page: "projects",
+    },
+    {
       id: "selection-and-day-device",
       icon: CalendarDays,
-      title: "当日临时设备与混合日期素材",
-      purpose: "临时加入当天设备，并在不改动源素材的前提下明确本次备份范围。",
+      title: "拍摄日临时设备与混合日期素材",
+      purpose: "给选定拍摄日临时加入设备，并在不改动源素材的前提下明确本次备份范围。",
       steps: [
-        "在项目详情选择拍摄日，点击“添加当日设备并备份”，填写设备、可选机位及实际操作人。设备只加入该日期的计划和项目汇总，不添加到其他拍摄日，也不提前创建其他日期的空目录。",
-        "保存当日设备后会进入备份流程；取消备份不会撤销已保存的每日计划。已有设备可直接选择，不要用别名重复建立相同设备。",
+        "在项目详情选择拍摄归属日，点击添加该拍摄日设备的入口，填写设备、可选机位及实际操作人。可以补录非今天的项目拍摄日；只加入该日期计划和汇总，不扩展其他日期，也不提前创建空目录。",
+        "保存拍摄日临时设备后会进入备份流程；取消备份不会撤销已保存的每日计划。已有设备可直接选择，不要用别名重复建立相同设备。",
         "新建备份默认整卡复制。确认页先显示轻量日期线索；若混有多日内容，点击“分析并选择日期范围”才会逐文件读取 SHA-256 并核对历史副本。",
         "展开素材组，核对日期依据和关联路径；跨午夜、相机时钟不准时可手动指定拍摄日。勾选需要的日期并填写范围确认人，点击确认同时确认显示的日期归属。",
         "同名关联文件按组处理，未知文件、共享索引、不可安全拆分的摄影机包及不能判定关联的独立音频保留。只有同项目、在线、内容一致且满足物理独立副本要求的历史内容，才可作为已保护的跳过依据。",
@@ -6160,21 +6186,22 @@ function HelpPage({
     {
       id: "refresh-adopted",
       icon: RefreshCw,
-      title: "刷新既有项目（0.1.8）",
-      purpose: "清理误识别的父级汇总记录，并按卡卷清单重新判断真实差异。",
+      title: "刷新既有项目",
+      purpose: "按保存的历史映射重新观察目录和清单，保留原始基线与归属证据。",
       steps: [
         "打开拍摄项目并进入项目详情。",
-        "点击“刷新接管信息”，先查看待修正元数据、重复素材卷、误识别父级汇总、清单差异和离线来源数量。",
-        "确认后等待项目卡片、日期设备矩阵和素材卷明细重新计算。",
+        "点击“刷新接管信息”，先查看重复素材卷、误识别父级汇总、清单差异、离线来源及历史映射保留说明。",
+        "确认后按可信的历史规则快照只读观察；不会把当前项目规则套到旧记录，也不自动改写日期、设备、机位、卷名或原始校验基线。",
         "若来源当前离线，原记录会保留；重新连接磁盘后可以再次刷新。",
         "若目录是后来新增且从未接管，请使用“接管既有备份”，刷新不会自动导入新目录。",
       ],
       tips: [
-        "同一绝对路径始终按一个逻辑素材卷统计。",
+        "只整理具有相同冻结映射与证据的重复记录；同路径若对应不同历史规则或人工归属，会保留供核对，不盲目合并。",
         "不同路径只有完整文件哈希一致时才会合并为同一素材卷的多个副本。",
         "刷新读取卡卷根目录中的 MHL/SHA 清单路径与文件大小，不重新计算素材哈希，不复制、移动、改名或删除素材文件。",
         "“缺少”表示清单有记录但磁盘没有；“额外”表示磁盘有文件但清单没有；两者都需要人工核对。",
         "刷新只整理外部接管记录，不修改 Kocpy 正常复制产生的任务。",
+        "若归属本身需要改正，请明确核对接管映射；刷新不是自动重建项目历史。缺失或损坏的历史规则快照会保留待处理，不以当前规则替代。",
       ],
       page: "projects",
     },
@@ -6296,6 +6323,19 @@ function HelpPage({
     },
   ];
   const releaseNotes = [
+    {
+      version: "0.1.50",
+      title: "拍摄归属日、大夜流程与项目路径一致性",
+      paragraphs: [
+        "明确区分拍摄归属日、自然日期线索和实际备份时间。临时设备可加入所选历史或未来项目日，不随零点自动扩散到其他日；再次打开优先保留有效的最近选择。",
+        "日期筛选增加显式批量归属调整，适用于大夜跨零点；未知与必须保留的组不自动归属，操作不修改源素材，也不自动剔除已勾选内容。",
+        "新建项目任务会核对界面预览与后台权威目录配置，变化时停止；非法日历日期不滚动生成别的日期。旧任务和历史路径不迁移。",
+        "项目内同分钟领卷采用共享预留序号；新增目录重叠与活动写入占用检查。刷新接管保留历史归属和原基线，不因当前项目规则变化重新解释旧记录。",
+        "按日归档、Resolve 清单、交接与收工风险检查统一采用确认后的日期归属，当前日提示使用本地日期。归档复校验明确相关整卷范围，不冒充仅检查当日文件。",
+        "独立归档转存报告明确区分选定目录与项目根；只关联所选范围中的已记录日期，不把计划周期当成完整性证明。",
+        "使用说明增加大夜与跨日实例、日期含义、路径层级和完整性边界。实际验证范围以同版公开记录为准。",
+      ],
+    },
     {
       version: "0.1.49",
       title: "当日设备、保守日期筛选与布局整理",

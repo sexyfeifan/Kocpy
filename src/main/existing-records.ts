@@ -19,6 +19,24 @@ const manifestRecord = (relativePath: string) =>
     path.basename(relativePath),
   );
 
+/** Same bytes/path are not authority to discard a distinct historical mapping.
+ * Keep the exact recorded date/device order and unknown fields; a user must
+ * explicitly reconcile differences instead of refresh picking a newer winner. */
+function mappingAuthorityKey(task: BackupTask, includeCardName = true): string {
+  return createHash("sha256").update(JSON.stringify({
+    projectId: task.projectId,
+    projectRuleSnapshotId: task.projectRuleSnapshotId,
+    shootingDate: task.shootingDate,
+    devices: task.devices,
+    cameraPosition: task.cameraPosition,
+    // Per-file date decisions and scope confirmations are also historical
+    // authority; equal summary metadata is not proof these records agree.
+    dateAllocation: task.dateAllocation,
+    selection: task.selection,
+    ...(includeCardName ? { name: task.name } : {}),
+  })).digest("hex");
+}
+
 function structuralFiles(task: BackupTask, prefix = "") {
   return new Map(
     task.fileRecords
@@ -34,10 +52,14 @@ function structuralFiles(task: BackupTask, prefix = "") {
 
 function aggregateRecordIds(tasks: BackupTask[]) {
   const aggregates = new Set<string>();
+  const mappings = new Map(tasks.map((task) => [task, mappingAuthorityKey(task, false)]));
   for (const parent of tasks) {
     const parentRoot = existingSourceKey(parent.sourcePath);
     const descendants = tasks.filter((candidate) => {
       if (candidate.id === parent.id) return false;
+      // A genuine parent aggregation has a different roll name, but must not
+      // erase evidence assigned to another day, device, position or rule.
+      if (mappings.get(candidate) !== mappings.get(parent)) return false;
       const relative = path.relative(
         parentRoot,
         existingSourceKey(candidate.sourcePath),
@@ -185,6 +207,7 @@ export function consolidateExistingRecords(tasks: BackupTask[]): {
   aggregateIds: string[];
 } {
   let records = [...tasks];
+  const mappings = new Map(tasks.map((task) => [task, mappingAuthorityKey(task)]));
   const duplicateIds: string[] = [];
   const consolidateGroups = (groups: BackupTask[][]) => {
     for (const group of groups.filter((items) => items.length > 1)) {
@@ -197,7 +220,7 @@ export function consolidateExistingRecords(tasks: BackupTask[]): {
 
   const sourceGroups = new Map<string, BackupTask[]>();
   for (const task of records) {
-    const key = existingSourceKey(task.sourcePath);
+    const key = JSON.stringify([existingSourceKey(task.sourcePath), mappings.get(task)]);
     sourceGroups.set(key, [...(sourceGroups.get(key) || []), task]);
   }
   consolidateGroups([...sourceGroups.values()]);
@@ -206,8 +229,9 @@ export function consolidateExistingRecords(tasks: BackupTask[]): {
   for (const task of records) {
     const fingerprint = existingContentFingerprint(task);
     if (!fingerprint) continue;
-    contentGroups.set(fingerprint, [
-      ...(contentGroups.get(fingerprint) || []),
+    const key = JSON.stringify([fingerprint, mappings.get(task)]);
+    contentGroups.set(key, [
+      ...(contentGroups.get(key) || []),
       task,
     ]);
   }

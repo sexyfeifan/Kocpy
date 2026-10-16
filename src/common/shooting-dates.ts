@@ -1,17 +1,11 @@
 import type { BackupTask, ProjectConfig } from "../main/types";
 import { assignedShootingDates } from "./date-allocation";
+import { canonicalCalendarDate } from "./calendar-date";
 
 /** Read-time canonicalization only: never rewrites existing project/task data. */
 export function shootingDateKey(value?: string): string {
   if (!value) return "";
-  const digits = /^(\d{4})-?(\d{2})-?(\d{2})$/.exec(value);
-  if (!digits) return value;
-  const iso = `${digits[1]}-${digits[2]}-${digits[3]}`;
-  const time = Date.parse(`${iso}T12:00:00Z`);
-  return Number.isFinite(time) &&
-    new Date(time).toISOString().slice(0, 10) === iso
-    ? iso
-    : value;
+  return canonicalCalendarDate(value) || value;
 }
 
 export function projectDates(
@@ -24,12 +18,25 @@ export function projectDates(
       ...assignedShootingDates(task),
     ]).filter(Boolean),
   );
-  const start = shootingDateKey(
-    project.shootingDateStart || project.shootingDate,
-  );
-  const end = shootingDateKey(project.shootingDateEnd || start);
+  const rawStart = project.shootingDateStart || project.shootingDate || "",
+    rawEnd = project.shootingDateEnd || rawStart,
+    start = canonicalCalendarDate(rawStart),
+    end = canonicalCalendarDate(rawEnd);
+  // Imported legacy records may contain a syntactically plausible but
+  // impossible day. Keep that key visible for repair instead of silently
+  // rolling it into a different real date through Date.parse/Date.UTC.
+  if (!start || !end) {
+    if (rawStart) dates.add(rawStart);
+    if (rawEnd) dates.add(rawEnd);
+    return [...dates].sort();
+  }
   const from = Date.parse(`${start}T12:00:00Z`),
     to = Date.parse(`${end}T12:00:00Z`);
+  if (from > to) {
+    dates.add(start);
+    dates.add(end);
+    return [...dates].sort();
+  }
   for (
     let day = from, count = 0;
     Number.isFinite(day) && day <= to && count < 1000;

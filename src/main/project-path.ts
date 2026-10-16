@@ -7,11 +7,11 @@ import { promises as fs } from "node:fs";
 import { segment } from "./backup/safety";
 import { volumeIdentity } from "./system";
 import type { ProjectConfig, ProjectStructureReport } from "./types";
+import { compactCalendarDate } from "../common/calendar-date";
+import { priorMaxCollision } from "../common/volume-claims";
 
 export function compactDate(value: string): string {
-  const compact = String(value || "").replace(/[^0-9]/g, "");
-  if (!/^\d{8}$/.test(compact)) throw new Error("项目拍摄日期无效");
-  return compact;
+  return compactCalendarDate(value, "项目拍摄日期无效");
 }
 
 export function makeProjectFolderName(
@@ -394,4 +394,32 @@ export function claimTimestampedVolume(
     label: `${separatedPrefix}${timestamp}${collision ? `_${String(collision + 1).padStart(2, "0")}` : ""}`,
     collision,
   };
+}
+
+/**
+ * Claim a timestamp within the whole project rather than one device's local
+ * counter. This keeps two cameras claiming the same minute from receiving the
+ * same card label when their prefixes are shared. The caller remains
+ * responsible for persisting the returned collision under the claiming
+ * device; no project state is mutated here.
+ */
+export function claimProjectTimestampedVolume(
+  prefix: string,
+  timestamp: string,
+  lastTimestampByDevice: Record<string, string> = {},
+  collisionByDevice: Record<string, number> = {},
+): { label: string; collision: number } {
+  const previousCollision = priorMaxCollision(
+    timestamp,
+    lastTimestampByDevice,
+    collisionByDevice,
+  );
+  if (previousCollision < 0)
+    return claimTimestampedVolume(prefix, timestamp);
+  return claimTimestampedVolume(
+    prefix,
+    timestamp,
+    timestamp,
+    previousCollision,
+  );
 }

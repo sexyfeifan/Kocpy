@@ -1,6 +1,38 @@
 import { normalizePositions } from "../common/interaction";
 import { makeProjectFolderName } from "./project-path";
+import { segment } from "./backup/safety";
+import { createHash } from "node:crypto";
 import type { ProjectConfig } from "./types";
+
+/**
+ * Legacy workspaces allowed non-calendar date strings. Keep those values
+ * visible for explicit repair and derive only the missing display/root name
+ * with the pre-0.1.50 digit stripping rule. Truly malformed values receive a
+ * stable, visibly risky fallback; neither path changes the stored date.
+ */
+function legacyProjectFolderName(
+  project: ProjectConfig,
+  shootingDateStart: string,
+): string {
+  try {
+    return makeProjectFolderName(shootingDateStart, project.name);
+  } catch {
+    const digits = String(shootingDateStart || "").replace(/[^0-9]/g, ""),
+      safeName = (() => {
+        try {
+          return segment(project.name || "未命名项目");
+        } catch {
+          return "未命名项目";
+        }
+      })();
+    if (/^\d{8}$/.test(digits)) return `${digits}_${safeName}`;
+    const fingerprint = createHash("sha256")
+      .update(`${project.id || "legacy"}\0${shootingDateStart}`)
+      .digest("hex")
+      .slice(0, 8);
+    return `日期待修复_${safeName}_${fingerprint}`;
+  }
+}
 
 /**
  * Return the canonical persisted representation of a project.
@@ -23,7 +55,7 @@ export function normalizeProject(project: ProjectConfig): ProjectConfig {
     shootingDateEnd: project.shootingDateEnd || shootingDateStart,
     projectFolderName:
       project.projectFolderName ||
-      makeProjectFolderName(shootingDateStart, project.name),
+      legacyProjectFolderName(project, shootingDateStart),
     volumePrefixByDevice: Object.fromEntries(
       devices.map((device) => [
         device,

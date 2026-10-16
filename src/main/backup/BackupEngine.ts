@@ -35,6 +35,13 @@ import { applyBackupSelectionInventory, assertBackupSelectionStructure, backupSe
 import { selectionRuntimeDependencies } from "../backup-selection-runtime";
 import { writeBackupSelectionIntent, writeBackupSelectionMarker } from "../backup-selection-marker";
 import { assertBackupSourceScope } from "../backup-source-scope";
+import {
+  assertOutputRootKeysAvailable,
+  assertTaskOutputRootsAvailable,
+  taskDestinationOutputRoot,
+  taskOutputRootKey,
+  taskOutputRoots,
+} from "./task-output-root";
 
 export async function hashFile(
   file: string,
@@ -247,6 +254,8 @@ export class BackupEngine extends EventEmitter {
   private pauseWaiters = new Map<string, Array<() => void>>();
   private lastProgressEmit = new Map<string, number>();
   private lastProgressStatus = new Map<string, string>();
+  /** Canonical roots reserved after async preflight and before mkdir/write. */
+  private outputRootClaims = new Map<string, string[]>();
   getTask(id: string) {
     return this.tasks.get(id);
   }
@@ -325,6 +334,7 @@ export class BackupEngine extends EventEmitter {
     this.pauseWaiters.clear();
     this.lastProgressEmit.clear();
     this.lastProgressStatus.clear();
+    this.outputRootClaims.clear();
     for (const task of tasks) this.loadTask(structuredClone(task));
   }
   createTask(config: TaskConfig): BackupTask {
@@ -487,6 +497,7 @@ export class BackupEngine extends EventEmitter {
         verifySpeedBps: 0,
       })),
     };
+    assertTaskOutputRootsAvailable(task, [...this.tasks.values()]);
     this.tasks.set(id, task);
     return task;
   }
@@ -596,6 +607,7 @@ export class BackupEngine extends EventEmitter {
     if (this.active.has(id) || this.queue.includes(id))
       throw new Error("请先取消任务再删除记录");
     this.tasks.delete(id);
+    this.outputRootClaims.delete(id);
   }
   setPriority(id: string, priority: boolean) {
     const task = this.tasks.get(id);
@@ -613,6 +625,46 @@ export class BackupEngine extends EventEmitter {
     const identity = await volumeIdentity(location);
     assertVolumeIdentity(expectedUuid, expectedId, identity, label);
     return identity;
+  }
+  private async claimTaskOutputRoots(
+    task: BackupTask,
+    destinationRoots: string[],
+    retryTargetIds?: Set<string>,
+    compareRecorded = false,
+    signal?: AbortSignal,
+  ): Promise<Map<string, string>> {
+    const roots = new Map<string, string>();
+    for (const [index, destination] of task.destinations.entries()) {
+      if (retryTargetIds && !retryTargetIds.has(destination.id)) continue;
+      if (destination.available === false) continue;
+      signal?.throwIfAborted();
+      const logical = taskDestinationOutputRoot(
+        task,
+        destination,
+        destinationRoots[index],
+      );
+      // Resolve only this task's at-most-four roots. Permission and filesystem
+      // errors fail closed; createTask never touches historical/offline paths.
+      roots.set(destination.id, await canonical(logical));
+      signal?.throwIfAborted();
+    }
+    const candidateKeys = [...roots.values()].map(taskOutputRootKey),
+      recordedKeys = compareRecorded
+        ? [...this.tasks.values()]
+            .filter((other) => other.id !== task.id)
+            .flatMap(taskOutputRoots)
+            .map(taskOutputRootKey)
+        : [],
+      activeKeys = [...this.outputRootClaims.entries()]
+        .filter(([taskId]) => taskId !== task.id)
+        .flatMap(([, keys]) => keys);
+    assertOutputRootKeysAvailable(candidateKeys, [
+      ...recordedKeys,
+      ...activeKeys,
+    ]);
+    signal?.throwIfAborted();
+    this.outputRootClaims.set(task.id, candidateKeys);
+    return roots;
   }
   async reverifyTask(id: string) {
     const task = this.tasks.get(id);
@@ -1358,6 +1410,16 @@ export class BackupEngine extends EventEmitter {
             break;
           }
       }
+      const currentAttempt = task.operationAttempts?.find(
+          (attempt) => attempt.id === task.operationAttemptId,
+        ),
+        claimedOutputRoots = await this.claimTaskOutputRoots(
+          task,
+          dests,
+          retryTargetIds,
+          Boolean(task.projectId && currentAttempt?.reason === "initial"),
+          signal,
+        );
       const sourceIdentity = await volumeIdentity(src);
       assertVolumeIdentity(
         task.sourceVolumeUuid,
@@ -1421,16 +1483,10 @@ export class BackupEngine extends EventEmitter {
         if (retryTargetIds && !retryTargetIds.has(d.id)) continue;
         if (d.available === false) continue;
         try {
-          const root =
-            task.copyMode === "mirror"
-              ? task.mirrorLayout === "source-folder"
-                ? path.join(dests[i], task.namingTemplate)
-                : dests[i]
-              : path.join(
-                  dests[i],
-                  task.shootingDateFolder || "",
-                  task.namingTemplate,
-                );
+          const root = taskDestinationOutputRoot(task, d, dests[i]),
+            claimedRoot = claimedOutputRoots.get(d.id);
+          if (!claimedRoot)
+            throw new Error("目的地素材卷目录未通过执行前预留");
           await safeChild(dests[i], path.relative(dests[i], root));
           if (dests[i].startsWith("/Volumes/"))
             await fs.access("/Volumes/" + dests[i].split("/")[2]);
@@ -1444,8 +1500,19 @@ export class BackupEngine extends EventEmitter {
           d.volumeId = identity.id;
           d.volumeUuid = identity.uuid;
           d.volumeName = identity.name;
+          const currentRoot = await canonical(root);
+          if (
+            path.resolve(currentRoot).normalize("NFC") !==
+            path.resolve(claimedRoot).normalize("NFC")
+          )
+            throw new Error("目的地素材卷目录在预检后发生变化，已停止写入");
           await fs.mkdir(root, { recursive: true });
           d.resolvedPath = await canonical(root);
+          if (
+            path.resolve(d.resolvedPath).normalize("NFC") !==
+            path.resolve(claimedRoot).normalize("NFC")
+          )
+            throw new Error("目的地素材卷目录在预检后发生变化，已停止写入");
           // Scope warnings precede any selected media write, including retries:
           // interrupted selected backups must never look like complete cards.
           await writeBackupSelectionIntent(task, d, {
@@ -1920,6 +1987,7 @@ export class BackupEngine extends EventEmitter {
       this.paused.delete(id);
       this.pausedPhase.delete(id);
       this.active.delete(id);
+      this.outputRootClaims.delete(id);
       task.completedAt ||= Date.now();
       task.speedBps = 0;
       task.aggregateSpeedBps = 0;
