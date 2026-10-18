@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -20,6 +20,14 @@ const project: ProjectConfig = { id: "tz-project", name: "Synthetic", volumePref
 const config: TaskConfig = { projectId: project.id, projectName: project.name, projectStartDate: project.shootingDateStart, projectFolderName: project.projectFolderName, projectNamingRule: undefined, name: "CARD", namingTemplate: "CARD", sourcePath: "/tmp/time-source", destinationPaths: ["/tmp/time-copy"], devices: ["FX3"], shootingDate: "2026-10-15", hashAlgorithm: "sha256", ...rules, shootingTimeZone: "Asia/Shanghai" };
 
 describe("explicit shooting time context", () => {
+  it("canonicalizes UTC zero offset so saved/restarted records remain byte-stable", () => {
+    const spy = vi.spyOn(Date.prototype, "getTimezoneOffset").mockReturnValue(0);
+    try {
+      const captured = captureTimeContext({}, undefined, at);
+      expect(Object.is(captured.workstationOffsetMinutes, -0)).toBe(false);
+      expect(JSON.parse(JSON.stringify(captured))).toEqual(captured);
+    } finally { spy.mockRestore(); }
+  });
   it.each(["Bad/Zone", "", "../Asia/Shanghai", "Asia/Shanghai\n"])("rejects invalid time zone %s", zone => expect(() => assertProjectTimeRules({ projectTimeZone: zone })).toThrow());
   it("validates override dates and advisory hour, never normalizes impossible days", () => {
     expect(() => assertProjectTimeRules({ shootingDayTimeZones: { "2026-02-30": "UTC" } })).toThrow();

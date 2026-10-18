@@ -1,6 +1,6 @@
 # Kocpy 文档导航
 
-新增 [0.1.51 时区与大夜说明](RELEASE_NOTES_0.1.51.md)；源码实现与正式安装包状态请分开核对，下载以同版正式 Release 为准。
+新增 [0.1.52 时区与大夜说明](RELEASE_NOTES_0.1.52.md)；源码实现与正式安装包状态请分开核对，下载以同版正式 Release 为准。
 
 当前正式版：**0.1.50**。本目录说明已经实现的功能、操作方法和验证边界；正式安装包与公开状态以 GitHub Release 为准。[返回项目首页](../README.md) · [下载正式版](https://github.com/sexyfeifan/Kocpy/releases/latest)
 

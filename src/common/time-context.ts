@@ -47,7 +47,7 @@ export function captureTimeContext(rules: ProjectTimeRules = {}, shootingDate?: 
   }
   return { schemaVersion: 1, capturedAt: at,
     workstationTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
-    workstationOffsetMinutes: -new Date(at).getTimezoneOffset(),
+    workstationOffsetMinutes: -new Date(at).getTimezoneOffset() || 0,
     ...(rules.projectTimeZone ? { projectTimeZone: rules.projectTimeZone } : {}),
     ...(shootingTimeZone(rules, shootingDate) ? { shootingTimeZone: shootingTimeZone(rules, shootingDate) } : {}),
     ...(shootingDate ? { shootingDate } : {}),
