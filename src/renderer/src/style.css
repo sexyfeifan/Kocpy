@@ -367,7 +367,8 @@ select:focus,
 textarea:focus {
   border-color: var(--purple);
 }
-input[type="checkbox"] {
+input[type="checkbox"],
+input[type="radio"] {
   width: 17px;
   height: 17px;
   min-height: 17px;
@@ -2460,15 +2461,20 @@ small {
   font-size: 12px;
   color: var(--sub);
 }
-.copy-layout-choice label {
-  display: flex;
+.composer-main .copy-layout-choice label {
+  display: grid;
+  grid-template-columns: 17px minmax(0, 1fr);
   gap: 10px;
-  align-items: flex-start;
+  align-items: start;
+  margin: 0;
   cursor: pointer;
 }
-.copy-layout-choice input {
-  width: auto;
+.copy-layout-choice input[type="radio"] {
   margin-top: 3px;
+}
+.copy-layout-choice label > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .copy-layout-choice strong {
   font-size: 12px;
@@ -2567,6 +2573,10 @@ small {
 }
 .chosen-path > svg {
   color: var(--purple);
+  flex-shrink: 0;
+}
+.chosen-path > .btn {
+  flex-shrink: 0;
 }
 .chosen-path > div {
   flex: 1;
@@ -2576,9 +2586,7 @@ small {
   font-size: 11px;
   font-weight: 550;
   display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 .chosen-path div span {
   display: block;
@@ -2586,12 +2594,12 @@ small {
   font-family: monospace;
   font-size: 9px;
   margin-top: 5px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 .chosen-path > .path {
   flex: 1;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 .detected {
   display: flex;
@@ -3568,9 +3576,20 @@ small {
 }
 .detail-stats {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 15px;
   margin: 29px 0;
+}
+.detail-stats > div {
+  min-width: 0;
+  padding: 18px 20px;
+  border: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 12px;
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
 }
 .detail-stats strong {
   display: block;
@@ -3582,7 +3601,7 @@ small {
   color: var(--muted);
   font-size: 10px;
   display: block;
-  margin-top: 9px;
+  margin-top: 0;
 }
 .mixed-day-entry {
   display: flex;
@@ -5120,9 +5139,8 @@ small {
   color: var(--muted);
   font-size: 10px;
   margin-top: 12px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .completion-conclusion {
   display: flex;
@@ -5796,7 +5814,9 @@ small {
   margin: 0 0 24px;
 }
 .completion-summary div {
-  padding: 14px 8px;
+  min-width: 0;
+  padding: 16px;
+  overflow-wrap: anywhere;
   border-radius: 12px;
   background: var(--panel2);
   border: 1px solid var(--border);
@@ -5951,24 +5971,44 @@ small {
 /* 0.1.38 unified background activity and compact template management */
 .background-overview {
   display: grid;
-  gap: 12px;
+  margin-bottom: 24px;
 }
 .background-idle {
   display: flex;
   align-items: center;
   gap: 8px;
-  min-height: 38px;
+  min-height: 64px;
+  padding: 18px 22px;
   color: var(--muted);
   font-size: 12px;
 }
 .background-idle svg {
   color: var(--green);
+  flex-shrink: 0;
+}
+.background-idle span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.background-page {
+  display: grid;
+  gap: 20px;
+  min-width: 0;
 }
 .background-overview-list,
 .background-task-list,
 .background-messages {
   display: grid;
-  gap: 10px;
+  gap: 16px;
+  min-width: 0;
+}
+.background-overview-list {
+  padding: 18px 22px;
+}
+.background-task-list > .empty {
+  border: 1px solid var(--border);
+  border-radius: var(--panel-radius);
+  background: var(--panel);
 }
 .background-overview-list > button {
   display: grid;
@@ -6038,27 +6078,33 @@ small {
   min-width: 0;
 }
 .background-current-file > span {
-  overflow: hidden;
+  min-width: 0;
+  overflow-wrap: anywhere;
   color: var(--quiet);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 10px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 .background-current-file progress,
 .background-current-file small {
   grid-column: 1 / -1;
 }
 .background-filters {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
   justify-content: space-between;
   gap: 14px;
+  padding: 18px 22px;
+  container: background-filters / inline-size;
 }
 .background-filters .row {
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  min-width: 0;
 }
 .background-filters select {
+  min-width: 0;
+  width: 100%;
   min-height: 38px;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -6069,7 +6115,8 @@ small {
 .background-task {
   display: grid;
   gap: 10px;
-  padding: 16px;
+  padding: 22px;
+  min-width: 0;
   border: 1px solid var(--border);
   border-radius: 12px;
   background: var(--panel2);
@@ -6081,32 +6128,60 @@ small {
 }
 .background-task-title > span {
   justify-content: flex-start;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.background-task-title svg {
+  flex-shrink: 0;
 }
 .background-task-title > b {
   color: var(--muted);
   font-size: 10px;
+  flex-shrink: 0;
 }
 .background-task > p {
   margin: 0;
   color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.background-task > p.red-text {
+  color: var(--danger);
+}
+.background-task > p.green-text {
+  color: var(--green);
 }
 .background-paths {
   display: grid;
-  gap: 6px;
+  gap: 12px;
+  min-width: 0;
 }
 .background-paths > span {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
-  align-items: center;
+  align-items: start;
   gap: 8px;
   min-width: 0;
   color: var(--muted);
 }
+.background-paths > span > svg {
+  margin-top: 3px;
+}
+.background-paths > span > span {
+  min-width: 0;
+}
+.background-paths small {
+  display: block;
+  margin-bottom: 3px;
+  font-size: 10px;
+}
 .background-paths code {
-  overflow: hidden;
+  display: block;
+  min-width: 0;
   color: inherit;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  line-height: 1.65;
+  user-select: text;
 }
 .background-timing {
   justify-content: flex-start;
@@ -6159,11 +6234,16 @@ small {
   background: var(--danger);
 }
 .background-messages > p {
-  margin: 0;
-  padding: 9px 11px;
+  margin: 0 22px 16px;
+  padding: 12px 14px;
   border-radius: 8px;
   background: var(--panel2);
   color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.background-messages > p.red-text {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 6%, var(--panel2));
 }
 .archive-transfer-live {
   display: grid;
@@ -6194,9 +6274,8 @@ small {
   font-size: 10px;
 }
 .archive-transfer-current-file > span:first-child {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .archive-transfer-current-file progress {
   grid-column: 1 / -1;
@@ -6222,11 +6301,16 @@ small {
   margin-top: 3px;
 }
 @media (max-width: 980px) {
-  .background-filters,
   .background-task-title,
   .background-progress-meta {
     align-items: flex-start;
     flex-direction: column;
+  }
+}
+@container background-filters (max-width: 800px) {
+  .background-filters > .tabs,
+  .background-filters > .row {
+    grid-column: 1 / -1;
   }
 }
 @media (prefers-reduced-motion: reduce) {

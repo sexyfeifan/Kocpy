@@ -23,6 +23,7 @@ const kindLabels: Record<BackgroundActivitySummary["kind"], string> = {
 
 const phaseLabels: Record<string, string> = {
   scanning: "扫描范围",
+  validating: "复核筛选范围",
   hashing: "读取源文件",
   copying: "复制数据",
   publishing: "提交文件",
@@ -81,8 +82,10 @@ function ActivityProgress({ activity }: { activity: BackgroundActivitySummary })
             : ""}
         </span>
         <span>
-          {activity.speedBps ? `${bytes(activity.speedBps)}/s` : "正在计算速度"}
-          {activity.etaSeconds ? ` · 约剩 ${duration(activity.etaSeconds)}` : ""}
+          {activity.state === "running"
+            ? activity.speedBps ? `${bytes(activity.speedBps)}/s` : "正在计算速度"
+            : stateLabels[activity.state]}
+          {activity.state === "running" && activity.etaSeconds ? ` · 约剩 ${duration(activity.etaSeconds)}` : ""}
         </span>
       </div>
       {activity.currentFile && (
@@ -132,7 +135,7 @@ export function BackgroundActivityOverview({
       </div>
       {!active.length ? (
         <div className="background-idle">
-          <CheckCircle2 size={16} /> 当前没有运行中或待处理的后台任务
+          <CheckCircle2 size={16} /><span>当前没有运行中或待处理的后台任务</span>
         </div>
       ) : (
         <div className="background-overview-list">
@@ -199,7 +202,7 @@ export function BackgroundTasksPage({
     });
   }, [focusId, visible]);
   return (
-    <>
+    <div className="background-page">
       <section className="panel background-filters">
         <div className="tabs" role="group" aria-label="后台任务状态">
           {[
@@ -237,7 +240,7 @@ export function BackgroundTasksPage({
           </select>
         </div>
       </section>
-      <section className="panel background-task-list">
+      <section className="background-task-list" aria-label="后台任务列表">
         {!visible.length ? (
           <Empty icon={FileClock} title="当前范围没有后台任务" detail="调整状态、类型或项目筛选后再查看。" />
         ) : (
@@ -260,8 +263,8 @@ export function BackgroundTasksPage({
               </p>
               <ActivityProgress activity={activity} />
               <div className="background-paths">
-                {activity.sourcePath && <span><FolderInput size={14} /><code title={activity.sourcePath}>{activity.sourcePath}</code></span>}
-                {activity.destinationPath && <span><FolderOutput size={14} /><code title={activity.destinationPath}>{activity.destinationPath}</code></span>}
+                {activity.sourcePath && <span><FolderInput size={14} aria-hidden="true" /><span><small>源路径</small><code>{activity.sourcePath}</code></span></span>}
+                {activity.destinationPath && <span><FolderOutput size={14} aria-hidden="true" /><span><small>目的地路径</small><code>{activity.destinationPath}</code></span></span>}
               </div>
               <div className="background-timing">
                 <span><Clock3 size={13} />开始：{new Date(activity.startedAt).toLocaleString()}</span>
@@ -305,6 +308,6 @@ export function BackgroundTasksPage({
           ))}
         </section>
       )}
-    </>
+    </div>
   );
 }
