@@ -8201,3 +8201,30 @@ small {
     grid-template-columns: 1fr;
   }
 }
+
+/* Portable evidence tools share the normal modal/content rhythm; never scale text. */
+.portable-project-dialog { width: min(920px, 100%); }
+.portable-project-body { align-content: start; }
+.portable-project-body > .btn { justify-self: start; }
+.portable-project-body p { margin: 0; }
+.portable-card-reference { display: grid; gap: 7px; padding: 16px 18px; margin: 16px 0; border: 1px solid var(--border); border-radius: 14px; font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.portable-card-reference span { color: var(--muted); }
+.portable-project-body, .portable-discovery, .portable-history { display: grid; gap: 18px; min-width: 0; }
+.portable-project-body > *, .portable-discovery > *, .portable-history > * { min-width: 0; }
+.portable-project-body .notice { display: block; }
+.portable-project-body .notice p { margin-top: 10px; }
+.portable-project-controls { display: grid; gap: 12px; justify-items: start; }
+.portable-project-controls .path-text, .portable-project-progress { width: 100%; }
+.portable-project-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.portable-project-fields label, .portable-project-body .portable-missing > label, .portable-discovery label { display: grid; gap: 8px; min-width: 0; }
+.portable-missing { display: grid; gap: 12px; padding: 18px; border: 1px solid var(--border); border-radius: 14px; }
+.portable-project-body .portable-missing-row { display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 12px; align-items: start; }
+.portable-missing-row input[type="checkbox"] { margin-top: 4px; width: 16px; height: 16px; min-height: 16px; padding: 0; }
+.portable-project-body .path-text, .portable-discovery .path-text, .portable-history .path-text { overflow-wrap: anywhere; white-space: normal; }
+.portable-project-progress progress { width: 100%; accent-color: var(--accent); }
+.portable-project-body textarea { min-height: 80px; resize: vertical; }
+.portable-discovery { margin-top: 18px; padding: 20px; border: 1px solid var(--border); border-radius: 16px; }
+.archive-transfer-step:has(> .portable-discovery) { display: flex; flex-direction: column; }
+.portable-history { margin-bottom: 24px; padding: 22px; border: 1px solid var(--border); border-radius: 16px; }
+.portable-history-row { display: grid; gap: 6px; padding: 14px 0; border-bottom: 1px solid var(--border); min-width: 0; overflow-wrap: anywhere; }
+@media (max-width: 1200px) { .portable-project-fields { grid-template-columns: minmax(0, 1fr); } }

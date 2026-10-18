@@ -7,6 +7,16 @@ contextBridge.exposeInMainWorld("api", {
   resolveDroppedPaths: (files: File[]) =>
     files.map((file) => webUtils.getPathForFile(file)).filter(Boolean),
   selectDirectory: call("dialog:directory"),
+  discoverPortableProject: call("portable:discover"),
+  preparePortableProject: call("portable:prepare"),
+  publishPortableProject: call("portable:publish"),
+  importPortableProject: call("portable:import"),
+  cancelPortableProject: call("portable:cancel"),
+  onPortableProgress: (callback: (payload: unknown) => void) => {
+    const listener = (_event: unknown, payload: unknown) => callback(payload);
+    ipcRenderer.on("portable:progress", listener);
+    return () => ipcRenderer.removeListener("portable:progress", listener);
+  },
   validateDirectories: call("dialog:validate-directories"),
   getOperations: call("operations:list"),
   getBackgroundActivities: call("background:list"),

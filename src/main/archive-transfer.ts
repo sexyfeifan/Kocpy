@@ -3,6 +3,7 @@ import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import type { VolumeIdentity } from "../common/volume-identity";
 import { publishNewArtifact } from "./completion-automation";
+import { verifyPortablePayload } from "./portable-project";
 
 export type ArchiveTransferStatus =
   | "ready"
@@ -47,6 +48,8 @@ export interface ArchiveTransferInventory {
 
 export interface ArchiveTransferContext {
   projectId?: string;
+  /** Frozen baseline identity. Referenced history never grants whole-card/eject trust. */
+  portableProjectSha256?: string;
   archiveName: string;
   archiveNameSource: "project" | "folder";
   shootingDate?: string;
@@ -579,6 +582,7 @@ function validateNormalizedArchiveTransferTasks(
       !validAbsolutePath(task.destinationParent) ||
       !validAbsolutePath(task.finalPath) ||
       !validAbsolutePath(task.markerPath) ||
+      (task.portableProjectSha256 !== undefined && !/^[a-f0-9]{64}$/.test(task.portableProjectSha256)) ||
       path.resolve(task.finalPath) !==
         path.join(path.resolve(task.destinationParent), path.basename(task.sourcePath)) ||
       path.resolve(task.markerPath) !== path.resolve(markerPathFor(task)) ||
@@ -1282,6 +1286,7 @@ export class ArchiveTransferManager {
       archiveName,
       archiveNameSource: nameSource,
       projectId: context?.projectId,
+      portableProjectSha256: context?.portableProjectSha256,
       shootingDate: context?.shootingDate?.trim() || undefined,
       historicalEvidence: [...new Set(context?.historicalEvidence || [])],
       warnings: [
@@ -1302,7 +1307,16 @@ export class ArchiveTransferManager {
       input.sourcePath,
       input.destinationParent,
       input.context,
-    );
+    ).catch(async error => {
+      // Registration may win the race and create its exclusive root while a
+      // second request is still preflighting. Keep the same actionable reason.
+      if (error instanceof Error && error.message.startsWith("目标已存在，Kocpy 不会覆盖：")) {
+        const [source, parent] = await Promise.all([fs.realpath(input.sourcePath), fs.realpath(input.destinationParent)]);
+        const finalPath = path.join(parent, path.basename(source));
+        if (this.tasks.some(t => t.finalPath === finalPath)) throw new Error("同一归档目标已经有登记任务，请查看已有任务或恢复，不要重复开始");
+      }
+      throw error;
+    });
     if (preview.inventory.digest !== input.previewDigest)
       throw new Error(SOURCE_CHANGED);
     const at = this.now(),
@@ -1321,6 +1335,7 @@ export class ArchiveTransferManager {
         archiveName: preview.archiveName,
         archiveNameSource: preview.archiveNameSource,
         projectId: preview.projectId,
+        portableProjectSha256: preview.portableProjectSha256,
         shootingDate: preview.shootingDate,
         historicalEvidence: preview.historicalEvidence,
         status: "ready",
@@ -1426,6 +1441,7 @@ export class ArchiveTransferManager {
       finalPath: task.finalPath,
       inventoryDigest: task.inventory.digest,
       destinationIdentity: task.destinationIdentity,
+      portableProjectSha256: task.portableProjectSha256,
     });
     await fs.writeFile(task.markerPath, marker, { flag: "wx", mode: 0o600 });
     try {
@@ -1578,6 +1594,12 @@ export class ArchiveTransferManager {
       this.checkpointFiles.set(task.id, task.completedFiles);
       this.progress(task);
       await this.verifyWholePayload(task);
+      if (task.portableProjectSha256) {
+        await verifyPortablePayload(task.finalPath, task.portableProjectSha256, {
+          progress: p => this.updateProgress(task, p.bytes, 0, 0, true, p.files),
+        });
+        await this.assertLiveIdentities(task);
+      }
       const completedAt = this.now();
       task.completedAt = completedAt;
       task.status = "completed";
@@ -1758,6 +1780,7 @@ export class ArchiveTransferManager {
       marker.sourcePath !== task.sourcePath ||
       marker.finalPath !== task.finalPath ||
       marker.inventoryDigest !== task.inventory.digest ||
+      marker.portableProjectSha256 !== task.portableProjectSha256 ||
       !validateArchiveIdentity(marker.destinationIdentity) ||
       !sameIdentity(
         task.destinationIdentity,

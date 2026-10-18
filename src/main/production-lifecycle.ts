@@ -16,7 +16,7 @@ import type {
 } from "./types";
 import { mediaBreakdownFromFiles } from "./media-kind";
 
-const isManifestName = (name: string) =>
+export const isManifestName = (name: string) =>
   /(?:\.mhl|sha(?:1|256)sums\.txt|manifest.*\.json)$/i.test(name);
 
 const normalizeManifestPath = (value: string) =>
@@ -580,10 +580,10 @@ function normalizeChecksum(value: string, algorithm?: HashAlgorithm) {
     : trimmed.toLowerCase();
 }
 
-async function readManifest(file?: string): Promise<ParsedManifest> {
+export async function readManifest(file?: string, verifiedText?: string): Promise<ParsedManifest> {
   const result: ParsedManifest = { file, entries: new Map() };
   if (!file) return result;
-  const text = await fs.readFile(file, "utf8");
+  const text = verifiedText ?? await fs.readFile(file, "utf8");
   const add = (
     name: unknown,
     checksum: unknown,

@@ -27,6 +27,12 @@ function rule(selector: string) {
 }
 
 describe("background and detail layout guards (desktop acceptance still required)", () => {
+  it("labels portable evidence compilation honestly instead of presenting a transfer speed", () => {
+    const html = render({ ...activity, state: "running", phase: "portable-recording" });
+    expect(html).toContain("汇编原校验证据（非重新校验）");
+    expect(html).toContain("记录进度，不统计传输速度");
+    expect(html).not.toContain("正在计算速度");
+  });
   it("shows complete labeled paths and separates the task list from its filters", () => {
     const html = render();
     expect(html).toContain(activity.sourcePath);

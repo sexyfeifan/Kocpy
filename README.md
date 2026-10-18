@@ -8,7 +8,7 @@
 
 当前版本说明：**0.1.49** · [下载](https://github.com/sexyfeifan/Kocpy/releases/latest) · [使用手册](docs/USER_GUIDE.md) · [文档导航](docs/README.md) · [0.1.49 更新](docs/RELEASE_NOTES_0.1.49.md)。正式安装包与公开状态以 GitHub Release 为准；源码和文档更新不表示附件已经发布或完成验收。
 
-**0.1.50 源码改进正在验证**：拍摄归属日与大夜、非今天的项目临时设备、筛选复核实时反馈、目录规则与逐文件日期证据一致性，以及推出与归档产物安全检查。见[候选改动](docs/RELEASE_NOTES_0.1.50.md)和[流程审阅](docs/PROJECT_WORKFLOW_REVIEW.md)；安装请以正式 Release 为准。
+**0.1.50 源码改进正在验证**：随盘项目文件与历史补生成、携盘到另一台 Mac 继承项目并转存 NAS、有意移除的逐项范围修订，以及大夜日期、临时设备、实时反馈、界面与数据安全修正。见[候选改动](docs/RELEASE_NOTES_0.1.50.md)、[随盘项目使用流程](docs/USER_GUIDE.md#16-随盘项目文件与携盘到另一台-mac)和[流程审阅](docs/PROJECT_WORKFLOW_REVIEW.md)；安装请以正式 Release 为准。
 
 ![Kocpy 工作台](docs/screenshots/dashboard.png)
 

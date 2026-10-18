@@ -113,6 +113,7 @@ import { Composer } from "./Composer";
 import { ProjectEditor } from "./ProjectEditor";
 import { WorkstationImportDialog } from "./WorkstationImportDialog";
 import { ArchiveTransferPanel } from "./ArchiveTransferPanel";
+import { PortableProjectDialog, PortableProjectHistory } from "./PortableProjectDialog";
 import {
   BackgroundActivityOverview,
   BackgroundTasksPage,
@@ -714,7 +715,8 @@ export function App() {
       id: string;
       action: "pause" | "resume";
     } | null>(null),
-    [projectDetailId, setProjectDetailId] = useState<string | null>(null);
+    [projectDetailId, setProjectDetailId] = useState<string | null>(null),
+    [portableProject, setPortableProject] = useState<ProjectConfig | null>(null);
   const [toast, setToast] = useState<{
       message: string;
       error: boolean;
@@ -2439,6 +2441,12 @@ export function App() {
                                     </button>
                                     <button
                                       role="menuitem"
+                                      onClick={() => { setProjectMenuId(null); setPortableProject(p); }}
+                                    >
+                                      <FileCheck2 size={14} /> 随盘项目文件
+                                    </button>
+                                    <button
+                                      role="menuitem"
                                       className="danger"
                                       onClick={() =>
                                         void requestProjectDeletion(p)
@@ -2471,7 +2479,7 @@ export function App() {
                           </div>
                           <div className="project-summary">
                             <span>
-                              {p.destinationPaths?.length || 0} 个目的地
+                              {p.destinationPaths?.length || 0} 个{p.portableHistory?.length ? "本机拷卡" : ""}目的地
                             </span>
                             <span>
                               {
@@ -2480,9 +2488,10 @@ export function App() {
                                   tasks.filter((t) => t.projectId === p.id),
                                 ).verified
                               }{" "}
-                              卷内容校验通过
+                              卷{p.portableHistory?.length ? "本机任务" : ""}内容校验通过
                             </span>
                           </div>
+                          {p.portableHistory?.length ? <div className="portable-card-reference"><strong>随盘参考历史 {p.portableHistory.at(-1)!.rolls.length} 卷 · {p.portableHistory.at(-1)!.files} 文件</strong><span>{bytes(p.portableHistory.at(-1)!.bytes)} · 有意排除 {p.portableHistory.at(-1)!.exclusions} 项；项目详情查看继承依据和归档转存，不计作本机整卡副本。</span></div> : null}
                           {(() => {
                             const related = tasks.filter(
                                 (task) => task.projectId === p.id,
@@ -2496,7 +2505,7 @@ export function App() {
                             return (
                               <div className="project-coverage">
                                 <div className="coverage-heading">
-                                  <strong>项目素材覆盖</strong>
+                                  <strong>{p.portableHistory?.length ? "本机传输记录" : "项目素材覆盖"}</strong>
                                   {p.expectedVolumes ? (
                                     <span>
                                       {Math.min(
@@ -2594,6 +2603,7 @@ export function App() {
                   </div>
                   {projectDetail && (
                     <section className="panel project-insights">
+                      <PortableProjectHistory project={projectDetail} />
                       <div className="section-title">
                         <div>
                           <h2>
@@ -2677,6 +2687,7 @@ export function App() {
                           </Button>
                         </div>
                       </div>
+                      {projectDetail.portableHistory?.length && !projectDetailTasks.length ? <p className="notice">本机尚无拷卡任务，以上展示的是随盘参考历史及本次归档转存；不凭历史摘要重造每日收工、空目录或完整卡统计。完整任务级合并请使用工作站包。若要继续现场拷卡，请先明确恢复项目并配置本机目的地。</p> : <>
                       <div className="project-total-cards">
                         <div>
                           <strong>{projectDetailLogicalVolumes.length}</strong>
@@ -2922,6 +2933,7 @@ export function App() {
                           />
                         </div>
                       )}
+                      </>}
                     </section>
                   )}
                   {!projects.filter((p) =>
@@ -3311,6 +3323,7 @@ export function App() {
             <ChevronRight size={15} />
           </button>
         )}
+        {portableProject && <PortableProjectDialog project={portableProject} onClose={() => setPortableProject(null)} />}
         {existingImport && (
           <ExistingImportModal
             value={existingImport}
@@ -6280,7 +6293,7 @@ function HelpPage({
         "执行检查并确认写入速度达到项目要求。",
         "备份时可点击选择或直接拖入网络目录。",
         "项目或普通备份完成后，使用“独立归档转存（NAS / 已挂载目录）”选择整个源项目文件夹和目标父目录，完成逐文件 SHA-256 与目标独立回读。",
-        "把已校验备份盘带到另一台安装 Kocpy 的 Mac 时，也可直接选择盘内项目文件夹作为源；关联项目是可选项，只用于补充报告名称、拍摄日期和历史证据。",
+        "携备份盘到另一台 Mac 时选择项目根目录；发现 .kocpyproject 后填写操作人，完整核对并确认继承。新继承项目默认归档，原任务摘要单列，不伪造本机整卡或独立副本。没有项目文件的旧文件夹仍可普通转存。",
         "转存通过后在目标项目内的 Kocpy报告 目录生成 PDF 详细报告与高清 PNG 摘要；两份文件都会在发布后重新读取并记录摘要。",
         "开始后在首页或“后台任务”查看扫描、复制、目标回读和报告阶段，以及当前文件、单文件／整体字节、速度、用时与预计剩余时间。",
       ],
@@ -6288,6 +6301,25 @@ function HelpPage({
         "网络中断目标可重试，本地健康目标继续完成。",
         "归档转存是独立记录，不会被当作原素材卷的新备份任务，也不会删除本地源；Kocpy 会显示文件系统和挂载点，但不把任意目录宣称为 NAS。",
         "不要在未验证的公共网络暴露局域网索引。",
+      ],
+      page: "maintenance",
+    },
+    {
+      id: "portable-project",
+      icon: FileCheck2,
+      title: "随盘项目文件、历史补生成与范围修订",
+      purpose: "让另一台 Mac 识别项目依据，并保留有意移除与 NAS 转存的可追溯链路。",
+      steps: [
+        "新项目备份完成后自动汇编已验证任务的原校验值到备份根 .kocpyproject；不为每张卡重读整个历史项目，也不将汇编当作新一次完整复验。占用或异常时后台和任务警告会提示手动补生成。",
+        "历史项目在拍摄项目卡片右上角更多菜单选择“随盘项目文件”，选择备份项目根目录，完整只读核对。原任务、外部 MHL 与当前首次基线分别记录来源，不凭文件夹结构证明历史完整。",
+        "缺失文件只有确属有意移除时才逐项勾选，填写原因、操作人和项目全名，阅读风险并通过重要确认；原记录与 MHL 不改写，新修订不能授权格式化原卡。内容或大小错误、读取失败不能豁免。",
+        "另一台 Mac 在独立归档转存选择此项目根目录，完整核对并确认继承。再次导入同一修订和路径不会重复新增；同身份异名、旧修订、断裂修订链或损坏记录停止，不覆盖本机配置。",
+        "再选目标父目录，填写归档操作人、预检最终路径并开始。转存逐文件独立回读 SHA-256，还核对随盘基线；本机项目详情单列原历史及关联转存，报告保存于目标项目内 Kocpy报告。",
+      ],
+      tips: [
+        "随盘文件不是数字签名或磁盘独立性证明，只含项目元数据、相对路径和校验值，不含素材内容；请仍妥善保护文件名与项目资料。",
+        "当前随盘工具上限20万文件、项目文件64MiB；超限或不支持的清单停止并保留原数据，不截断假装完成。异常锁不自动抢占，请保留诊断后处理。",
+        "修订只确认新的交付范围；原任务、收工风险、原清单与整卡结论仍按原证据保留。需要继续修改旧项目配置时先核对目的地和规则。",
       ],
       page: "maintenance",
     },

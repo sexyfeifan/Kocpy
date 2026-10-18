@@ -24,6 +24,8 @@ const kindLabels: Record<BackgroundActivitySummary["kind"], string> = {
 const phaseLabels: Record<string, string> = {
   scanning: "扫描范围",
   validating: "复核筛选范围",
+  "portable-reading": "只读核对随盘范围",
+  "portable-recording": "汇编原校验证据（非重新校验）",
   hashing: "读取源文件",
   copying: "复制数据",
   publishing: "提交文件",
@@ -83,7 +85,7 @@ function ActivityProgress({ activity }: { activity: BackgroundActivitySummary })
         </span>
         <span>
           {activity.state === "running"
-            ? activity.speedBps ? `${bytes(activity.speedBps)}/s` : "正在计算速度"
+            ? activity.phase === "portable-recording" ? "记录进度，不统计传输速度" : activity.speedBps ? `${bytes(activity.speedBps)}/s` : "正在计算速度"
             : stateLabels[activity.state]}
           {activity.state === "running" && activity.etaSeconds ? ` · 约剩 ${duration(activity.etaSeconds)}` : ""}
         </span>

@@ -1,4 +1,5 @@
 import type { ArchiveScope } from "../../common/interaction";
+import type { PortableProjectFile, PortableProjectInspection } from "../../common/portable-project";
 import type { BackupSelectionPreview, BackupSelectionPlan, BackupSelectionDecision, BackupSelectionProgress } from "../../common/backup-selection";
 import type { OperationRecord } from "../../main/operations";
 import type { BackgroundActivitySummary } from "../../main/background-activities";
@@ -174,6 +175,12 @@ export interface API {
   deleteArchiveReminder(id: string): Promise<boolean>;
   resolveDroppedPaths(files: File[]): string[];
   selectDirectory(defaultPath?: string): Promise<string | null>;
+  discoverPortableProject(root: string): Promise<{ sha256: string; project: PortableProjectFile["project"]; revision: string; provenance: PortableProjectFile["provenance"]; rolls: PortableProjectFile["rolls"]; files: number; exclusions: number } | null>;
+  preparePortableProject(root: string, projectId: string): Promise<PortableProjectInspection & { previewId: string }>;
+  publishPortableProject(input: { previewId: string; operator: string; missing: string[]; reason: string; confirmation: string }): Promise<{ sha256: string; revision: string } | null>;
+  importPortableProject(root: string, expectedSha256: string, operator: string): Promise<{ projectId: string; alreadyImported: boolean } | null>;
+  cancelPortableProject(): Promise<void>;
+  onPortableProgress(callback: (progress: { currentFile: string; files: number; totalFiles: number; bytes: number; totalBytes: number }) => void): () => void;
   validateDirectories(paths: string[]): Promise<string[]>;
   getTasks(): Promise<BackupTask[]>;
   getTask(id: string): Promise<BackupTask>;
@@ -308,12 +315,15 @@ export interface API {
     sourcePath: string;
     destinationParent: string;
     projectId?: string;
+    operator?: string;
   }): Promise<ArchiveTransferPreviewSummary>;
   startArchiveTransfer(input: {
     sourcePath: string;
     destinationParent: string;
     projectId?: string;
     previewDigest: string;
+    portableProjectSha256?: string;
+    operator?: string;
   }): Promise<ArchiveTransferTaskSummary>;
   resumeArchiveTransfer(id: string): Promise<ArchiveTransferTaskSummary>;
   retryArchiveTransferReports(

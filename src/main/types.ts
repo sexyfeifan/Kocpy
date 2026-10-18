@@ -739,6 +739,8 @@ export interface ReliabilityValidationRecord {
 
 export interface ProjectConfig {
   id: string;
+  /** Referenced history only: never counted as a verified card or safe-eject grant. */
+  portableHistory?: import("../common/portable-project").PortableProjectImportRecord[];
   /** Append-only origin of project metadata received from another workstation. */
   workstationSources?: WorkstationSourceEvidence[];
   name: string;

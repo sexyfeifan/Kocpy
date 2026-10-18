@@ -131,6 +131,9 @@ export function ArchiveTransferPanel({
     ),
     [busy, setBusy] = useState<string | null>(null),
     [message, setMessage] = useState(""),
+    [portable, setPortable] = useState<Awaited<ReturnType<typeof api.discoverPortableProject>>>(null),
+    [portableError, setPortableError] = useState(""),
+    [operator, setOperator] = useState(""),
     [completedLimit, setCompletedLimit] = useState(COMPLETED_PAGE_SIZE);
   const reload = useCallback(
     () => api.getArchiveTransfers().then(setTasks),
@@ -142,7 +145,17 @@ export function ArchiveTransferPanel({
       setProgress((current) => ({ ...current, [value.taskId]: value })),
     );
   }, [reload, notify]);
-  useEffect(() => setPreview(null), [sourcePath, destinationParent, projectId]);
+  useEffect(() => setPreview(null), [sourcePath, destinationParent, projectId, operator]);
+  useEffect(() => {
+    let stale = false;
+    setPortable(null); setPortableError("");
+    if (sourcePath) void api.discoverPortableProject(sourcePath).then(value => {
+      if (stale) return;
+      setPortable(value);
+      if (value) setProjectId(projects.some(p => p.id === value.project.id) ? value.project.id : "");
+    }).catch(error => { if (!stale) setPortableError(readableOperationError(error)); });
+    return () => { stale = true; };
+  }, [sourcePath]);
 
   const pick = async (
     current: string,
@@ -217,6 +230,11 @@ export function ArchiveTransferPanel({
             onChoose={() => void pick(sourcePath, setSourcePath)}
             onDrop={(files) => void dropped(files, setSourcePath)}
           />
+          {portableError && <p className="notice error-text path-text" role="alert">随盘项目文件不可用：{portableError}。请先检查项目文件，不会自动绕过损坏的证据。</p>}
+          {portable && <div className="portable-discovery"><strong>已识别随盘项目：{portable.project.name}</strong><p>计划拍摄期 {portable.project.plannedStart || "未记录"} 至 {portable.project.plannedEnd || "未记录"}；{portable.rolls.length} 卷历史摘要；{portable.files} 文件；有意排除 {portable.exclusions} 项。</p><p className="muted small">{portable.provenance === "current-baseline" ? "当前范围首次基线，不证明历史原卡完整。" : "保留原工作站历史，转存结束还需独立核对基线。"} 导入只记录元数据，不复制素材、不新增整卡或独立副本。</p><label>继承项目 / 归档操作人<input value={operator} maxLength={120} disabled={busy !== null} onChange={e => setOperator(e.target.value)} /></label><Button kind="subtle" disabled={busy !== null || !operator.trim()} onClick={() => void run("inherit", async () => {
+            const result = await api.importPortableProject(sourcePath, portable.sha256, operator);
+            if (result) { setProjectId(result.projectId); setMessage(result.alreadyImported ? "本机已继承此修订，没有重复新增" : "项目历史已继承；可在拍摄项目的已归档范围查看，再继续本次转存"); }
+          })}>核对并继承到本机项目记录</Button></div>}
         </div>
         <div className="archive-transfer-step">
           <b>2</b>
@@ -233,6 +251,7 @@ export function ArchiveTransferPanel({
         <div className="archive-transfer-step archive-transfer-plan-step">
           <b>3</b>
           <div className="archive-transfer-plan">
+            {!portable && <label>本次归档操作人<input value={operator} maxLength={120} disabled={busy !== null} onChange={e => setOperator(e.target.value)} /></label>}
             <label>
               关联项目信息（可选，只用于名称、日期和历史证据）
               <select
@@ -251,13 +270,14 @@ export function ArchiveTransferPanel({
             {!preview ? (
               <Button
                 kind="primary"
-                disabled={!sourcePath || !destinationParent || busy !== null}
+                disabled={!sourcePath || !destinationParent || busy !== null || Boolean(portableError) || !operator.trim()}
                 onClick={() =>
                   void run("preview", async () => {
                     const value = await api.previewArchiveTransfer({
                       sourcePath,
                       destinationParent,
                       projectId: projectId || undefined,
+                      operator,
                     });
                     setPreview(value);
                     setMessage("预检完成。请核对实际最终目标后再开始。");
@@ -332,6 +352,8 @@ export function ArchiveTransferPanel({
                           destinationParent,
                           projectId: projectId || undefined,
                           previewDigest: preview.inventory.digest,
+                          portableProjectSha256: preview.portableProjectSha256,
+                          operator,
                         });
                         setPreview(null);
                         const success = result.reportStatus === "completed";

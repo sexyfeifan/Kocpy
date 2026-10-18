@@ -442,6 +442,10 @@ function syntheticArchiveSnapshot(): ArchiveTransferReportSnapshot {
     verificationConclusion: "通过",
     inventoryDigest: syntheticChecksum("archive-inventory"),
     historicalEvidence: [
+      "随盘项目修订 SYNTHETIC-REVISION；摘要 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "依据：原任务记录与当前范围核对；原始整卡完整性仍以原证据为准",
+      "计划拍摄期：2026-09-12 至 2026-09-19；设备：FX3、POCKET、录音机、大夜临时摄影机",
+      "原任务 86 卷；基线 28416 文件；有意排除 3 项；范围修订有操作人和原因记录",
       "所有完整素材卷均保留首次完成校验快照",
       "当日交付属于独立派生范围，不替代完整卡副本",
     ],

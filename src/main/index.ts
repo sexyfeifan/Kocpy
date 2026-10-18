@@ -67,6 +67,7 @@ import { generateMhl, generateAscMhl } from "./backup/ManifestGenerator";
 import { completedBackupCoversAttempt } from "../common/source-scan";
 import { ejectCopyRequirement, qualifiedForEjection } from "./source-eject-policy";
 import { projectReportCsv, projectManifestNames, publishProjectArchive } from "./project-report-artifacts";
+import { assertProjectReportAvailable } from "./portable-project-report";
 import { relinkProxySources } from "./proxy-source-relink";
 import { analyzeBackupSelection, applyBackupSelectionInventory, finalizeBackupSelection, inspectBackupDates, validateBackupSelectionPlan } from "./backup-selection";
 import { selectionRuntimeDependencies } from "./backup-selection-runtime";
@@ -183,6 +184,10 @@ import { projectDates, shootingDateKey } from "../common/shooting-dates";
 import { assertProjectDayDeviceAllowed } from "../common/project-day-devices";
 import { authorizeProjectTaskConfig } from "./project-task-authority";
 import { scopedArchiveTransferContext } from "./archive-transfer-context";
+import { assertPortableRevisionDescends, preparePortableProject, publishPortableProject, readPortableProject, verifyPortablePayload } from "./portable-project";
+import { portableProvenanceText, type PortableProjectImportRecord } from "../common/portable-project";
+import { taskOutputRoots } from "./backup/task-output-root";
+import { sanitizeDiagnosticExport } from "./diagnostic-export";
 import { groupLogicalVolumes } from "../common/logical-volumes";
 import {
   benchmarkDirectory,
@@ -656,6 +661,30 @@ const archiveTransferContext = async (
   projectId?: string,
   sourcePath?: string,
 ): Promise<ArchiveTransferContext | undefined> => {
+  if (!sourcePath) throw new Error("请选择本次归档转存的源目录");
+  const portable = await readPortableProject(sourcePath);
+  if (portable) {
+    if (projectId && portable.document.project.id !== projectId) throw new Error("随盘项目身份与选定项目不一致，请核对后重新选择");
+    const doc = portable.document, actualDates = [...new Set(doc.rolls.flatMap(r => r.dates))].sort();
+    return {
+      projectId: doc.project.id,
+      portableProjectSha256: portable.sha256,
+      archiveName: doc.project.name,
+      archiveNameSource: "project",
+      shootingDate: actualDates.length ? `${actualDates[0]} 至 ${actualDates.at(-1)}` : undefined,
+      historicalEvidence: [
+        `随盘项目修订 ${doc.revision}；摘要 ${portable.sha256}`,
+        `依据：${portableProvenanceText(doc.provenance)}`,
+        `项目文件生成方式：${doc.verification === "recorded-hashes" ? "汇编原校验值，不代表生成时重新读取整个项目" : "生成时完整读取；历史状态不代替本次目标回读"}`,
+        `计划拍摄期：${doc.project.plannedStart || "未记录"} 至 ${doc.project.plannedEnd || "未记录"}；设备：${[...new Set([...doc.project.devices, ...doc.rolls.flatMap(r => r.devices)])].join("、") || "未记录"}`,
+        `原任务 ${doc.rolls.length} 卷；基线 ${doc.files.length} 文件；有意排除 ${doc.exclusions.length} 项。历史摘要不计为本机卡片或独立副本。`,
+        ...doc.exclusions.slice(0, 30).map(e => `有意移除：${e.path}；${e.operator}；${e.reason}`),
+        ...(doc.exclusions.length > 30 ? ["报告明细仅展示前30项有意移除；完整路径与修订记录保留在随盘项目文件中。"] : []),
+        ...doc.rolls.filter(r => r.status !== "completed").slice(0, 30).map(r => `历史风险：${r.name} 原状态 ${r.status}；本次转存不消除原任务风险。`),
+        "本次转存完成前还会逐文件核对随盘基线；不改写 A 机原始历史或原清单。",
+      ],
+    };
+  }
   if (!projectId) return undefined;
   const project = (await readProjects()).find((item) => item.id === projectId);
   if (!project) throw new Error("关联项目不存在，请重新选择");
@@ -669,6 +698,11 @@ const archiveTransferContext = async (
     )).filter((root): root is string => Boolean(root)) : [];
   return scopedArchiveTransferContext(project, engine.getAllTasks(), source, roots);
 };
+async function archiveTransferRequestContext(input: { sourcePath: string; projectId?: string; operator?: string }): Promise<ArchiveTransferContext> {
+  if (input.operator !== undefined && (typeof input.operator !== "string" || !input.operator.trim() || input.operator.length > 120 || /[\x00-\x1f]/.test(input.operator))) throw new Error("请填写实际归档操作人（最多120字）");
+  const context = await archiveTransferContext(input.projectId, input.sourcePath) || { archiveName: "", archiveNameSource: "folder" as const, historicalEvidence: [] };
+  return { ...context, historicalEvidence: [`本次归档操作人：${input.operator?.trim() || "未记录"}`, ...context.historicalEvidence] };
+}
 const writeProjects = (projects: ProjectConfig[]) =>
   workspace
     .commitProjects(projects, true)
@@ -839,6 +873,9 @@ async function assertDiagnosticTarget(directory: string) {
   return true;
 }
 const maintenanceNames: Record<string, string> = {
+  "portable:prepare": "只读核对随盘项目基线",
+  "portable:publish": "保存随盘项目修订",
+  "portable:import": "继承随盘项目历史",
   "existing:import": "接管素材",
   "existing:import-scope": "批量接管",
   "existing:reanalyze-project": "刷新接管记录",
@@ -913,6 +950,57 @@ function emitExistingProgress(progress: any) {
 }
 const selectionPreviews = new Map<string, BackupSelectionPreview>();
 const selectionPlans = new Map<string, BackupSelectionPlan>();
+const portablePreviews = new Map<string, Awaited<ReturnType<typeof preparePortableProject>>>();
+let portableController: AbortController | undefined;
+function portableOptions(recording = false, projectId?: string) {
+  let previous = 0;
+  return { signal: portableController?.signal, progress: (p: import("./portable-project").PortableProgress) => {
+    if (Date.now() - previous < 150 && p.files !== p.totalFiles) return;
+    previous = Date.now();
+    operations.progress({ phase: recording ? "portable-recording" : "portable-reading", projectId, currentFile: p.currentFile, completedFiles: p.files, totalFiles: p.totalFiles, completedBytes: p.bytes, totalBytes: p.totalBytes });
+    if (main && !main.isDestroyed()) main.webContents.send("portable:progress", p);
+  } };
+}
+async function assertPortableWriteRoot(root: string) {
+  const real = await canonical(root);
+  for (const task of engine.getAllTasks()) {
+    const source = await canonical(task.sourcePath).catch(() => path.resolve(task.sourcePath));
+    if (inside(real, source) || inside(source, real) || source === real) throw new Error("此目录与已记录的素材源重叠，不能写入随盘项目文件；请选择备份项目根目录");
+  }
+  return real;
+}
+async function portableRootAuthorization(root: string, expected?: import("./types").Destination) {
+  const identity = await volumeIdentity(root);
+  if (expected) assertVolumeIdentity(expected.volumeUuid, expected.volumeId, identity, "随盘项目目标 ");
+  return async (currentRoot: string) => assertVolumeIdentity(identity.uuid, identity.id, await volumeIdentity(currentRoot), "随盘项目目标 ");
+}
+async function autoPublishPortableProject(task: BackupTask) {
+  if (!task.projectId || engine.hasActive() || proxyBusy || commandInFlight || operations.active) {
+    if (task.projectId) throw new Error("其他任务正在运行，随盘项目文件待更新；完成后在项目菜单手动核对并补生成");
+    return;
+  }
+  const project = (await readProjects()).find(p => p.id === task.projectId);
+  if (!project?.projectFolderName) return;
+  const projectFolderName = project.projectFolderName;
+  await operations.run("更新随盘项目文件（汇编既有校验值）", async () => {
+    if (engine.hasActive() || proxyBusy || commandInFlight) throw new Error("传输已开始，随盘记录暂缓；请待传输结束后手动核对补生成");
+    portableController = new AbortController();
+    try {
+      let published = 0;
+      for (const destination of project.destinationPaths || []) {
+        const root = await canonical(path.join(destination, projectFolderName));
+        if (!taskOutputRoots(task).some(p => p === root || p.startsWith(`${root}${path.sep}`))) continue;
+        await assertPortableWriteRoot(root);
+        const originalDestination = task.destinations.find(d => d.resolvedPath && inside(d.resolvedPath, root));
+        if (!originalDestination?.verified) throw new Error("项目目标缺少本次已验证的卷身份，不能自动写入随盘记录");
+        const prepared = await preparePortableProject(root, project, engine.getAllTasks(), { ...portableOptions(true, project.id), recordedHashesOnly: true, authorizeRoot: await portableRootAuthorization(root, originalDestination) });
+        await publishPortableProject(prepared, "Kocpy 自动记录", [], "", portableOptions());
+        published++;
+      }
+      if (!published) throw new Error("未找到与本次冻结目标一致的当前项目根；请在项目菜单选择实际历史备份根补生成，不会擅自改用新项目路径");
+    } finally { portableController = undefined; }
+  });
+}
 let selectionController: AbortController | undefined;
 function rememberSelection<T extends { id: string }>(cache: Map<string, T>, value: T) {
   while (cache.size >= 8) cache.delete(cache.keys().next().value!);
@@ -953,7 +1041,7 @@ function handle(name: string, fn: (...args: any[]) => any) {
         return await fn(...args);
       } finally {
         if (guarded) commandInFlight--;
-        if (changeChannels.test(name) && main && !main.isDestroyed())
+        if ((changeChannels.test(name) || /^(portable:(publish|import)|archive-transfer:(start|resume|retry-reports))$/.test(name)) && main && !main.isDestroyed())
           main.webContents.send("workspace:changed");
         if (maintenanceNames[name]) void processProxyQueue();
       }
@@ -2172,6 +2260,57 @@ app.whenReady().then(async () => {
       }),
     );
   });
+  handle("portable:cancel", () => { portableController?.abort(); });
+  handle("portable:discover", async (root: string) => {
+    const current = await readPortableProject(root);
+    return current ? { sha256: current.sha256, project: current.document.project, revision: current.document.revision, provenance: current.document.provenance, rolls: current.document.rolls, files: current.document.files.length, exclusions: current.document.exclusions.length } : null;
+  });
+  handle("portable:prepare", async (root: string, projectId: string) => {
+    const project = (await readProjects()).find(p => p.id === projectId);
+    if (!project) throw new Error("请先选择项目，或接管历史文件夹后补生成");
+    await assertPortableWriteRoot(root);
+    portableController = new AbortController();
+    try {
+      const prepared = await preparePortableProject(root, project, engine.getAllTasks(), { ...portableOptions(false, project.id), authorizeRoot: await portableRootAuthorization(root) });
+      while (portablePreviews.size >= 3) portablePreviews.delete(portablePreviews.keys().next().value!);
+      const id = randomUUID(); portablePreviews.set(id, prepared);
+      return { ...prepared.inspection, previewId: id };
+    } finally { portableController = undefined; }
+  });
+  handle("portable:publish", async (input: { previewId: string; operator: string; missing: string[]; reason: string; confirmation: string }) => {
+    const prepared = portablePreviews.get(input?.previewId);
+    if (!prepared) throw new Error("预览已失效，请重新核对");
+    if (input.confirmation !== prepared.document.project.name) throw new Error("请准确输入项目名称确认操作范围");
+    await assertPortableWriteRoot(prepared.bound.root);
+    if (!(await confirmOperation(input.missing?.length ? "确认这些文件是有意移除，而非意外丢失？" : "保存此项目的随盘校验记录？", `${prepared.document.project.name}\n${prepared.bound.root}\n缺失确认 ${input.missing?.length || 0} 项。只追加 Kocpy 范围修订；保留原记录，不修改源卡、原 MHL 或历史报告。新基线不证明原始整卡齐全，不能作为格式化原卡的依据。`))) return null;
+    const result = await publishPortableProject(prepared, input.operator, input.missing, input.reason);
+    portablePreviews.delete(input.previewId);
+    return { sha256: result.sha256, revision: result.document.revision };
+  });
+  handle("portable:import", async (root: string, expectedSha256: string, operator: string) => {
+    if (typeof operator !== "string" || !operator.trim() || operator.length > 120) throw new Error("请填写实际操作人（最多120字）");
+    portableController = new AbortController();
+    try {
+      const current = await verifyPortablePayload(root, expectedSha256, portableOptions()), doc = current.document;
+      const canonicalRoot = await canonical(root);
+      const projects = await readProjects(), existing = projects.find(p => p.id === doc.project.id);
+      if (existing?.name !== undefined && existing.name !== doc.project.name) throw new Error("同一项目身份的名称已不同，请通过工作站合并流程明确处理冲突，未覆盖本地项目");
+      if (existing?.portableHistory?.some(r => r.sha256 === current.sha256 && r.root === canonicalRoot)) return { projectId: existing.id, alreadyImported: true };
+      const latest = existing?.portableHistory?.at(-1);
+      if (latest) await assertPortableRevisionDescends(root, current, latest.sha256);
+      if ((existing?.portableHistory?.length || 0) >= 1000) throw new Error("项目继承修订超过上限，请先导出并整理历史");
+      const safeName = segment(doc.project.name);
+      if (safeName !== doc.project.name || doc.project.devices.length > 10 || doc.project.devices.some(d => segment(d) !== d)) throw new Error("项目名称/设备不能安全用于本机目录规则，请使用工作站合并流程处理");
+      if (!(await confirmOperation("将随盘项目历史继承到本机？", `${doc.project.name}\n项目身份 ${doc.project.id}\n历史 ${doc.rolls.length} 卷；当前 ${doc.files.length} 文件；有意排除 ${doc.exclusions.length} 项。\n历史摘要独立保存，不伪造本机传输任务、整卡校验或物理独立副本。新继承项目默认归档；不会自动创建日期/设备目录。`))) return null;
+      if ((await readPortableProject(root))?.sha256 !== current.sha256) throw new Error("确认期间项目文件已变化，请重新导入");
+      const record: PortableProjectImportRecord = { id: randomUUID(), projectId: doc.project.id, sha256: current.sha256, revision: doc.revision, root: await canonical(root), operator: operator.trim(), importedAt: Date.now(), project: doc.project, rolls: doc.rolls, provenance: doc.provenance, files: doc.files.length, bytes: doc.files.reduce((n, f) => n + (f.size || 0), 0), exclusions: doc.exclusions.length };
+      if (Buffer.byteLength(JSON.stringify([...(existing?.portableHistory || []), record])) > 32 * 1024 * 1024) throw new Error("本项目继承历史超过32MiB本地安全上限，未丢弃旧记录；请保留随盘文件并分项目处理");
+      const project: ProjectConfig = existing ? { ...existing, portableHistory: [...(existing.portableHistory || []), record] } : { id: doc.project.id, name: safeName, devices: doc.project.devices.length ? doc.project.devices : ["待确认设备"], volumePrefix: "CARD_", projectFolderName: path.basename(record.root), shootingDateStart: doc.project.plannedStart, shootingDateEnd: doc.project.plannedEnd, status: "archived", directoryCreationMode: "lazy", destinationPaths: [], createdAt: Date.now(), portableHistory: [record] };
+      await writeProjects(existing ? projects.map(p => p.id === project.id ? project : p) : [...projects, project]);
+      if (main && !main.isDestroyed()) main.webContents.send("workspace:changed");
+      return { projectId: project.id, alreadyImported: false };
+    } finally { portableController = undefined; }
+  });
   handle("archive-transfer:list", () =>
     archiveTransferManager.summaries(),
   );
@@ -2181,13 +2320,14 @@ app.whenReady().then(async () => {
       sourcePath: string;
       destinationParent: string;
       projectId?: string;
+      operator?: string;
     }) => {
       if (!input || typeof input !== "object")
         throw new Error("归档转存参数无效");
       const preview = await archiveTransferManager.preview(
           input.sourcePath,
           input.destinationParent,
-          await archiveTransferContext(input.projectId, input.sourcePath),
+          await archiveTransferRequestContext(input),
         ),
         { files: _files, directories: _directories, emptyDirectories, ...inventory } =
           preview.inventory;
@@ -2207,21 +2347,23 @@ app.whenReady().then(async () => {
       destinationParent: string;
       projectId?: string;
       previewDigest: string;
+      portableProjectSha256?: string;
+      operator?: string;
     }) => {
       if (!input?.previewDigest) throw new Error("请先完成源与目标预检");
       const context =
-          (await archiveTransferContext(input.projectId, input.sourcePath)) ||
-          ({
-            archiveName: "",
-            archiveNameSource: "folder",
-            historicalEvidence: [],
-          } satisfies ArchiveTransferContext),
-        task = await archiveTransferManager.start({
+          await archiveTransferRequestContext(input),
+        task = await (async () => {
+          if (context.portableProjectSha256 !== input.portableProjectSha256) throw new Error("随盘项目记录在预检后变化，请重新预检");
+          if (context.portableProjectSha256 && !(await readProjects()).some(p => p.id === context.projectId)) throw new Error("请先在源文件夹下方核对并继承随盘项目到本机，再开始转存");
+          if (context.portableProjectSha256) await verifyPortablePayload(input.sourcePath, context.portableProjectSha256);
+          return archiveTransferManager.start({
           sourcePath: input.sourcePath,
           destinationParent: input.destinationParent,
           previewDigest: input.previewDigest,
           context,
-        });
+          });
+        })();
       return summarizeArchiveTransfer(task);
     },
   );
@@ -3094,7 +3236,7 @@ app.whenReady().then(async () => {
     if (!result.filePath) return null;
     await fs.writeFile(
       result.filePath,
-      JSON.stringify(await diagnosticSnapshot(), null, 2),
+      JSON.stringify(sanitizeDiagnosticExport(await diagnosticSnapshot()), null, 2),
       "utf8",
     );
     return result.filePath;
@@ -6729,7 +6871,7 @@ app.whenReady().then(async () => {
       const tasks = engine
         .getAllTasks()
         .filter((task) => task.projectId === projectId);
-      if (!tasks.length) throw new Error("当前项目还没有可导出的备份记录");
+      assertProjectReportAvailable(project, tasks.length, format);
       const csv = () => projectReportCsv(project, tasks);
       if (format === "bundle") {
         const unsafe = tasks.filter(
@@ -7342,6 +7484,14 @@ app.whenReady().then(async () => {
             main.webContents.send("workspace:changed");
           if (task.status === "completed")
             await enqueueAutomaticReport(task);
+          if (task.status === "completed" && task.projectId && context?.kind !== "reverify") {
+            try { await autoPublishPortableProject(task); }
+            catch (error) {
+              task.faultTimeline = [...(task.faultTimeline || []), { at: Date.now(), phase: "portable-project", level: "warning", message: `素材校验事实不变，随盘项目文件未更新：${String(error)}。请在项目菜单“随盘项目文件”核对并补生成。` }];
+              task.volumeWarnings = [...(task.volumeWarnings || []), "随盘项目文件待更新：项目菜单可手动核对并补生成；不要将旧基线作为本次完整交接凭据。"];
+              await persist(true);
+            }
+          }
           if (!engine.hasActive() && backupStartPending === 0) {
             const resumed = resumeBackupPausedProxyJobs(proxyJobs);
             if (resumed) {

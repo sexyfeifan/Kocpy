@@ -37,6 +37,7 @@ const evidenceFields = [
   "checklistRuns",
   "takeoverEvents",
   "workstationSources",
+  "portableHistory",
 ] as const;
 type EvidenceField = (typeof evidenceFields)[number];
 

@@ -86,12 +86,14 @@ jobs:
           npx esbuild scripts/verify-archive-evidence.ts --bundle --platform=node --format=cjs --outfile=work/verify-archive-evidence.cjs
           npx esbuild scripts/verify-completion-automation.ts --bundle --platform=node --format=cjs --outfile=work/verify-completion-automation.cjs
           npx esbuild scripts/verify-workstation-exchange.ts --bundle --platform=node --format=cjs --outfile=work/verify-workstation-exchange.cjs
+          npx esbuild scripts/verify-portable-project.ts --bundle --platform=node --format=cjs --outfile=work/verify-portable-project.cjs
           "release/${{ matrix.appdir }}/Kocpy.app/Contents/MacOS/Kocpy" work/verify-transfer-runtime.cjs
           "release/${{ matrix.appdir }}/Kocpy.app/Contents/MacOS/Kocpy" work/verify-media-features.cjs
           "release/${{ matrix.appdir }}/Kocpy.app/Contents/MacOS/Kocpy" work/verify-proxy-delivery.cjs
           "release/${{ matrix.appdir }}/Kocpy.app/Contents/MacOS/Kocpy" work/verify-archive-evidence.cjs
           "release/${{ matrix.appdir }}/Kocpy.app/Contents/MacOS/Kocpy" work/verify-completion-automation.cjs
           "release/${{ matrix.appdir }}/Kocpy.app/Contents/MacOS/Kocpy" work/verify-workstation-exchange.cjs
+          "release/${{ matrix.appdir }}/Kocpy.app/Contents/MacOS/Kocpy" work/verify-portable-project.cjs
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: Kocpy-${{ matrix.arch }}

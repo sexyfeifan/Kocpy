@@ -116,7 +116,9 @@ export function buildArchiveTransferSummaryHtml(
   artifactReportId: string,
 ) {
   const data = archiveTransferReportContract(snapshot, artifactReportId),
-    digest = archiveTransferContractDigest(data);
+    digest = archiveTransferContractDigest(data),
+    briefLines = snapshot.historicalEvidence.filter(s => /归档操作人|计划拍摄期|原任务 .*卷|依据：/.test(s)),
+    historicalBrief = (briefLines.length ? briefLines : snapshot.historicalEvidence.slice(0, 4)).join("；").slice(0, 480);
   return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><style>${baseStyle}
     html,body{width:1920px;height:1080px;overflow:hidden}.sheet{width:1920px;height:1080px;padding:76px 86px;background:linear-gradient(145deg,#faf8f1 0%,#fff 55%,#edf4ee 100%)}.hero{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #1e2427;padding-bottom:30px}.eyebrow{font-size:18px}h1{font-size:62px;margin-top:15px}.subtitle{font-size:23px}.result{font-size:25px;padding:15px 22px}.dot{width:13px;height:13px}.grid.summary{grid-template-columns:repeat(4,1fr);margin-top:34px;gap:18px}.card{padding:22px;border-radius:18px}.label{font-size:14px}.value{font-size:25px}.paths{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:18px}.paths .value{font-size:17px;line-height:1.55}.section{margin-top:26px}.section h2{font-size:19px}.notice{font-size:17px;line-height:1.5}.footer{position:absolute;left:86px;right:86px;bottom:50px;font-size:14px}
   </style></head><body><main class="sheet" data-report-kind="summary" data-contract-digest="${digest}" data-contract="${contractMeta(data)}">
@@ -124,6 +126,7 @@ export function buildArchiveTransferSummaryHtml(
     <section class="grid summary">${field("文件数", data.payloadFileCount)}${field("精确字节", data.payloadBytes)}${field("容量", data.payloadHumanBytes)}${field("报告 ID", data.artifactReportId, true)}</section>
     <section class="paths">${field("源", data.sourcePath, true)}${field("实际最终归档目标", data.finalPath, true)}</section>
     <section class="section"><h2>时间与范围</h2><div class="notice">开始 ${escapeHtml(data.startedAt)}　完成 ${escapeHtml(data.completedAt)}　空目录 ${escapeHtml(data.payloadEmptyDirectories)}<br>${escapeHtml(data.evidenceBoundary)}</div></section>
+    <section class="section" style="margin-top:16px"><h2>项目依据与范围修订 · 完整明细见 PDF / 随盘项目文件</h2><div style="font-size:14px;line-height:1.45;overflow-wrap:anywhere">${escapeHtml(historicalBrief || "没有可继承的历史项目证据；只证明本次源范围与目标一致。")}</div></section>
     <footer class="footer"><span>任务 ${escapeHtml(data.transferId)}</span><span>范围快照 ${escapeHtml(data.inventoryDigest)}</span><span>合同 ${digest}</span></footer>
   </main></body></html>`;
 }

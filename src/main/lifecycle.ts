@@ -13,6 +13,7 @@ import type {
 } from "./types";
 import type { WorkspaceTombstone } from "./workspace-contract";
 import { validateCompletionActionRecords } from "./completion-automation";
+import { validatePortableHistory } from "../common/portable-project";
 
 const taskStatuses = new Set([
   "pending",
@@ -297,6 +298,10 @@ export function validateWorkspacePackage(value: unknown) {
   uniqueIds(archiveRuns, "归档核验运行");
   validateTemplates(templates);
   for (const item of projects) {
+    if (item.portableHistory !== undefined) {
+      validatePortableHistory(item.portableHistory);
+      if (item.portableHistory.some((r: import("../common/portable-project").PortableProjectImportRecord) => r.projectId !== item.id)) throw new Error("随盘历史不属于该项目身份");
+    }
     if (
       !plainObject(item) ||
       !Array.isArray(item.devices) ||
