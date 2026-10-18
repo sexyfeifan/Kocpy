@@ -1,10 +1,10 @@
 # Kocpy 文档导航
 
-当前版本说明：**0.1.49**。本目录说明已经实现的功能、操作方法和验证边界；正式安装包与公开状态以 GitHub Release 为准。[返回项目首页](../README.md) · [下载正式版](https://github.com/sexyfeifan/Kocpy/releases/latest)
+当前正式版：**0.1.50**。本目录说明已经实现的功能、操作方法和验证边界；正式安装包与公开状态以 GitHub Release 为准。[返回项目首页](../README.md) · [下载正式版](https://github.com/sexyfeifan/Kocpy/releases/latest)
 
-本次改动摘要见[发布状态与改动](CHANGES_UNRELEASED.md)，具体功能见[0.1.49 更新说明](RELEASE_NOTES_0.1.49.md)。版本文字、源码提交或草稿不代表已公开安装包或最终包验收完成。
+本次改动摘要见[发布状态与改动](CHANGES_UNRELEASED.md)，具体功能见[0.1.50 更新说明](RELEASE_NOTES_0.1.50.md)。准确安装包及各架构、模拟／实机边界见[验证记录](VERIFICATION.md)。
 
-正在验证的源码改进见[0.1.50 拍摄日与大夜流程](RELEASE_NOTES_0.1.50.md)；逐环节结论见[项目备份流程审阅](PROJECT_WORKFLOW_REVIEW.md)。这两个页面不表示 0.1.50 安装包已公开。
+本版新增随盘项目文件、历史补生成、范围修订与跨 Mac 归档，同时修正拍摄日、大夜与界面流程；逐环节结论见[项目备份流程审阅](PROJECT_WORKFLOW_REVIEW.md)。不凭一次回归声明所有真实硬件或现场流程通过。
 
 ## 使用 Kocpy
 

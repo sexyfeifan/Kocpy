@@ -6,9 +6,9 @@
 
 <p align="center"><a href="#中文">中文</a> · <a href="#english">English</a> · <a href="#日本語">日本語</a></p>
 
-当前版本说明：**0.1.49** · [下载](https://github.com/sexyfeifan/Kocpy/releases/latest) · [使用手册](docs/USER_GUIDE.md) · [文档导航](docs/README.md) · [0.1.49 更新](docs/RELEASE_NOTES_0.1.49.md)。正式安装包与公开状态以 GitHub Release 为准；源码和文档更新不表示附件已经发布或完成验收。
+当前正式版：**0.1.50** · [下载](https://github.com/sexyfeifan/Kocpy/releases/tag/v0.1.50) · [使用手册](docs/USER_GUIDE.md) · [文档导航](docs/README.md) · [0.1.50 更新](docs/RELEASE_NOTES_0.1.50.md)。准确安装包与验证边界见同版 Release 和[验证记录](docs/VERIFICATION.md)。
 
-**0.1.50 源码改进正在验证**：随盘项目文件与历史补生成、携盘到另一台 Mac 继承项目并转存 NAS、有意移除的逐项范围修订，以及大夜日期、临时设备、实时反馈、界面与数据安全修正。见[候选改动](docs/RELEASE_NOTES_0.1.50.md)、[随盘项目使用流程](docs/USER_GUIDE.md#16-随盘项目文件与携盘到另一台-mac)和[流程审阅](docs/PROJECT_WORKFLOW_REVIEW.md)；安装请以正式 Release 为准。
+**0.1.50 更新**：随盘项目文件与历史补生成、携盘到另一台 Mac 继承项目并转存 NAS、有意移除的逐项范围修订，以及大夜日期、临时设备、实时反馈、界面与数据安全修正。见[完整改动](docs/RELEASE_NOTES_0.1.50.md)、[随盘项目使用流程](docs/USER_GUIDE.md#16-随盘项目文件与携盘到另一台-mac)和[流程审阅](docs/PROJECT_WORKFLOW_REVIEW.md)。继承历史不伪造本机整卡或独立副本；新的范围修订不改写原 MHL 和原任务。
 
 ![Kocpy 工作台](docs/screenshots/dashboard.png)
 
@@ -18,12 +18,12 @@
 
 ### 下载与安装
 
-| 你的 Mac | 0.1.49 安装包（以同版 Release 已公开附件为准） |
+| 你的 Mac | 0.1.50 安装包 |
 | --- | --- |
-| Apple Silicon（M 系列） | [下载 arm64 DMG](https://github.com/sexyfeifan/Kocpy/releases/download/v0.1.49/Kocpy-0.1.49-arm64.dmg) |
-| Intel | [下载 x64 DMG](https://github.com/sexyfeifan/Kocpy/releases/download/v0.1.49/Kocpy-0.1.49-x64.dmg) |
+| Apple Silicon（M 系列） | [下载 arm64 DMG](https://github.com/sexyfeifan/Kocpy/releases/download/v0.1.50/Kocpy-0.1.50-arm64.dmg) |
+| Intel | [下载 x64 DMG](https://github.com/sexyfeifan/Kocpy/releases/download/v0.1.50/Kocpy-0.1.50-x64.dmg) |
 
-下载后先核对同一 Release 的 [SHA256SUMS.txt](https://github.com/sexyfeifan/Kocpy/releases/download/v0.1.49/SHA256SUMS.txt)，再打开 DMG，将 Kocpy 拖入“应用程序”。候选包不能用其摘要校验正式附件。
+下载后先核对同一 Release 的 [SHA256SUMS.txt](https://github.com/sexyfeifan/Kocpy/releases/download/v0.1.50/SHA256SUMS.txt)，正常退出旧版，再打开 DMG，将 Kocpy 拖入“应用程序”。不要在传输／校验进行中替换应用。
 
 软件内“检查更新”打开与你的 Mac 架构匹配的官方 DMG 下载链接；下载并核对摘要后，正常退出 Kocpy，手动替换“应用程序”中的旧 App，再启动确认版本。
 
@@ -87,19 +87,19 @@
 
 普通备份按只读原则处理素材源。修复副本、修订 MHL 等维护写入必须经过明确确认；MHL 修订保留原始清单与审计，不删除素材，也不允许豁免大小或哈希异常。删除项目只清理 Kocpy 内部记录，不删除磁盘素材、报告或清单。
 
-### 0.1.49 更新重点
+### 0.1.50 更新重点
 
-1. **界面留白与控件边界**：项目卡片、表单、操作区和长路径按可用宽度换行，减少贴边、拥挤和重叠；侧栏文字与图标保持原尺寸。
-2. **当日设备直接加入备份**：在拍摄日选择日期、名称、可选机位和操作人；保存后选中本次设备，不影响其他日期。取消备份不会悄悄删除已保存的日计划。
-3. **混合日期先检查再选择**：默认仍整卡备份；日期只是线索，用户核对并确认后才形成选定范围。未知／共享文件、不可拆摄影机包以及关联不明确的独立录音保守保留。
-4. **范围证据可追溯**：记录操作人、包含／排除文件、日期归属与历史依据；开始前和完成前复核源范围。内容已验证、整卡完整与物理独立副本达标继续分开判断。
-5. **整卡后交付更保守**：与拷贝前筛选共用关联文件分组，保留未确认归属；部分范围任务不能伪装成整卡再次生成每日交付。
+1. **随盘项目与跨 Mac 归档**：项目备份根生成 `.kocpyproject`；历史项目可完整核对后补生成。另一台 Mac 核对后继承参考历史，再独立转存与回读 NAS，并记录 PDF／PNG。
+2. **有意缺失的明确范围修订**：逐项选择、原因、操作人、项目名和重要确认；保留旧证据，不修改源素材、原 MHL 或原任务完整性结论，内容／大小异常不能豁免。
+3. **大夜与临时设备**：临时设备可加入明确的历史／未来拍摄日，不扩散到其他日期，不预建空目录；跨零点不自动切换拍摄归属日。
+4. **范围反馈与下游安全**：筛选任务先登记再启动，复核进度独立显示；收工、推出、报告与归档使用冻结范围和规则，不把子目录成功冒充整卡成功。
+5. **界面与报告一致性**：详情统计统一留白，后台卡片分隔、长路径完整换行；按日报告跟随人工确认归属，归档清单使用完整身份并独占发布。
 
-[完整更新说明](docs/RELEASE_NOTES_0.1.49.md) · [历史正式发布](https://github.com/sexyfeifan/Kocpy/releases)
+[完整更新说明](docs/RELEASE_NOTES_0.1.50.md) · [历史正式发布](https://github.com/sexyfeifan/Kocpy/releases)
 
 ### 验证范围与已知限制
 
-0.1.49 的自动测试、架构、准确安装包与桌面验收范围，以[验证记录](docs/VERIFICATION.md)和同版公开 Release 为准。历史或开发版本通过的检查不会自动计作本版正式附件通过；未执行项目保持明确标注。
+0.1.50 双原生架构流水线各925项通过、4项条件跳过，准确附件与本机实际界面已验收；具体范围以[验证记录](docs/VERIFICATION.md)和同版公开 Release 为准。历史或开发版本通过的检查不会自动计作本版硬件认证；未执行项目保持明确标注。
 
 - 没有 Developer ID／Apple 公证，不宣称通过 App Store 审核。
 - 原生 Apple Silicon、Rosetta 与原生 Intel 分开记录；候选成功不等同于正式附件通过，准确附件摘要与回下载核验见[验证记录](docs/VERIFICATION.md)。
@@ -161,7 +161,7 @@ Current features also include recovery, media relinking, evidence-backed H.264/P
 
 [Download](https://github.com/sexyfeifan/Kocpy/releases/latest) · [Installation](docs/INSTALLATION.md) · [Guide (Chinese)](docs/USER_GUIDE.md) · [Verification scope](docs/VERIFICATION.md)
 
-Use the 0.1.49 Release's separate arm64 or x64 installer and matching `SHA256SUMS.txt` once publicly available; code and documentation do not establish publication or final-artifact acceptance. The update command opens the matching DMG download, after which you quit Kocpy and replace the installed App manually. Packages use ad-hoc signing, **not Developer ID signing or Apple notarization**. Automated tests and historical hardware results are not certification for every storage setup; real NAS/SMB and physical two-disk results require their own recorded evidence.
+Version **0.1.50** adds portable project evidence, historical backfill, explicitly audited intentional omissions and verified archive transfer on another Mac. Imported history never invents local card-copy or physical-independence evidence; original tasks and manifests stay unchanged. Use the published 0.1.50 Release's separate arm64 or x64 installer and matching `SHA256SUMS.txt`. Quit Kocpy before replacing the installed App manually. Packages use ad-hoc signing, **not Developer ID signing or Apple notarization**. Automated tests and same-volume workstation simulations are not real NAS/SMB, second-Mac or physical two-disk certification.
 
 ## 日本語
 
@@ -173,7 +173,7 @@ Kocpy は macOS 向けのローカル優先メディアバックアップ／プ�
 
 [ダウンロード](https://github.com/sexyfeifan/Kocpy/releases/latest) · [インストール（中国語）](docs/INSTALLATION.md) · [使用手冊（中国語）](docs/USER_GUIDE.md) · [検証範囲](docs/VERIFICATION.md)
 
-0.1.49 Release が公開された後、Apple Silicon／Intel 用インストーラと同版の `SHA256SUMS.txt` を使用してください。ソースや文書の更新だけでは公開・最終パッケージ検証の完了を意味しません。更新操作は適切な DMG のダウンロードを開き、終了後にインストール済み App を手動で置き換えます。現在は ad-hoc 署名のみで、**Developer ID 署名・Apple 公証はありません**。自動テストをあらゆる実機構成の検証とみなさないでください。実 NAS／SMB や物理的に独立した二台の結果には、それぞれの記録が必要です。
+**0.1.50** は随盤プロジェクト記録、過去プロジェクトへの補完、意図的な欠落の監査付き範囲改訂、別 Mac での検証付きアーカイブ転送を追加します。取り込んだ履歴でローカルのカードコピーや独立性を捏造せず、元タスクと MHL を変更しません。公開済み0.1.50のApple Silicon／Intel用インストーラと同版 `SHA256SUMS.txt` を使用し、終了後にAppを手動で置き換えてください。現在は ad-hoc 署名のみで、**Developer ID 署名・Apple 公証はありません**。同一ディスク上の模擬検証を実NAS／別Mac／独立した二台の検証とみなさないでください。
 
 ## License
 
