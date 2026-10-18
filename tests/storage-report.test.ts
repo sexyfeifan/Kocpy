@@ -22,6 +22,7 @@ import {
   verifiedPhysicalCopyCount,
 } from "../src/main/project-closeout";
 import { APP_VERSION } from "../src/common/version";
+import { formatEvidenceTime } from "../src/common/time-context";
 import type { BackupTask } from "../src/main/types";
 
 function freezeManifestFixture(task: BackupTask, directories: string[] = []) {
@@ -106,7 +107,7 @@ describe("Persistence and reports", () => {
       second = await generateReport(t, { generatedAt });
     expect(first).toEqual(second);
     expect(first.toString()).toContain(
-      new Date(generatedAt).toLocaleString("zh-CN"),
+      formatEvidenceTime(generatedAt, t.timeContext),
     );
   });
   it("embeds the matching media thumbnail in the PDF report HTML", async () => {

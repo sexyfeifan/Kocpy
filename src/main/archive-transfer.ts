@@ -4,6 +4,7 @@ import { createHash, randomUUID } from "node:crypto";
 import type { VolumeIdentity } from "../common/volume-identity";
 import { publishNewArtifact } from "./completion-automation";
 import { verifyPortablePayload } from "./portable-project";
+import { captureTimeContext, validTimeContext, type TimeContext } from "../common/time-context";
 
 export type ArchiveTransferStatus =
   | "ready"
@@ -47,6 +48,7 @@ export interface ArchiveTransferInventory {
 }
 
 export interface ArchiveTransferContext {
+  timeContext?: TimeContext;
   projectId?: string;
   /** Frozen baseline identity. Referenced history never grants whole-card/eject trust. */
   portableProjectSha256?: string;
@@ -70,6 +72,7 @@ export interface ArchiveTransferPreview extends ArchiveTransferContext {
 }
 
 export interface ArchiveTransferReportSnapshot {
+  timeContext?: TimeContext;
   schemaVersion: 1;
   reportId: string;
   transferId: string;
@@ -563,6 +566,7 @@ function validateNormalizedArchiveTransferTasks(
     if (
       !task ||
       task.schemaVersion !== 1 ||
+      (task.timeContext !== undefined && !validTimeContext(task.timeContext)) ||
       (legacy !== undefined &&
         (legacy.sourceVersion !== "0.1.36" ||
           !Number.isFinite(legacy.migratedAt) ||
@@ -768,6 +772,8 @@ function validateNormalizedArchiveTransferTasks(
       const snapshot = task.reportSnapshot;
       if (
         snapshot.schemaVersion !== 1 ||
+        (snapshot.timeContext !== undefined && !validTimeContext(snapshot.timeContext)) ||
+        JSON.stringify(snapshot.timeContext) !== JSON.stringify(task.timeContext) ||
         snapshot.reportId !== task.reportId ||
         snapshot.transferId !== task.id ||
         snapshot.archiveName !== task.archiveName ||
@@ -1286,6 +1292,7 @@ export class ArchiveTransferManager {
       archiveName,
       archiveNameSource: nameSource,
       projectId: context?.projectId,
+      timeContext: context?.timeContext ? structuredClone(context.timeContext) : captureTimeContext(),
       portableProjectSha256: context?.portableProjectSha256,
       shootingDate: context?.shootingDate?.trim() || undefined,
       historicalEvidence: [...new Set(context?.historicalEvidence || [])],
@@ -1335,6 +1342,7 @@ export class ArchiveTransferManager {
         archiveName: preview.archiveName,
         archiveNameSource: preview.archiveNameSource,
         projectId: preview.projectId,
+        timeContext: preview.timeContext,
         portableProjectSha256: preview.portableProjectSha256,
         shootingDate: preview.shootingDate,
         historicalEvidence: preview.historicalEvidence,
@@ -1611,6 +1619,7 @@ export class ArchiveTransferManager {
         archiveName: task.archiveName,
         archiveNameSource: task.archiveNameSource,
         shootingDate: task.shootingDate || "未记录",
+        timeContext: task.timeContext,
         payloadFileCount: task.inventory.totalFiles,
         payloadBytes: task.inventory.totalBytes,
         payloadHumanBytes: humanArchiveBytes(task.inventory.totalBytes),

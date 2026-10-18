@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { validTimeContext } from "../common/time-context";
 import path from "node:path";
 import { SYSTEM_SOURCE_DIRECTORIES } from "../common/source-scan";
 import { conservativeSelectionFamilies } from "../common/backup-selection";
@@ -384,6 +385,8 @@ function validDailyDeliveryJournal(value: unknown) {
 }
 
 function validateDailyDeliveryRuns(task: BackupTask) {
+  if (task.timeContext !== undefined && !validTimeContext(task.timeContext)) throw new Error("任务时间上下文无效");
+  if (task.reportContext?.timeContext !== undefined && !validTimeContext(task.reportContext.timeContext)) throw new Error("报告时间上下文无效");
   const runs = task.dailyDeliveryRuns;
   if (runs === undefined) return;
   if (!Array.isArray(runs)) throw new Error("当日交付记录结构无效");
@@ -400,6 +403,7 @@ function validateDailyDeliveryRuns(task: BackupTask) {
     ].includes(run?.status);
     if (
       !run ||
+      (run.timeContext !== undefined && !validTimeContext(run.timeContext)) ||
       typeof run.id !== "string" ||
       !/^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(
         run.id,

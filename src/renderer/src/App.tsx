@@ -1,4 +1,5 @@
 import { RecoveryDialog } from "./RecoveryDialog";
+import { AuthorFooter } from "./AuthorFooter";
 import { ProxyAdvancedSettings } from "./ProxyAdvancedSettings";
 import type { ProxyAdvanced } from "../../main/types";
 import { recoveryAdvice } from "../../common/recovery";
@@ -1578,32 +1579,6 @@ export function App() {
               </span>
               <b>v{APP_VERSION}</b>
             </button>
-            <div className="sidebar-author-links">
-              <span>
-                <i className="live-dot" />
-                <b>@sexyfeifan</b>
-              </span>
-              <button
-                title="作者 GitHub 主页"
-                aria-label="打开作者 GitHub 主页"
-                onClick={() =>
-                  void api.openAuthor("https://github.com/sexyfeifan")
-                }
-              >
-                <Code2 size={15} />
-              </button>
-              <button
-                title="作者小红书主页"
-                aria-label="打开作者小红书主页"
-                onClick={() =>
-                  void api.openAuthor(
-                    "https://www.xiaohongshu.com/user/profile/5d24d2ca000000001103fe97",
-                  )
-                }
-              >
-                <img src="./xiaohongshu.png" alt="" />
-              </button>
-            </div>
           </div>
         </div>
       </aside>
@@ -5846,6 +5821,10 @@ function HelpPage({
       title: "拍摄归属日、大夜与历史日补录",
       purpose: "把项目拍摄日、文件时间和实际备份时刻分开，跨零点仍按明确归属管理。",
       steps: [
+        "项目设置中确认 IANA 拍摄时区，可按单个拍摄归属日覆盖异地时区，并设置 0–12 时的大夜参考分界。新项目预填电脑时区，仅作建议；历史项目保留未记录，不能自动认定为北京时间。",
+        "大夜分界只作提示，不自动重分配或排除素材。带 Z 或明确偏移的媒体时间换算到拍摄时区；无偏移的相机时间保持原日期并要求人工核对。",
+        "新任务冻结拍摄归属日、拍摄时区、登记电脑时区和当时偏移。报告操作时间带时区与 UTC 偏移；旧任务缺失时区时以 UTC 显示并标原时区未记录，既有 PDF 不改写。",
+        "随盘项目文件与工作站配置包保留时区规则和新素材卷时间上下文；两台 Mac 建议都升级后交换。修改时区会记录规则版本，已确认筛选须重新分析，旧路径、源时间和原 MHL 不变。",
         "拍摄归属日不是电脑上的今天。可在项目已配置的日期或合法历史记录日期中选择；需要扩展项目周期时先编辑项目，不因跨零点自动加一天。",
         "例如 15 日晚开拍至 16 日凌晨，若仍属于 15 日场次，继续选择 15 日，并为这个拍摄日添加临时设备或机位；不必加入 16 日计划，也不在其他日创建空目录。",
         "从具体拍摄日进入备份会保留该日。再次打开项目备份优先采用有效的最近明确选择；开始前仍要核对归属日、设备、机位和每个最终路径。",
@@ -8591,9 +8570,10 @@ function SettingsPage({
             Kocpy <span>{APP_VERSION}</span>
           </h3>
           <p>从现场接卡、项目归档到交付报告，为每一份创作保留可靠副本。</p>
-          <small>本地优先 · 独立校验 · 项目全周期记录 · @sexyfeifan</small>
+          <small>本地优先 · 独立校验 · 项目全周期记录</small>
         </div>
       </div>
+      <AuthorFooter />
     </div>
   );
 }

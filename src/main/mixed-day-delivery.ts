@@ -1,4 +1,5 @@
 import { constants, promises as fs, type Stats } from "node:fs";
+import { captureTimeContext, calendarDateInZone, mediaCalendarDate, formatEvidenceTime, timeContextSummary } from "../common/time-context";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import type {
@@ -241,7 +242,7 @@ export async function buildCardDateAllocation(
       if (media.length && options.readEmbeddedDate) {
         for (const record of media) {
           const { absolute } = await readVerified(record);
-          const found = dateFromTimestamp(await options.readEmbeddedDate(absolute).catch(() => undefined));
+          const found = mediaCalendarDate(await options.readEmbeddedDate(absolute).catch(() => undefined), task.timeContext?.shootingTimeZone);
           if (found) embeddedDates.add(found); else unreadEmbedded = true;
         }
         if (embeddedDates.size) evidence.push(`媒体内嵌日期建议：${[...embeddedDates].join("、")}（仍需人工确认）`);
@@ -249,7 +250,7 @@ export async function buildCardDateAllocation(
       const modifiedDates = new Set<string>();
       for (const record of records) {
         const { stat } = await readVerified(record);
-        modifiedDates.add(localDate(stat.mtimeMs));
+        modifiedDates.add(task.timeContext?.shootingTimeZone ? calendarDateInZone(stat.mtimeMs, task.timeContext.shootingTimeZone) : localDate(stat.mtimeMs));
       }
       if (pathDates.size === 1)
         evidence.push(`路径中出现日期：${[...pathDates][0]}`);
@@ -257,6 +258,7 @@ export async function buildCardDateAllocation(
         evidence.push(`同组路径含多个日期：${[...pathDates].join("、")}`);
       if (modifiedDates.size === 1)
         evidence.push(`文件修改日期：${[...modifiedDates][0]}（低置信度）`);
+      evidence.push(`拍摄时区：${task.timeContext?.shootingTimeZone || "未记录；修改日期按当前电脑，仅作线索"}；相机无偏移时间不作时区换算`);
       const pathDate = pathDates.size === 1 ? [...pathDates][0] : undefined,
         embeddedDate = embeddedDates.size === 1 ? [...embeddedDates][0] : undefined,
         modifiedDate =
@@ -430,6 +432,7 @@ export async function prepareDailyDeliveryRun(
     sourceTaskId: task.id,
     projectId: task.projectId,
     projectNameSnapshot: input.projectName,
+    timeContext: captureTimeContext({ projectTimeZone: task.timeContext?.projectTimeZone, shootingDayTimeZones: task.timeContext?.shootingTimeZone ? { [input.shootingDate]: task.timeContext.shootingTimeZone } : undefined }, input.shootingDate),
     shootingDate: input.shootingDate,
     operator,
     createdAt: input.now || Date.now(),
@@ -4157,7 +4160,7 @@ export function dailyDeliveryReportHtml(
     )
     .join("");
   return Buffer.from(
-    `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><style>body{font-family:-apple-system,"PingFang SC",sans-serif;color:#24212c;padding:28px;font-size:11px}.cover{background:linear-gradient(135deg,#1b1e26,#6254a8);color:#fff;border-radius:16px;padding:26px}.cover h1{margin:0 0 8px;font-size:24px}.summary{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:16px 0}.summary div,.section{border:1px solid #e5e1eb;border-radius:10px;padding:14px}.summary strong{display:block;font-size:19px}.summary span{color:#777;font-size:9px}.section{margin-top:12px}.path{overflow-wrap:anywhere}table{width:100%;border-collapse:collapse;table-layout:fixed}th,td{padding:8px;border-bottom:1px solid #eee;text-align:left;overflow-wrap:anywhere}th{background:#eee9ff}.notice{background:#fff8e9;border-color:#e9c16c}@page{size:A4;margin:12mm}@media print{body{padding:0}}</style></head><body><div class="cover"><h1>Kocpy · 当日交付校验报告</h1><div>${xml(run.projectNameSnapshot || "未关联项目")} · ${xml(run.shootingDate)}</div><div>报告编号 ${xml(run.id.toUpperCase())}</div></div><div class="summary"><div><strong>${run.totalFiles}</strong><span>FILES / 交付文件</span></div><div><strong>${formatBytes(run.totalBytes)}</strong><span>DATA / 交付数据量</span></div><div><strong>${run.status === "completed" ? "通过" : "未完成"}</strong><span>SHA-256 独立回读</span></div></div><div class="section"><h2>交付范围</h2><p>完整素材卷：${xml(task.name)}（任务 ${xml(task.id)}）</p><p class="path">来源：${xml(run.sourceRoot)}</p><p class="path">目的地：${xml(run.finalPath)}</p><p>操作人：${xml(run.operator)} · 开始 ${run.startedAt ? new Date(run.startedAt).toLocaleString("zh-CN") : "-"} · 完成 ${run.completedAt ? new Date(run.completedAt).toLocaleString("zh-CN") : "-"}</p></div><div class="section notice"><h2>证据边界</h2><p>本报告证明所列文件由一个校验通过的完整素材卷副本生成，并在交付位置重新读取 SHA-256 一致。它不修改或替代完整素材卷，不证明未选择的文件可以删除，也不等同于人工签收。</p></div><div class="section"><h2>文件明细</h2><table><thead><tr><th>相对路径</th><th>大小</th><th>交付 SHA-256</th><th>结果</th></tr></thead><tbody>${rows}</tbody></table></div></body></html>`,
+    `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><style>body{font-family:-apple-system,"PingFang SC",sans-serif;color:#24212c;padding:28px;font-size:11px}.cover{background:linear-gradient(135deg,#1b1e26,#6254a8);color:#fff;border-radius:16px;padding:26px}.cover h1{margin:0 0 8px;font-size:24px}.summary{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:16px 0}.summary div,.section{border:1px solid #e5e1eb;border-radius:10px;padding:14px}.summary strong{display:block;font-size:19px}.summary span{color:#777;font-size:9px}.section{margin-top:12px}.path{overflow-wrap:anywhere}table{width:100%;border-collapse:collapse;table-layout:fixed}th,td{padding:8px;border-bottom:1px solid #eee;text-align:left;overflow-wrap:anywhere}th{background:#eee9ff}.notice{background:#fff8e9;border-color:#e9c16c}@page{size:A4;margin:12mm}@media print{body{padding:0}}</style></head><body><div class="cover"><h1>Kocpy · 当日交付校验报告</h1><div>${xml(run.projectNameSnapshot || "未关联项目")} · ${xml(run.shootingDate)}</div><div>报告编号 ${xml(run.id.toUpperCase())}</div></div><div class="summary"><div><strong>${run.totalFiles}</strong><span>FILES / 交付文件</span></div><div><strong>${formatBytes(run.totalBytes)}</strong><span>DATA / 交付数据量</span></div><div><strong>${run.status === "completed" ? "通过" : "未完成"}</strong><span>SHA-256 独立回读</span></div></div><div class="section"><h2>交付范围</h2><p>完整素材卷：${xml(task.name)}（任务 ${xml(task.id)}）</p><p class="path">来源：${xml(run.sourceRoot)}</p><p class="path">目的地：${xml(run.finalPath)}</p><p>操作人：${xml(run.operator)} · 开始 ${run.startedAt ? xml(formatEvidenceTime(run.startedAt, run.timeContext)) : "-"} · 完成 ${run.completedAt ? xml(formatEvidenceTime(run.completedAt, run.timeContext)) : "-"}</p></div><div class="section notice"><h2>证据边界</h2><p>${xml(timeContextSummary(run.timeContext))}</p><p>本报告证明所列文件由一个校验通过的完整素材卷副本生成，并在交付位置重新读取 SHA-256 一致。它不修改或替代完整素材卷，不证明未选择的文件可以删除，也不等同于人工签收。</p></div><div class="section"><h2>文件明细</h2><table><thead><tr><th>相对路径</th><th>大小</th><th>交付 SHA-256</th><th>结果</th></tr></thead><tbody>${rows}</tbody></table></div></body></html>`,
     "utf8",
   );
 }

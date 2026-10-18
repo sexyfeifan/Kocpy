@@ -38,8 +38,8 @@ export function BatchShootingDateAssignment({ groups, assignedDates, selectedDat
   </details>;
 }
 
-export function BackupSelectionPanel({ sourcePath, projectId, shootingDate, plan, disabled, onChange, onBusy, onDraft, onInspect }: {
-  sourcePath: string; projectId?: string; shootingDate?: string; plan?: BackupSelectionPlan; disabled: boolean;
+export function BackupSelectionPanel({ sourcePath, projectId, shootingDate, shootingZone, plan, disabled, onChange, onBusy, onDraft, onInspect }: {
+  sourcePath: string; projectId?: string; shootingDate?: string; shootingZone?: string; plan?: BackupSelectionPlan; disabled: boolean;
   onChange: (plan?: BackupSelectionPlan) => void; onBusy: (busy: boolean) => void;
   onDraft: (pending: boolean) => void;
   onInspect: (pending: boolean) => void;
@@ -58,11 +58,11 @@ export function BackupSelectionPanel({ sourcePath, projectId, shootingDate, plan
   useEffect(() => {
     let active = true;
     setInspecting(true); onInspect(true);
-    void api.inspectBackupDates(sourcePath).then((result) => { if (active) setInspection(result); })
+    void api.inspectBackupDates(sourcePath, projectId, shootingDate).then((result) => { if (active) setInspection(result); })
       .catch((error) => { if (active) setError(readableOperationError(error)); })
       .finally(() => { if (active) { setInspecting(false); onInspect(false); } });
     return () => { active = false; onInspect(false); };
-  }, [sourcePath]);
+  }, [sourcePath, projectId, shootingDate]);
   useEffect(() => api.onBackupSelectionProgress((value) => {
     if (value.sourcePath === sourcePath) setProgress(value);
   }), [sourcePath]);
@@ -81,6 +81,7 @@ export function BackupSelectionPanel({ sourcePath, projectId, shootingDate, plan
       <strong>{leaf(sourcePath)} · 日期与备份范围</strong>
       <p>{plan ? "已冻结本次选择；开始前和完成时会重新检查源范围与历史依据。" : "默认整卡备份。日期仅是线索；不会按日期自动删除或跳过源文件。"}</p>
     </div></div>
+    {projectId && <p className="muted small">拍摄时区：{shootingZone || "未确认；不要仅按文件日期剔除素材"} · 登记电脑时区：{Intl.DateTimeFormat().resolvedOptions().timeZone}。开始后冻结；修改项目规则须重新分析。</p>}
     <p className="muted small">{shootingDate ? `本次项目目录使用拍摄归属日 ${shootingDate}。` : "普通备份不按拍摄日拆分目录。"}文件日期来自文件名或文件时间等线索，不等于拍摄归属日；跨零点可以仍属同一次拍摄。实际备份开始与完成时间另行记录，不会回填成拍摄日。</p>
     {inspecting ? <p role="status">正在只读查看日期线索，不修改素材…</p> : inspection && <p className={inspection.dates.length > 1 ? "backup-selection-warning" : "muted small"}>
       {inspection.dates.length > 1 ? `发现 ${inspection.dates.length} 个文件日期线索，可能是跨零点拍摄或混有多日素材，请确认归属：${inspection.dates.join("、")}` : "未发现可明确区分的多日素材；这不代表源卡一定只有所选拍摄日的内容。"}
@@ -91,7 +92,7 @@ export function BackupSelectionPanel({ sourcePath, projectId, shootingDate, plan
       {summary.excludedFiles > 0 && <p className="backup-selection-warning">这是选定范围备份，不是整卡副本。旧素材不会出现在本次目的地；不能据此清空或格式化源卡。</p>}
       <Button disabled={disabled || busy} onClick={() => { onChange(); setPreview(undefined); onDraft(false); }}><RotateCcw size={15} />恢复整卡备份</Button>
     </> : !preview ? <Button disabled={disabled || busy || inspecting} onClick={() => void run(async () => {
-      const result = await api.analyzeBackupSelection(sourcePath, projectId);
+      const result = await api.analyzeBackupSelection(sourcePath, projectId, shootingDate);
       setPreview(result); setSelectedDates([...new Set(result.groups.flatMap((group) => group.suggestedDate ? [group.suggestedDate] : []))]);
       onDraft(true);
       setAssignedDates({}); setAcknowledged(false);

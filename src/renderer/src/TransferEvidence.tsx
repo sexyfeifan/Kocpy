@@ -2,6 +2,7 @@ import { ArrowRight, Check, ClipboardCheck, Copy, FolderSearch, HardDrive, Shiel
 import type { BackupTask } from "./api";
 import { transferEvidenceModel, evidenceBytes } from "./transfer-evidence-state";
 import { taskHasPartialSelection } from "../../common/task-trust";
+import { timeContextSummary } from "../../common/time-context";
 
 export function SelectionValidationProgress({ task }: { task: BackupTask }) {
   const value = task.selectionValidation;
@@ -32,6 +33,7 @@ export function TransferEvidence({ task, compact = false }: { task: BackupTask; 
       </div>
       {taskHasPartialSelection(task) && <p className="transfer-evidence-scope-warning"><TriangleAlert size={16} aria-hidden="true" /><span>选定范围备份 · 本次未复制 {task.selection!.excludedFiles.length} 个文件。仅校验已纳入内容，不计整卡达标副本，不得据此格式化源素材卡。</span></p>}
       <SelectionValidationProgress task={task} />
+      {!compact && <p className="muted small">{timeContextSummary(task.timeContext)}</p>}
       <ol className="transfer-evidence-phases" aria-label="任务阶段">
         {model.phases.map((phase) => {
           const Icon = phaseIcons[phase.key as keyof typeof phaseIcons];

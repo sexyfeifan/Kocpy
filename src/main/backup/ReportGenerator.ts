@@ -1,4 +1,5 @@
 import * as fs from "fs";
+import { captureTimeContext, formatEvidenceTime, timeContextSummary, projectTimeRulesSummary } from "../../common/time-context";
 import { portableProjectReportSection, portableReferenceProjectReport } from "../portable-project-report";
 import type {
   BackupTask,
@@ -63,7 +64,7 @@ function selectionReportText(task: BackupTask): string {
 
 function summaryTaskDetailRow(task: BackupTask, columns: number): string {
   const trust = taskTrustState(task);
-  return `<tr class="task-detail"><td colspan="${columns}">${task.selection ? `<p><strong>备份范围与确认</strong> · ${esc(selectionReportText(task))}</p>` : ""}<p><strong>下一步</strong> · ${esc(trust.nextStep)}</p></td></tr>`;
+  return `<tr class="task-detail"><td colspan="${columns}">${task.selection ? `<p><strong>备份范围与确认</strong> · ${esc(selectionReportText(task))}</p>` : ""}<p>${esc(timeContextSummary(task.timeContext))}</p><p>开始 ${task.startedAt ? esc(formatEvidenceTime(task.startedAt, task.timeContext)) : "未记录"}；完成 ${task.completedAt ? esc(formatEvidenceTime(task.completedAt, task.timeContext)) : "未记录"}</p><p><strong>下一步</strong> · ${esc(trust.nextStep)}</p></td></tr>`;
 }
 
 const summaryTableStyles = `
@@ -113,10 +114,10 @@ function selectionReportSection(task: BackupTask): string {
   const exclusions = plan.excludedFiles.map((file) => {
     const group = groups.get(file.groupId);
     const date = plan.assignedDates[file.groupId] || group?.suggestedDate || "未知";
-    const history = file.historyEvidence.map((item) => `${item.path}（任务 ${item.taskId}，${new Date(item.checkedAt).toLocaleString("zh-CN")}）`).join("；");
+    const history = file.historyEvidence.map((item) => `${item.path}（任务 ${item.taskId}，${formatEvidenceTime(item.checkedAt, plan.timeContext)}）`).join("；");
     return `<tr><td>${esc(file.relativePath)}</td><td>${esc(date)}</td><td>${formatBytes(sourceFiles.get(file.relativePath)?.size || 0)}</td><td>${file.reason === "history-verified" ? "历史副本已读取核对；未复制到本次目标" : "用户未选；未证明已受保护"}${history ? `<br>${esc(history)}` : ""}</td></tr>`;
   }).join("");
-  return `<div class="section"><h2>备份范围选择与未复制记录</h2><p>${esc(selectionReportText(task))}</p><p>确认时间 ${esc(new Date(plan.confirmedAt).toLocaleString("zh-CN"))} · 范围摘要 ${esc(plan.digest)}</p><p>${taskHasPartialSelection(task) ? "本次是选定范围备份，不是整卡完整副本。历史已验证仅表示预检时另一个位置的副本依据，不代表此刻在线，也不计作本次目标中的文件。不得据此格式化源素材卡。" : "本次选择纳入了全部可读取文件。仍须结合源扫描排除及项目独立副本要求判断。"} 源扫描无法读取的内容单独列于范围排除记录；原外部清单保持原样。</p>${exclusions ? `<table><thead><tr><th>未复制相对路径</th><th>归属日期</th><th>容量</th><th>原因与历史依据</th></tr></thead><tbody>${exclusions}</tbody></table>` : ""}</div>`;
+  return `<div class="section"><h2>备份范围选择与未复制记录</h2><p>${esc(selectionReportText(task))}</p><p>确认时间 ${esc(formatEvidenceTime(plan.confirmedAt, plan.timeContext))} · 范围摘要 ${esc(plan.digest)}</p><p>${taskHasPartialSelection(task) ? "本次是选定范围备份，不是整卡完整副本。历史已验证仅表示预检时另一个位置的副本依据，不代表此刻在线，也不计作本次目标中的文件。不得据此格式化源素材卡。" : "本次选择纳入了全部可读取文件。仍须结合源扫描排除及项目独立副本要求判断。"} 源扫描无法读取的内容单独列于范围排除记录；原外部清单保持原样。</p>${exclusions ? `<table><thead><tr><th>未复制相对路径</th><th>归属日期</th><th>容量</th><th>原因与历史依据</th></tr></thead><tbody>${exclusions}</tbody></table>` : ""}</div>`;
 }
 
 export function dailyReportContribution(
@@ -207,7 +208,7 @@ export async function generateReport(
     .slice(-30)
     .map(
       (event) =>
-        `<tr><td>${new Date(event.at).toLocaleString("zh-CN")}</td><td>${esc(event.phase)}</td><td style="color:${event.level === "error" ? "#ef4444" : event.level === "warning" ? "#b7791f" : "#555"}">${esc(event.message)}</td></tr>`,
+        `<tr><td>${formatEvidenceTime(event.at, task.timeContext)}</td><td>${esc(event.phase)}</td><td style="color:${event.level === "error" ? "#ef4444" : event.level === "warning" ? "#b7791f" : "#555"}">${esc(event.message)}</td></tr>`,
     )
     .join("");
   const inventory = task.inventoryScope,
@@ -375,7 +376,7 @@ export async function generateReport(
   <div>
     <h1>Kocpy</h1>
     <p>VERIFIED MEDIA TRANSFER SNAPSHOT · v${APP_VERSION}</p>
-    <p style="margin-top:8px;font-size:12px;color:#aaa">生成时间：${new Date(generatedAt).toLocaleString("zh-CN")}</p>
+    <p style="margin-top:8px;font-size:12px;color:#aaa">生成时间：${formatEvidenceTime(generatedAt, task.timeContext)}</p>
   </div>
   <div class="badge">${statusLabel}</div>
 </div>
@@ -395,7 +396,7 @@ ${eventRows ? `<div class="section"><h2>任务事件时间线</h2><table class="
   <h2>任务信息</h2>
   <p><strong>${esc(trust.basis)}</strong> · ${trust.copies.verifiedTargets} 个目标有校验通过记录</p>
   <p>${esc(trust.explanation)} ${esc(trust.nextStep)}</p>
-  <p>最近记录：${trust.verifiedAt ? new Date(trust.verifiedAt).toLocaleString("zh-CN") : "未记录完整校验时间"}</p>
+  <p>最近记录：${trust.verifiedAt ? formatEvidenceTime(trust.verifiedAt, task.timeContext) : "未记录完整校验时间"}</p>
   <p>${copyEvidenceSummary(task.destinations).independencePending ? "物理独立性证据不足：旧记录、未知拓扑或不同检查批次不合并计数。重新校验在线目标可更新存储关系。" : "副本计数依据已记录的系统存储关系；不同目录或卷 UUID 不自动代表不同物理磁盘，也不代表机箱、供电或灾备独立。"} 校验完成不等于可以格式化原卡。</p>
   <div class="info-grid">
     <span class="label">任务名称</span><span class="value">${esc(task.name)}</span>
@@ -412,8 +413,8 @@ ${eventRows ? `<div class="section"><h2>任务事件时间线</h2><table class="
     <span class="label">总数据量</span><span class="value">${formatBytes(task.totalBytes)}</span>
     <span class="label">备份范围</span><span class="value">${esc(inventoryLabel)}</span>
     <span class="label">扫描策略排除</span><span class="value">${esc(exclusionLabel)}</span>
-    <span class="label">开始时间</span><span class="value">${task.startedAt ? new Date(task.startedAt).toLocaleString("zh-CN") : "-"}</span>
-    <span class="label">完成时间</span><span class="value">${task.completedAt ? new Date(task.completedAt).toLocaleString("zh-CN") : "-"}</span>
+    <span class="label">开始时间</span><span class="value">${task.startedAt ? formatEvidenceTime(task.startedAt, task.timeContext) : "-"}</span>
+    <span class="label">完成时间</span><span class="value">${task.completedAt ? formatEvidenceTime(task.completedAt, task.timeContext) : "-"}</span>
     <span class="label">耗时</span><span class="value">${duration}</span>
     <span class="label">源哈希读取</span><span class="value">${performanceLabel(task.sourceHashPerformance)}</span>
     <span class="label">源分发读取</span><span class="value">${performanceLabel(task.sourceCopyReadPerformance)}</span>
@@ -422,6 +423,7 @@ ${eventRows ? `<div class="section"><h2>任务事件时间线</h2><table class="
 
 ${exclusionRows ? `<div class="section"><h2>扫描策略排除清单</h2><p>以下路径因扫描策略不属于本任务的备份与校验范围，与用户按日期未选择的文件分别记录；已读取的路径、数量、字节和原因已随任务记录持久化。${hasUnknownExcludedBytes ? "存在大小未知的排除条目，汇总字节仅含已知部分；未扫描目录内的文件数量与字节未计入统计。" : ""}</p><table><thead><tr><th>相对路径</th><th>类型</th><th>字节</th><th>原因</th></tr></thead><tbody>${exclusionRows}</tbody></table></div>` : ""}
 
+<div class="section"><h2>时间与拍摄归属</h2><p>${esc(timeContextSummary(task.timeContext))}</p><p>操作时间按冻结的操作时区展示；相机日期仅作线索。拍摄时区参考开始：${task.startedAt ? esc(formatEvidenceTime(task.startedAt, task.timeContext, "shooting")) : "未记录"}</p></div>
 ${selectionReportSection(task)}
 
 <div class="section destination-section">
@@ -587,6 +589,6 @@ export async function generateProjectReport(
     : closeout.unconfirmed.length
       ? `没有明确缺失；仍有 ${closeout.unconfirmed.length} 个单元待确认是否使用`
       : "全部拍摄日和设备均满足收工要求";
-  const html = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>Kocpy Project Media Report</title><style>*{box-sizing:border-box}body{font-family:-apple-system,"PingFang SC",sans-serif;color:#24212c;padding:28px;background:#f5f3f7;font-size:11px}.cover{padding:28px;border-radius:16px;color:#fff;background:linear-gradient(135deg,#6d5ee8,#9a88ff);display:flex;justify-content:space-between}.cover h1{margin:0;font-size:25px}.cover p{margin:8px 0 0;color:#eeeaff}.period{font-size:15px}.summary{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:16px 0}.summary div,.section{background:#fff;border:1px solid #e7e2ee;border-radius:11px;padding:15px}.summary strong{display:block;font-size:19px}.summary span{display:block;color:#8b8493;font-size:8px;margin-top:5px}.section{margin-top:12px}.section h2{break-after:avoid;font-size:12px;margin:0 0 11px;padding-bottom:9px;border-bottom:1px solid #eee9f2}table{width:100%;border-collapse:collapse;table-layout:fixed}th{padding:8px;background:#eee9ff;color:#514783;text-align:left}td{vertical-align:top;line-height:1.55;padding:9px 8px;border-bottom:1px solid #eee;overflow-wrap:anywhere}tr{break-inside:avoid}.ok{color:#188b58}.warn{color:#bd4e5a}.muted{color:#999}.matrix-table th:last-child{width:29%}.task-table th:nth-child(1){width:13%}.task-table th:nth-child(2){width:12%}.task-table th:nth-child(3){width:28%}.task-table th:nth-child(4){width:7%}.task-table th:nth-child(5){width:10%}.task-table th:last-child{width:30%}.destination-table th:nth-child(1){width:24%}.destination-table th:nth-child(2){width:14%}.destination-table th:nth-child(3){width:48%}.destination-table th:nth-child(4){width:14%}.split td:first-child{font-size:9px;white-space:nowrap}.task-section{break-before:page}.split{display:grid;grid-template-columns:1fr 1fr;gap:12px}.footer{text-align:center;color:#999;margin-top:18px}@page{size:A4;margin:12mm}@media print{body{padding:0;background:#fff}.section{break-inside:auto}}${summaryTableStyles}</style></head><body><div class="cover"><div><h1>Kocpy · 项目完整报告</h1><p>${esc(project.name)} · PROJECT MEDIA REPORT</p></div><div class="period">${esc(project.shootingDateStart || "-")} — ${esc(project.shootingDateEnd || project.shootingDateStart || "-")}<br>报告编号 ${esc(project.id.slice(0, 12).toUpperCase())}</div></div><div class="summary"><div><strong>${tasks.length}</strong><span>BACKUPS / 备份任务</span></div><div><strong>${completed} / ${tasks.length}</strong><span>SAFE TASKS / 达到副本要求</span></div><div><strong>${totalFiles}</strong><span>FILES / 文件</span></div><div><strong>${formatBytes(totalBytes)}</strong><span>MEDIA / 项目素材</span></div></div><div class="section"><h2>项目收工结论 · ${closeout.complete} / ${closeout.total} 个日期设备单元完成</h2><p class="${closeout.pending.length || closeout.unconfirmed.length ? "warn" : "ok"}">${closeoutMessage}</p></div><div class="section"><h2>日期 × 设备素材完成情况</h2><table class="matrix-table"><thead><tr><th>拍摄日期</th><th>设备 / 机位</th><th>素材卷</th><th>文件</th><th>素材量</th><th>收工状态</th></tr></thead><tbody>${matrixRows}</tbody></table></div><div class="split"><div class="section"><h2>每日素材趋势</h2><table><thead><tr><th>日期</th><th>素材卷</th><th>文件</th><th>素材量</th></tr></thead><tbody>${dailyRows}</tbody></table></div><div class="section"><h2>设备素材占比</h2><table><thead><tr><th>设备</th><th>素材卷</th><th>文件</th><th>素材量</th><th>占比</th></tr></thead><tbody>${deviceRows}</tbody></table></div></div><div class="section task-section"><h2>全部备份任务</h2><p>内容校验、接管首次基线和副本达标是不同结论。首次基线不证明接管前完整；有清单差异的任务须处理后才计为达标。同盘目录不增加独立副本，旧证据不足可重新校验在线目标。</p><table class="task-table"><thead><tr><th>日期</th><th>设备 / 机位</th><th>素材卷</th><th>文件</th><th>素材量</th><th>结论</th></tr></thead>${taskRows}</table></div><div class="section"><h2>目的地与独立校验</h2><p>以下是逐目标校验记录，不等于物理独立副本数量。清单缺失项不出现在现存文件明细中，须同时查看任务结论。</p><table class="destination-table"><thead><tr><th>素材卷</th><th>磁盘</th><th>最终路径</th><th>校验</th></tr></thead><tbody>${destinationRows}</tbody></table></div><div class="section"><h2>完整文件明细</h2><table class="file-detail-table"><thead><tr><th>日期</th><th>设备</th><th>素材卷</th><th>文件路径</th><th>大小</th><th>副本校验</th></tr></thead><tbody>${fileRows}</tbody></table></div><div class="footer">Kocpy · @sexyfeifan · 生成时间 ${new Date().toLocaleString("zh-CN")}</div></body></html>`;
+  const html = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>Kocpy Project Media Report</title><style>*{box-sizing:border-box}body{font-family:-apple-system,"PingFang SC",sans-serif;color:#24212c;padding:28px;background:#f5f3f7;font-size:11px}.cover{padding:28px;border-radius:16px;color:#fff;background:linear-gradient(135deg,#6d5ee8,#9a88ff);display:flex;justify-content:space-between}.cover h1{margin:0;font-size:25px}.cover p{margin:8px 0 0;color:#eeeaff}.period{font-size:15px}.summary{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:16px 0}.summary div,.section{background:#fff;border:1px solid #e7e2ee;border-radius:11px;padding:15px}.summary strong{display:block;font-size:19px}.summary span{display:block;color:#8b8493;font-size:8px;margin-top:5px}.section{margin-top:12px}.section h2{break-after:avoid;font-size:12px;margin:0 0 11px;padding-bottom:9px;border-bottom:1px solid #eee9f2}table{width:100%;border-collapse:collapse;table-layout:fixed}th{padding:8px;background:#eee9ff;color:#514783;text-align:left}td{vertical-align:top;line-height:1.55;padding:9px 8px;border-bottom:1px solid #eee;overflow-wrap:anywhere}tr{break-inside:avoid}.ok{color:#188b58}.warn{color:#bd4e5a}.muted{color:#999}.matrix-table th:last-child{width:29%}.task-table th:nth-child(1){width:13%}.task-table th:nth-child(2){width:12%}.task-table th:nth-child(3){width:28%}.task-table th:nth-child(4){width:7%}.task-table th:nth-child(5){width:10%}.task-table th:last-child{width:30%}.destination-table th:nth-child(1){width:24%}.destination-table th:nth-child(2){width:14%}.destination-table th:nth-child(3){width:48%}.destination-table th:nth-child(4){width:14%}.split td:first-child{font-size:9px;white-space:nowrap}.task-section{break-before:page}.split{display:grid;grid-template-columns:1fr 1fr;gap:12px}.footer{text-align:center;color:#999;margin-top:18px}@page{size:A4;margin:12mm}@media print{body{padding:0;background:#fff}.section{break-inside:auto}}${summaryTableStyles}</style></head><body><div class="cover"><div><h1>Kocpy · 项目完整报告</h1><p>${esc(project.name)} · PROJECT MEDIA REPORT</p></div><div class="period">${esc(project.shootingDateStart || "-")} — ${esc(project.shootingDateEnd || project.shootingDateStart || "-")}<br>报告编号 ${esc(project.id.slice(0, 12).toUpperCase())}</div></div><div class="summary"><div><strong>${tasks.length}</strong><span>BACKUPS / 备份任务</span></div><div><strong>${completed} / ${tasks.length}</strong><span>SAFE TASKS / 达到副本要求</span></div><div><strong>${totalFiles}</strong><span>FILES / 文件</span></div><div><strong>${formatBytes(totalBytes)}</strong><span>MEDIA / 项目素材</span></div></div><div class="section"><p>${esc(projectTimeRulesSummary(project))}</p><h2>项目收工结论 · ${closeout.complete} / ${closeout.total} 个日期设备单元完成</h2><p class="${closeout.pending.length || closeout.unconfirmed.length ? "warn" : "ok"}">${closeoutMessage}</p></div><div class="section"><h2>日期 × 设备素材完成情况</h2><table class="matrix-table"><thead><tr><th>拍摄日期</th><th>设备 / 机位</th><th>素材卷</th><th>文件</th><th>素材量</th><th>收工状态</th></tr></thead><tbody>${matrixRows}</tbody></table></div><div class="split"><div class="section"><h2>每日素材趋势</h2><table><thead><tr><th>日期</th><th>素材卷</th><th>文件</th><th>素材量</th></tr></thead><tbody>${dailyRows}</tbody></table></div><div class="section"><h2>设备素材占比</h2><table><thead><tr><th>设备</th><th>素材卷</th><th>文件</th><th>素材量</th><th>占比</th></tr></thead><tbody>${deviceRows}</tbody></table></div></div><div class="section task-section"><h2>全部备份任务</h2><p>内容校验、接管首次基线和副本达标是不同结论。首次基线不证明接管前完整；有清单差异的任务须处理后才计为达标。同盘目录不增加独立副本，旧证据不足可重新校验在线目标。</p><table class="task-table"><thead><tr><th>日期</th><th>设备 / 机位</th><th>素材卷</th><th>文件</th><th>素材量</th><th>结论</th></tr></thead>${taskRows}</table></div><div class="section"><h2>目的地与独立校验</h2><p>以下是逐目标校验记录，不等于物理独立副本数量。清单缺失项不出现在现存文件明细中，须同时查看任务结论。</p><table class="destination-table"><thead><tr><th>素材卷</th><th>磁盘</th><th>最终路径</th><th>校验</th></tr></thead><tbody>${destinationRows}</tbody></table></div><div class="section"><h2>完整文件明细</h2><table class="file-detail-table"><thead><tr><th>日期</th><th>设备</th><th>素材卷</th><th>文件路径</th><th>大小</th><th>副本校验</th></tr></thead><tbody>${fileRows}</tbody></table></div><div class="footer">Kocpy · @sexyfeifan · 生成时间 ${formatEvidenceTime(Date.now(), captureTimeContext(project))}</div></body></html>`;
   return Buffer.from(html.replace('<div class="summary">', `${portableProjectReportSection(project)}<div class="summary">`), "utf8");
 }

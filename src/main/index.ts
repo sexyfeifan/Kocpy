@@ -5,6 +5,7 @@ import {
   type ArchiveScope,
 } from "../common/interaction";
 import { OperationRegistry } from "./operations";
+import { assertProjectTimeRules, captureTimeContext, assertSelectionTimeContext } from "../common/time-context";
 import { inspectTaskRecovery } from "./recovery";
 import { assertVolumeIdentity } from "../common/volume-identity";
 import { existingRefreshContext, existingRefreshMetadataNote, existingRefreshObservation } from "./existing-refresh-context";
@@ -425,6 +426,7 @@ const restoreExistingProjectRecords = (
   for (const task of snapshot) engine.loadTask(structuredClone(task));
 };
 const prepareProject = (value: ProjectConfig): ProjectConfig => {
+  assertProjectTimeRules(value);
   const project = {
     ...value,
     devices: [...(value.devices || [])],
@@ -668,6 +670,7 @@ const archiveTransferContext = async (
     const doc = portable.document, actualDates = [...new Set(doc.rolls.flatMap(r => r.dates))].sort();
     return {
       projectId: doc.project.id,
+      timeContext: captureTimeContext(doc.project),
       portableProjectSha256: portable.sha256,
       archiveName: doc.project.name,
       archiveNameSource: "project",
@@ -696,7 +699,8 @@ const archiveTransferContext = async (
         catch { return undefined; } // Unavailable association is not source-date evidence.
       }),
     )).filter((root): root is string => Boolean(root)) : [];
-  return scopedArchiveTransferContext(project, engine.getAllTasks(), source, roots);
+  const context = scopedArchiveTransferContext(project, engine.getAllTasks(), source, roots);
+  return { ...context, timeContext: captureTimeContext(project) };
 };
 async function archiveTransferRequestContext(input: { sourcePath: string; projectId?: string; operator?: string }): Promise<ArchiveTransferContext> {
   if (input.operator !== undefined && (typeof input.operator !== "string" || !input.operator.trim() || input.operator.length > 120 || /[\x00-\x1f]/.test(input.operator))) throw new Error("请填写实际归档操作人（最多120字）");
@@ -2305,7 +2309,7 @@ app.whenReady().then(async () => {
       if ((await readPortableProject(root))?.sha256 !== current.sha256) throw new Error("确认期间项目文件已变化，请重新导入");
       const record: PortableProjectImportRecord = { id: randomUUID(), projectId: doc.project.id, sha256: current.sha256, revision: doc.revision, root: await canonical(root), operator: operator.trim(), importedAt: Date.now(), project: doc.project, rolls: doc.rolls, provenance: doc.provenance, files: doc.files.length, bytes: doc.files.reduce((n, f) => n + (f.size || 0), 0), exclusions: doc.exclusions.length };
       if (Buffer.byteLength(JSON.stringify([...(existing?.portableHistory || []), record])) > 32 * 1024 * 1024) throw new Error("本项目继承历史超过32MiB本地安全上限，未丢弃旧记录；请保留随盘文件并分项目处理");
-      const project: ProjectConfig = existing ? { ...existing, portableHistory: [...(existing.portableHistory || []), record] } : { id: doc.project.id, name: safeName, devices: doc.project.devices.length ? doc.project.devices : ["待确认设备"], volumePrefix: "CARD_", projectFolderName: path.basename(record.root), shootingDateStart: doc.project.plannedStart, shootingDateEnd: doc.project.plannedEnd, status: "archived", directoryCreationMode: "lazy", destinationPaths: [], createdAt: Date.now(), portableHistory: [record] };
+      const project: ProjectConfig = existing ? { ...existing, portableHistory: [...(existing.portableHistory || []), record] } : { id: doc.project.id, name: safeName, devices: doc.project.devices.length ? doc.project.devices : ["待确认设备"], volumePrefix: "CARD_", projectFolderName: path.basename(record.root), shootingDateStart: doc.project.plannedStart, shootingDateEnd: doc.project.plannedEnd, projectTimeZone: doc.project.projectTimeZone, shootingDayTimeZones: doc.project.shootingDayTimeZones, shootingDayBoundaryHour: doc.project.shootingDayBoundaryHour, status: "archived", directoryCreationMode: "lazy", destinationPaths: [], createdAt: Date.now(), portableHistory: [record] };
       await writeProjects(existing ? projects.map(p => p.id === project.id ? project : p) : [...projects, project]);
       if (main && !main.isDestroyed()) main.webContents.send("workspace:changed");
       return { projectId: project.id, alreadyImported: false };
@@ -2425,12 +2429,12 @@ app.whenReady().then(async () => {
     await workspace.synchronizeIndex();
     return catalog.stats();
   });
-  handle("selection:inspect", async (sourcePath: string) => inspectBackupDates(
+  handle("selection:inspect", async (sourcePath: string, projectId?: string, shootingDate?: string) => inspectBackupDates(
     // A fast hint must not start one media-probe process for every clip or delay
     // ordinary whole-card backups. Deep metadata inspection is opt-in below.
-    { sourcePath }, selectionRuntimeDependencies({ readEmbeddedDate: undefined }),
+    { sourcePath, timeContext: captureTimeContext(projectId ? (await readProjects()).find(p => p.id === projectId) || {} : {}, shootingDate) }, selectionRuntimeDependencies({ readEmbeddedDate: undefined }),
   ));
-  handle("selection:analyze", async (sourcePath: string, projectId?: string) => {
+  handle("selection:analyze", async (sourcePath: string, projectId?: string, shootingDate?: string) => {
     if (engine.hasActive() || proxyBusy) throw new Error("请先结束当前传输，再分析混合日期素材");
     return operations.run("混合日期素材只读分析", async () => {
       selectionController = new AbortController();
@@ -2438,6 +2442,7 @@ app.whenReady().then(async () => {
         const project = projectId ? (await readProjects()).find((item) => item.id === projectId) : undefined;
         if (projectId && !project) throw new Error("拍摄项目不存在");
         const preview = await analyzeBackupSelection({ sourcePath, projectId,
+          timeContext: captureTimeContext(project || {}, shootingDate),
           requiredCopies: project ? project.requiredCopies || 2 : 1, historyTasks: engine.getAllTasks(),
         }, selectionDependencies(sourcePath));
         rememberSelection(selectionPreviews, preview);
@@ -2485,6 +2490,7 @@ app.whenReady().then(async () => {
         throw new Error("筛选确认与当前素材源或项目不一致，请重新分析");
       const project = config.projectId ? (await readProjects()).find((item) => item.id === config.projectId) : undefined;
       if (confirmed.requiredCopies !== (project ? project.requiredCopies || 2 : 1)) throw new Error("项目副本要求已改变，请重新分析");
+      assertSelectionTimeContext(confirmed.timeContext, project || {}, config.shootingDate || undefined);
       config = { ...config, selection: structuredClone(confirmed), includeHidden: true };
     }
     const speedFor = (destination: string) =>

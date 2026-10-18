@@ -1,4 +1,5 @@
 import { normalizePositions } from "../common/interaction";
+import { assertProjectTimeRules, validTimeContext } from "../common/time-context";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import type {
@@ -298,6 +299,7 @@ export function validateWorkspacePackage(value: unknown) {
   uniqueIds(archiveRuns, "归档核验运行");
   validateTemplates(templates);
   for (const item of projects) {
+    assertProjectTimeRules(item);
     if (item.portableHistory !== undefined) {
       validatePortableHistory(item.portableHistory);
       if (item.portableHistory.some((r: import("../common/portable-project").PortableProjectImportRecord) => r.projectId !== item.id)) throw new Error("随盘历史不属于该项目身份");
@@ -384,6 +386,8 @@ export function validateWorkspacePackage(value: unknown) {
     );
   }
   for (const item of tasks) {
+    if (item.timeContext !== undefined && !validTimeContext(item.timeContext)) throw new Error("工作站任务时间上下文无效");
+    if (item.reportContext?.timeContext !== undefined && !validTimeContext(item.reportContext.timeContext)) throw new Error("工作站报告时间上下文无效");
     if (
       !plainObject(item) ||
       !Array.isArray(item.devices) ||

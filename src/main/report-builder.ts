@@ -1,4 +1,5 @@
 import type { BackupTask, FileRecord } from "./types";
+import { formatEvidenceTime, timeContextSummary, type TimeContext } from "../common/time-context";
 
 export function formatBytes(bytes: number): string {
   if (bytes === 0) return "0 B";
@@ -8,9 +9,9 @@ export function formatBytes(bytes: number): string {
   return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`;
 }
 
-export function formatDate(ts?: number): string {
+export function formatDate(ts?: number, context?: TimeContext): string {
   if (!ts) return "-";
-  return new Date(ts).toLocaleString("zh-CN", { hour12: false });
+  return formatEvidenceTime(ts, context);
 }
 
 export function formatDuration(
@@ -70,8 +71,9 @@ export function buildBackupReport(task: BackupTask): string {
   lines.push("📋 任务信息");
   lines.push(`  任务   ${task.name}`);
   lines.push(`  哈希   ${task.hashAlgorithm?.toUpperCase() ?? "-"}`);
-  lines.push(`  开始   ${formatDate(task.startedAt)}`);
-  lines.push(`  完成   ${formatDate(task.completedAt)}`);
+  lines.push(`  开始   ${formatDate(task.startedAt, task.timeContext)}`);
+  lines.push(`  完成   ${formatDate(task.completedAt, task.timeContext)}`);
+  lines.push(`  ${timeContextSummary(task.timeContext)}`);
   lines.push(`  耗时   ${formatDuration(task.startedAt, task.completedAt)}`);
   lines.push(
     `  文件   ${task.totalFiles} 个 · ${formatBytes(task.totalBytes)}`,

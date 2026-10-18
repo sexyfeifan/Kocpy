@@ -20,6 +20,8 @@ import {
   type ProjectSaveInspection,
 } from "./api";
 import { Button } from "./Ui";
+import { ProjectTimeSettings } from "./ProjectTimeSettings";
+import { assertProjectTimeRules, type ProjectTimeRules } from "../../common/time-context";
 import {
   destinationSelectionNotice,
   destinationNoticeClassName,
@@ -52,6 +54,11 @@ export function ProjectEditor({
   onSave: (p: ProjectConfig, createMissing?: boolean, operator?: string) => Promise<void>;
 }) {
   const initialDevices = initial.devices?.length ? initial.devices : ["FX3"];
+  const [timeRules, setTimeRules] = useState<ProjectTimeRules>({
+    projectTimeZone: initial.projectTimeZone || (!initial.id ? Intl.DateTimeFormat().resolvedOptions().timeZone : undefined),
+    shootingDayTimeZones: initial.shootingDayTimeZones,
+    shootingDayBoundaryHour: initial.shootingDayBoundaryHour,
+  });
   const [name, setName] = useState(initial.name || ""),
     [start, setStart] = useState(initial.shootingDateStart || today()),
     [end, setEnd] = useState(
@@ -168,6 +175,7 @@ export function ProjectEditor({
     }));
   }
   function buildProject(): ProjectConfig | undefined {
+    try { assertProjectTimeRules(timeRules); } catch (e) { setError((e as Error).message); return; }
     if (!name.trim()) {
       setError("请输入项目名称");
       return;
@@ -222,6 +230,7 @@ export function ProjectEditor({
       );
     return {
       ...initial,
+      ...timeRules,
       id: initial.id || crypto.randomUUID(),
       name: name.trim(),
       devices,
@@ -460,6 +469,7 @@ export function ProjectEditor({
               />
             </label>
           </div>
+          <ProjectTimeSettings value={timeRules} onChange={setTimeRules} />
           <div className="project-path-preview">
             <CalendarDays size={17} />
             <div>

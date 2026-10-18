@@ -1,5 +1,13 @@
 # Kocpy architecture
 
+## Time context and overnight attribution (0.1.51)
+
+`common/time-context.ts` separates explicit calendar attribution from instants. Optional project IANA zone, per-day overrides and advisory boundary are append-only rule-version inputs; omitted legacy fields stay omitted. New tasks freeze a time context with project/shooting zone, explicit day, workstation zone, capture instant and offset. Changes never migrate historical paths, assignment decisions or hashes.
+
+Main-process authorization checks composer time rules and confirmed-selection context against current project rules. Offset-bearing embedded timestamps and modification instants are converted to the selected shooting zone; unzoned camera wall clocks are not guessed. Overnight hints never authorize exclusions. Whole-card, recovery, physical-copy and eject predicates are unchanged. Associated-file closure and before/after source revalidation remain mandatory.
+
+Report operation timestamps share an explicit zone/offset formatter; unknown legacy contexts display UTC with an unknown-zone label. Stored artifacts stay immutable. Portable project revision digests cover optional project/day rules and per-roll contexts; workspace and portable import validate these fields without fabricating legacy values. Mixed-version consumers should upgrade before exchanging time-aware projects. Standard UTC fields in manifests remain UTC.
+
 ## Shooting-day authority (0.1.50 source candidate)
 
 A production shooting day is an operator-selected label, distinct from a file timestamp, the local current date and an actual transfer/verification time. Midnight does not mutate an open composer, an audited temporary-device schedule or a frozen task path. Explicit day context takes precedence over a valid remembered draft choice; selectable historical dates must be real calendar dates. Invalid legacy dates remain visible as risk but cannot authorize new writes, and invalid project boundaries do not roll into other calendar days.

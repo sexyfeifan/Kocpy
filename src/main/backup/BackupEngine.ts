@@ -1,4 +1,5 @@
 import { normalizePositions } from "../../common/interaction";
+import { captureTimeContext, assertSelectionTimeContext } from "../../common/time-context";
 import { assertVolumeIdentity } from "../../common/volume-identity";
 import { EventEmitter } from "node:events";
 import { promises as fs, constants, createReadStream } from "node:fs";
@@ -399,7 +400,13 @@ export class BackupEngine extends EventEmitter {
     const createdAt = Date.now(),
       includeHidden = config.includeHidden ?? true,
       automaticPdf = config.automaticPdf ?? true;
+    const timeRules = { projectTimeZone: config.projectTimeZone,
+        shootingDayTimeZones: config.shootingTimeZone && config.shootingDate ? { [config.shootingDate]: config.shootingTimeZone } : undefined,
+        shootingDayBoundaryHour: config.shootingDayBoundaryHour };
+    if (config.selection) assertSelectionTimeContext(config.selection.timeContext, timeRules, config.shootingDate || undefined);
+    const timeContext = captureTimeContext(timeRules, config.shootingDate || undefined, createdAt);
     const task: BackupTask = {
+      timeContext,
       id,
       logicalVolumeId: id,
       operationAttemptId: id,
@@ -416,6 +423,7 @@ export class BackupEngine extends EventEmitter {
       devices: config.devices || [],
       projectId: config.projectId,
       reportContext: {
+        timeContext: structuredClone(timeContext),
         capturedAt: createdAt,
         projectId: config.projectId,
         projectName: config.projectName?.trim() || undefined,

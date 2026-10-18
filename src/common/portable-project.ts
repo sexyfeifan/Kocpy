@@ -1,3 +1,4 @@
+import { assertProjectTimeRules, validTimeContext } from "./time-context";
 /** Portable evidence is historical context, never a local verified-copy/eject grant. */
 export interface PortableProjectFile {
   application: "Kocpy portable project";
@@ -10,6 +11,9 @@ export interface PortableProjectFile {
   /** Automatic publication reuses original hashes, never claims a fresh full read. */
   verification?: "full-read" | "recorded-hashes";
   project: {
+    projectTimeZone?: string;
+    shootingDayTimeZones?: Record<string, string>;
+    shootingDayBoundaryHour?: number;
     id: string;
     name: string;
     plannedStart?: string;
@@ -17,6 +21,7 @@ export interface PortableProjectFile {
     devices: string[];
   };
   rolls: Array<{
+    timeContext?: import("./time-context").TimeContext;
     id: string;
     name: string;
     dates: string[];
@@ -87,6 +92,10 @@ export interface PortableProjectImportRecord {
 export function validatePortableHistory(
   value: unknown,
 ): asserts value is PortableProjectImportRecord[] {
+  if (Array.isArray(value)) for (const entry of value) {
+    if (entry?.project) assertProjectTimeRules(entry.project);
+    if (Array.isArray(entry?.rolls) && entry.rolls.some((roll: PortableProjectFile["rolls"][number]) => roll?.timeContext !== undefined && !validTimeContext(roll.timeContext))) throw new Error("随盘历史时间上下文无效");
+  }
   const safe = (v: unknown, max = 4096) =>
     typeof v === "string" &&
     v.length > 0 &&

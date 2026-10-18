@@ -36,12 +36,17 @@ async function main() {
       volumePrefix: "CARD_",
       shootingDateStart: "2026-10-15",
       shootingDateEnd: "2026-10-16",
+      projectTimeZone: "Europe/Paris",
+      shootingDayTimeZones: { "2026-10-16": "Asia/Shanghai" },
+      shootingDayBoundaryHour: 6,
     };
     const first = await publishPortableProject(
       await preparePortableProject(source, project),
       "合成操作人",
     );
     await verifyPortablePayload(source, first.sha256);
+    assert.equal(first.document.project.projectTimeZone, "Europe/Paris");
+    assert.equal(first.document.project.shootingDayTimeZones?.["2026-10-16"], "Asia/Shanghai");
     const sourceSnapshot = await fs.readFile(path.join(source, "clip.mov"));
     let stored: unknown;
     const manager = new ArchiveTransferManager({

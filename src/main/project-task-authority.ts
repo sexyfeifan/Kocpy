@@ -1,6 +1,7 @@
 import { projectDates } from "../common/shooting-dates";
 import { assertProjectDayDeviceAllowed } from "../common/project-day-devices";
 import { requireCalendarDate } from "../common/calendar-date";
+import { assertProjectTimeRules, shootingTimeZone } from "../common/time-context";
 import { makeProjectFolderName } from "./project-path";
 import type { BackupTask, ProjectConfig, TaskConfig } from "./types";
 
@@ -31,6 +32,9 @@ export function authorizeProjectTaskConfig(
     throw new Error("备份请求与当前拍摄项目不一致，请重新选择项目");
 
   const shootingDate = realCalendarDate(config.shootingDate);
+  assertProjectTimeRules(project);
+  if (config.projectTimeZone !== project.projectTimeZone || config.shootingTimeZone !== shootingTimeZone(project, shootingDate) || config.shootingDayBoundaryHour !== project.shootingDayBoundaryHour)
+    throw new Error("项目拍摄时区或大夜规则已变化，请重新打开备份并核对日期范围");
   const expectedMetadata: Pick<
     TaskConfig,
     | "projectName"

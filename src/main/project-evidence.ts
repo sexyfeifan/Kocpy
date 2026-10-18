@@ -25,6 +25,9 @@ export function projectRuleDefinition(project: ProjectConfig): ProjectRuleDefini
   const shootingDateStart =
     project.shootingDateStart || project.shootingDate || "";
   return {
+    ...(project.projectTimeZone ? { projectTimeZone: project.projectTimeZone } : {}),
+    ...(project.shootingDayTimeZones && Object.keys(project.shootingDayTimeZones).length ? { shootingDayTimeZones: { ...project.shootingDayTimeZones } } : {}),
+    ...(project.shootingDayBoundaryHour !== undefined ? { shootingDayBoundaryHour: project.shootingDayBoundaryHour } : {}),
     projectFolderName: project.projectFolderName || "",
     shootingDateStart,
     shootingDateEnd: project.shootingDateEnd || shootingDateStart,
@@ -49,6 +52,9 @@ const ruleSha256 = (rules: ProjectRuleDefinition) =>
   createHash("sha256").update(ruleJson(rules)).digest("hex");
 
 const projectRuleLabels: Record<keyof ProjectRuleDefinition, string> = {
+  projectTimeZone: "项目拍摄时区",
+  shootingDayTimeZones: "逐拍摄日时区",
+  shootingDayBoundaryHour: "大夜参考分界（仅建议）",
   projectFolderName: "项目目录",
   shootingDateStart: "拍摄开始日期",
   shootingDateEnd: "拍摄结束日期",
@@ -74,6 +80,8 @@ function ruleValueSummary(
   field: keyof ProjectRuleDefinition,
   value: ProjectRuleDefinition[keyof ProjectRuleDefinition],
 ): string {
+  if (field === "shootingDayBoundaryHour") return value === undefined ? "未设置" : Number(value) === 0 ? "不作分界提示" : `当地 ${value}:00 前仅作大夜提示`;
+  if (field === "shootingDayTimeZones") return Object.entries((value || {}) as Record<string, string>).map(([date, zone]) => `${date}: ${zone}`).join("；") || "沿用项目时区";
   if (field === "requiredCopies") return `${value} 份`;
   if (field === "devices" || field === "destinationPaths")
     return (value as string[]).join("、") || "未设置";

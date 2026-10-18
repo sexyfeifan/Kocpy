@@ -135,6 +135,15 @@ const template = (): ProjectTemplate => ({
 });
 
 describe("0.1.31 workstation exchange", () => {
+  it("preserves project time rules through integrity-checked export and import without guessing legacy zones", () => {
+    const p = { ...project(), projectTimeZone: "Europe/Paris", shootingDayTimeZones: { "2026-09-02": "Asia/Shanghai" }, shootingDayBoundaryHour: 6 };
+    const pkg = createWorkspacePackage({ version: "0.1.51", identity, workspace: workspace([p]), templates: [] });
+    const decoded = validateWorkspacePackage(JSON.parse(JSON.stringify(pkg)));
+    expect(decoded.projects[0].projectTimeZone).toBe("Europe/Paris");
+    expect(decoded.projects[0].shootingDayTimeZones).toEqual(p.shootingDayTimeZones);
+    expect(decoded.projects[0].shootingDayBoundaryHour).toBe(6);
+    expect(project().projectTimeZone).toBeUndefined();
+  });
   it("exports managed-directory history without local deletion authority", () => {
     const local = project();
     local.managedProjectDirectories = [

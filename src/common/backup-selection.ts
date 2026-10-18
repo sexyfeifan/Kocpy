@@ -46,6 +46,7 @@ export interface BackupSelectionGroup {
 }
 
 export interface BackupSelectionPreview {
+  timeContext?: import("./time-context").TimeContext;
   schemaVersion: 1;
   id: string;
   sourcePath: string;

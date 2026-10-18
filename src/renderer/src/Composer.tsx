@@ -1,4 +1,5 @@
 import { previewProjectPath } from "../../common/project-layout";
+import { shootingTimeZone } from "../../common/time-context";
 import { projectDayDevices } from "../../common/project-day-devices";
 import { priorMaxCollision } from "../../common/volume-claims";
 import { projectShootingDates, readProjectShootingChoice, resolveProjectShootingChoice } from "./project-shooting-choice";
@@ -234,7 +235,7 @@ export function Composer({
   useEffect(() => {
     setSources((all) => all.map((source) => ({ ...source, selection: undefined })));
     setSelectionDrafts({});
-  }, [mode, projectId, hidden]);
+  }, [mode, projectId, hidden, shootDate, project?.projectTimeZone, project?.shootingDayBoundaryHour, project?.shootingDayTimeZones]);
   useEffect(() => {
     if (!project || !projectShootingDates(project, tasks).includes(shootDate)) return;
     try { localStorage.setItem(
@@ -432,6 +433,9 @@ export function Composer({
             projectNamingRule:
               mode === "project" ? project?.namingRule : undefined,
             projectId: mode === "project" ? project?.id : undefined,
+            projectTimeZone: mode === "project" ? project?.projectTimeZone : undefined,
+            shootingTimeZone: mode === "project" && project ? shootingTimeZone(project, shootDate) : undefined,
+            shootingDayBoundaryHour: mode === "project" ? project?.shootingDayBoundaryHour : undefined,
             copyMode:
               mode === "card" && mirror
                 ? ("mirror" as const)
@@ -1020,6 +1024,7 @@ export function Composer({
                       </Button>
                     </div>
                     <p className="muted small">拍摄归属日决定本次项目目录，可选择项目内的历史或未来拍摄日；大夜拍摄不会随零点自动切换。文件时间仅供筛选参考，实际备份时间另行记录。</p>
+                    <p className="muted small">拍摄时区：{project && shootingTimeZone(project, shootDate) || "历史项目未记录，请在项目设置确认"} · 当前电脑：{Intl.DateTimeFormat().resolvedOptions().timeZone}。{project?.shootingDayBoundaryHour ? `凌晨 ${project.shootingDayBoundaryHour}:00 前仅提示可能属大夜，不自动筛除。` : "大夜归属请手动确认。"}</p>
                     <div className="project-column-browser">
                       <section>
                         <span>01 · 项目</span>
@@ -1354,10 +1359,11 @@ export function Composer({
                   />
                 </label>
                 {sources.map((source) => <BackupSelectionPanel
-                  key={`${source.path}:${mode}:${projectId}:${hidden}`}
+                  key={`${source.path}:${mode}:${projectId}:${hidden}:${shootDate}:${project?.projectTimeZone}:${project && shootingTimeZone(project, shootDate)}:${project?.shootingDayBoundaryHour}`}
                   sourcePath={source.path}
                   projectId={mode === "project" ? project?.id : undefined}
                   shootingDate={mode === "project" ? shootDate : undefined}
+                  shootingZone={mode === "project" && project ? shootingTimeZone(project, shootDate) : undefined}
                   plan={source.selection}
                   disabled={busy || selectionBusy || !hidden}
                   onBusy={setSelectionBusy}

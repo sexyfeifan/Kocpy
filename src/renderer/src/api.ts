@@ -208,8 +208,8 @@ export interface API {
     schema: number;
   }>;
   createTask(config: TaskConfig): Promise<BackupTask>;
-  inspectBackupDates(sourcePath: string): Promise<{ dates: string[]; unknownGroups: number; groups: BackupSelectionPreview["groups"]; sourceFiles: number; totalBytes: number }>;
-  analyzeBackupSelection(sourcePath: string, projectId?: string): Promise<BackupSelectionPreview>;
+  inspectBackupDates(sourcePath: string, projectId?: string, shootingDate?: string): Promise<{ dates: string[]; unknownGroups: number; groups: BackupSelectionPreview["groups"]; sourceFiles: number; totalBytes: number }>;
+  analyzeBackupSelection(sourcePath: string, projectId?: string, shootingDate?: string): Promise<BackupSelectionPreview>;
   confirmBackupSelection(id: string, decision: BackupSelectionDecision): Promise<BackupSelectionPlan>;
   cancelBackupSelection(): Promise<void>;
   discardBackupSelection(ids: string[]): Promise<void>;

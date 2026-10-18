@@ -704,6 +704,21 @@ small {
   font-weight: 500;
   color: var(--muted);
 }
+.project-time-settings { padding: 20px; margin: 18px 0; border: 1px solid var(--border); border-radius: 14px; }
+.project-time-settings h3 { margin: 0 0 10px; }
+.project-time-settings p { line-height: 1.7; margin-bottom: 14px; }
+.project-time-settings details { margin-top: 16px; }
+.project-time-settings ul { list-style: none; padding: 0; display: grid; gap: 12px; }
+.project-time-settings li { display: flex; gap: 16px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+.project-time-settings input, .project-time-settings select { min-width: 0; width: 100%; }
+.settings-author-footer { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 20px; padding: 22px 4px 10px; margin-top: 24px; border-top: 1px solid var(--border); }
+.settings-author-footer > div { display: grid; gap: 6px; }
+.settings-author-footer strong { font-size: 13px; font-weight: 500; color: var(--muted); }
+.settings-author-footer nav { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.settings-author-footer button { display: inline-flex; align-items: center; justify-content: center; gap: 9px; padding: 10px 14px; min-height: 40px; border: 1px solid var(--border); border-radius: 10px; background: transparent; color: var(--muted); font: inherit; font-size: 12px; cursor: pointer; }
+.settings-author-footer button:hover { color: var(--text); background: var(--hover); }
+.settings-author-footer button:focus-visible { outline: 2px solid var(--purple); outline-offset: 3px; }
+.settings-author-footer img, .settings-author-footer svg { width: 20px; height: 20px; flex-shrink: 0; }
 .sidebar-author-links {
   width: 100%;
   display: flex;

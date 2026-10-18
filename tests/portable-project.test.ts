@@ -13,6 +13,7 @@ import {
 } from "../src/main/portable-project";
 import { validatePortableHistory } from "../src/common/portable-project";
 import type { BackupTask, ProjectConfig } from "../src/main/types";
+import { captureTimeContext } from "../src/common/time-context";
 const roots: string[] = [];
 afterEach(async () => {
   for (const r of roots.splice(0))
@@ -46,6 +47,27 @@ async function baseline() {
   return { ...f, ...result };
 }
 describe("portable project evidence", () => {
+  it("roundtrips project/day zones and frozen roll clocks while retaining legacy unknowns", async () => {
+    const f = await fixture();
+    Object.assign(f.project, { projectTimeZone: "Asia/Shanghai", shootingDayTimeZones: { "2026-10-16": "America/Los_Angeles" }, shootingDayBoundaryHour: 6 });
+    const prepared = await preparePortableProject(f.root, f.project);
+    const published = await publishPortableProject(prepared, "Synthetic operator");
+    const doc = (await readPortableProject(f.root))!.document;
+    expect(doc.project.projectTimeZone).toBe("Asia/Shanghai");
+    expect(doc.project.shootingDayTimeZones).toEqual(f.project.shootingDayTimeZones);
+    expect(doc.project.shootingDayBoundaryHour).toBe(6);
+    expect(validatePortableProject(JSON.parse(JSON.stringify(doc)))).toEqual(doc);
+    const copy = path.join(f.parent, "other-mac");
+    await fs.cp(f.root, copy, { recursive: true });
+    expect((await readPortableProject(copy))!.sha256).toBe(published.sha256);
+    const candidate = structuredClone(doc);
+    candidate.rolls.push({ id: "synthetic-roll", name: "Card", dates: ["2026-10-16"], devices: ["FX3"], status: "reference", files: 1, bytes: 1, scope: "reference", timeContext: captureTimeContext(f.project, "2026-10-16") });
+    const { integrity: _old, ...unsigned } = candidate;
+    candidate.integrity = sha(JSON.stringify(unsigned));
+    expect(validatePortableProject(candidate).rolls[0].timeContext?.shootingTimeZone).toBe("America/Los_Angeles");
+    const legacy = await baseline();
+    expect((await readPortableProject(legacy.root))!.document.project.projectTimeZone).toBeUndefined();
+  });
   it("reads all hidden payload, builds current baseline, roundtrips on another path without inventing task history", async () => {
     const f = await baseline();
     expect(f.document.provenance).toBe("current-baseline");

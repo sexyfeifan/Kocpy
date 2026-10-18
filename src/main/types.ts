@@ -298,6 +298,7 @@ export interface DailyDeliveryFileEvidence {
 }
 
 export interface DailyDeliveryRun {
+  timeContext?: import("../common/time-context").TimeContext;
   id: string;
   sourceTaskId: string;
   projectId?: string;
@@ -406,6 +407,7 @@ export interface InventoryScopeSnapshot {
 }
 
 export interface ReportContextSnapshot {
+  timeContext?: import("../common/time-context").TimeContext;
   capturedAt: number;
   projectId?: string;
   projectName?: string;
@@ -488,6 +490,7 @@ export interface ExternalManifestComparison {
 }
 
 export interface BackupTask {
+  timeContext?: import("../common/time-context").TimeContext;
   selection?: import("../common/backup-selection").BackupSelectionPlan;
   requestId?: string;
   provenance?:
@@ -614,6 +617,10 @@ export interface BackupTask {
 }
 
 export interface TaskConfig {
+  /** Compared with main-process rules before a new task is authorized. */
+  projectTimeZone?: string;
+  shootingTimeZone?: string;
+  shootingDayBoundaryHour?: number;
   /** Opaque, main-process-owned confirmation. Renderer plans are not accepted. */
   selectionId?: string;
   /** Only a main-process confirmed plan may populate this field. */
@@ -738,6 +745,9 @@ export interface ReliabilityValidationRecord {
 }
 
 export interface ProjectConfig {
+  projectTimeZone?: string;
+  shootingDayTimeZones?: Record<string, string>;
+  shootingDayBoundaryHour?: number;
   id: string;
   /** Referenced history only: never counted as a verified card or safe-eject grant. */
   portableHistory?: import("../common/portable-project").PortableProjectImportRecord[];
@@ -904,6 +914,9 @@ export interface ProjectDirectoryCleanupResult {
 }
 
 export interface ProjectRuleDefinition {
+  projectTimeZone?: string;
+  shootingDayTimeZones?: Record<string, string>;
+  shootingDayBoundaryHour?: number;
   projectFolderName: string;
   shootingDateStart: string;
   shootingDateEnd: string;

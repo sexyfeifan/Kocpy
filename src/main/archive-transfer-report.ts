@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { ArchiveTransferReportSnapshot } from "./archive-transfer";
+import { formatEvidenceTime, timeContextSummary } from "../common/time-context";
 
 const escapeHtml = (value: unknown) =>
   String(value ?? "")
@@ -8,18 +9,6 @@ const escapeHtml = (value: unknown) =>
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#039;");
-
-const localDate = (value: number) =>
-  new Intl.DateTimeFormat("zh-CN", {
-    timeZone: "Asia/Shanghai",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false,
-  }).format(new Date(value));
 
 export interface ArchiveTransferReportContract {
   artifactReportId: string;
@@ -59,15 +48,15 @@ export function archiveTransferReportContract(
     payloadEmptyDirectories: snapshot.payloadEmptyDirectories.toLocaleString("en-US"),
     sourcePath: snapshot.sourcePath,
     finalPath: snapshot.finalPath,
-    startedAt: localDate(snapshot.startedAt),
-    completedAt: localDate(snapshot.completedAt),
+    startedAt: formatEvidenceTime(snapshot.startedAt, snapshot.timeContext),
+    completedAt: formatEvidenceTime(snapshot.completedAt, snapshot.timeContext),
     hashAlgorithm: snapshot.hashAlgorithm,
     verificationConclusion: snapshot.verificationConclusion,
     inventoryDigest: snapshot.inventoryDigest,
     historicalEvidence: snapshot.historicalEvidence.length
       ? snapshot.historicalEvidence.join("；")
       : "未从关联项目记录中发现需继承的历史异常；这不等于证明历史拍摄完整。",
-    evidenceBoundary: snapshot.evidenceBoundary,
+    evidenceBoundary: `${snapshot.evidenceBoundary} ${timeContextSummary(snapshot.timeContext)}`,
   };
 }
 

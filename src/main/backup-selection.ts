@@ -6,6 +6,7 @@ import type { StorageEvidence } from "../common/copy-evidence";
 import { copyEvidenceSummary } from "../common/copy-evidence";
 import type { VolumeIdentity } from "../common/volume-identity";
 import { compareVolumeIdentity } from "../common/volume-identity";
+import { calendarDateInZone, mediaCalendarDate, overnightHint, validTimeContext, type TimeContext } from "../common/time-context";
 import { completeInventoryPolicy, inside, scan } from "./backup/safety";
 import {
   validSelectionDate,
@@ -32,6 +33,7 @@ export interface BackupSelectionDependencies {
   now?: () => number;
 }
 export interface BackupSelectionInput {
+  timeContext?: TimeContext;
   sourcePath: string;
   projectId?: string;
   requiredCopies?: number;
@@ -233,18 +235,26 @@ async function buildGroups(preview: BackupSelectionPreview, deps: BackupSelectio
     const relativePaths = family.map((file) => file.relativePath).sort(), pathDates = new Set(relativePaths.flatMap(dateInText));
     const media = family.filter((file) => mediaExtensions.has(extension(file.relativePath))), embedded = new Set<string>();
     let unreadEmbedded = false, missingEmbedded = 0;
+    const rawTimes = new Set<string>(), hints = new Set<string>();
     for (const file of media) {
       deps.signal?.throwIfAborted();
       if (!deps.readEmbeddedDate) continue;
       try {
-        const value = embeddedDate(await deps.readEmbeddedDate(await containedFile(preview.sourcePath, file.relativePath)));
+        const raw = await deps.readEmbeddedDate(await containedFile(preview.sourcePath, file.relativePath));
+        const value = mediaCalendarDate(raw, preview.timeContext?.shootingTimeZone);
+        if (raw) rawTimes.add(raw.slice(0, 120));
+        const hint = overnightHint(raw, preview.timeContext);
+        if (hint) hints.add(hint);
         deps.signal?.throwIfAborted();
         if (value) embedded.add(value); else missingEmbedded++;
       } catch { deps.signal?.throwIfAborted(); unreadEmbedded = true; }
     }
-    const modified = new Set(media.map((file) => localDate(file.mtimeMs)));
+    const modified = new Set(media.map((file) => preview.timeContext ? calendarDateInZone(file.mtimeMs, preview.timeContext.shootingTimeZone || preview.timeContext.workstationTimeZone) : localDate(file.mtimeMs)));
     if (media.length > 1 && embedded.size > 0 && missingEmbedded > 0) unreadEmbedded = true;
     const evidence: string[] = [];
+    evidence.push(`分析时区：${preview.timeContext?.shootingTimeZone || "拍摄时区未确认；修改日期按分析电脑本地时间，仅供参考"}`);
+    if (rawTimes.size) evidence.push(`原始内嵌时间（未改写）：${[...rawTimes].slice(0, 4).join("、")}；无偏移的相机时间不作时区换算`);
+    evidence.push(...hints);
     if (embedded.size) evidence.push(`媒体内嵌拍摄日期：${[...embedded].sort().join("、")}（设备时钟仍需核对）`);
     if (pathDates.size) evidence.push(`文件路径日期：${[...pathDates].sort().join("、")}`);
     if (modified.size) evidence.push(`文件修改日期：${[...modified].sort().join("、")}（低置信度）`);
@@ -270,11 +280,12 @@ async function buildGroups(preview: BackupSelectionPreview, deps: BackupSelectio
 }
 
 /** Lightweight advice only: this never authorizes exclusion or claims historical protection. */
-export async function inspectBackupDates(input: Pick<BackupSelectionInput, "sourcePath">,
+export async function inspectBackupDates(input: Pick<BackupSelectionInput, "sourcePath" | "timeContext">,
   deps: BackupSelectionDependencies): Promise<BackupDateInspection> {
   const { root, stat } = await actualDirectory(input.sourcePath);
   const inventory = await scan(root, completeInventoryPolicy(true, now(deps)), deps.signal);
   const preview: BackupSelectionPreview = { schemaVersion: 1, id: "date-inspection", sourcePath: root,
+    timeContext: input.timeContext,
     requiredCopies: 1, generatedAt: now(deps), sourceScope: inventory.scope!,
     sourceVolumeIdentity: await deps.identifyVolume(root), sourceRootBinding: { dev: stat.dev, ino: stat.ino },
     sourceFiles: inventory.files.map((file) => ({ ...file, sha256: "", dev: 0, ino: 0 })), groups: [], digest: "" };
@@ -290,6 +301,7 @@ export async function analyzeBackupSelection(input: BackupSelectionInput, deps: 
   deps.progress?.({ phase: "scanning", completedFiles: 0, totalFiles: 0, completedBytes: 0, totalBytes: 0 });
   const identity = await deps.identifyVolume(root), inventory = await scan(root, completeInventoryPolicy(true, now(deps)), deps.signal);
   const preview: BackupSelectionPreview = { schemaVersion: 1, id: randomUUID(), sourcePath: root, projectId: input.projectId,
+    timeContext: input.timeContext,
     requiredCopies, generatedAt: now(deps), sourceScope: inventory.scope!, sourceVolumeIdentity: structuredClone(identity),
     sourceRootBinding: { dev: stat.dev, ino: stat.ino }, sourceFiles: [], groups: [], digest: "" };
   let completedBytes = 0;
@@ -427,6 +439,8 @@ export async function validateBackupSelectionPlan(plan: BackupSelectionPlan, dep
 }
 
 function assertPreviewStructure(value: unknown): asserts value is BackupSelectionPreview {
+  const time = (value as BackupSelectionPreview)?.timeContext;
+  if (time !== undefined && !validTimeContext(time)) throw new Error("日期分析时间上下文无效");
   const fail = () => { throw new Error("备份筛选范围记录不完整或已被修改"); };
   if (!value || typeof value !== "object") return fail();
   const preview = value as BackupSelectionPreview;

@@ -1,4 +1,5 @@
 import type { ProjectConfig } from "./types";
+import { projectTimeRulesSummary, timeContextSummary } from "../common/time-context";
 import { portableProvenanceText } from "../common/portable-project";
 /** Reference-only projects can export evidence, not task-derived manifests or bundles. */
 export function assertProjectReportAvailable(
@@ -28,11 +29,11 @@ const esc = (s: unknown) =>
 export function portableProjectReportSection(project: ProjectConfig) {
   const history = project.portableHistory?.at(-1);
   if (!history) return "";
-  return `<div class="section"><h2>随盘历史参考 · 不计入下方本机任务与独立副本统计</h2><p>${esc(portableProvenanceText(history.provenance))}。项目 ${esc(history.project.name)}；计划期 ${esc(history.project.plannedStart || "未记录")} 至 ${esc(history.project.plannedEnd || "未记录")}；设备 ${esc(history.project.devices.join("、"))}。</p><p>历史 ${history.rolls.length} 卷；当前基线 ${history.files} 文件 / ${history.bytes} 字节；有意移除 ${history.exclusions} 项。导入人 ${esc(history.operator)}；修订 ${esc(history.revision)}；摘要 ${esc(history.sha256)}。不证明原始整卡齐全，不授予安全清卡或物理独立性结论。</p><table><thead><tr><th>原素材卷</th><th>已记录拍摄日期 / 设备</th><th>范围与原状态</th></tr></thead><tbody>${history.rolls
+  return `<div class="section"><h2>随盘历史参考 · 不计入下方本机任务与独立副本统计</h2><p>${esc(portableProvenanceText(history.provenance))}。项目 ${esc(history.project.name)}；计划期 ${esc(history.project.plannedStart || "未记录")} 至 ${esc(history.project.plannedEnd || "未记录")}；设备 ${esc(history.project.devices.join("、"))}。</p><p>${esc(projectTimeRulesSummary(history.project))}</p><p>历史 ${history.rolls.length} 卷；当前基线 ${history.files} 文件 / ${history.bytes} 字节；有意移除 ${history.exclusions} 项。导入人 ${esc(history.operator)}；修订 ${esc(history.revision)}；摘要 ${esc(history.sha256)}。不证明原始整卡齐全，不授予安全清卡或物理独立性结论。</p><table><thead><tr><th>原素材卷</th><th>已记录拍摄日期 / 设备</th><th>范围与原状态</th></tr></thead><tbody>${history.rolls
     .slice(0, 100)
     .map(
       (r) =>
-        `<tr><td>${esc(r.name)}<br>${r.files} 文件 / ${r.bytes} 字节</td><td>${esc(r.dates.join("、") || "日期未记录")}<br>${esc(r.devices.join("、"))}</td><td>${esc(r.scope)}<br>原状态 ${esc(r.status)}</td></tr>`,
+        `<tr><td>${esc(r.name)}<br>${r.files} 文件 / ${r.bytes} 字节</td><td>${esc(r.dates.join("、") || "日期未记录")}<br>${esc(r.devices.join("、"))}</td><td>${esc(r.scope)}<br>${esc(timeContextSummary(r.timeContext))}<br>原状态 ${esc(r.status)}</td></tr>`,
     )
     .join(
       "",

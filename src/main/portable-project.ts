@@ -11,6 +11,7 @@ import { taskDateContributions } from "../common/date-allocation";
 import { isManifestName, readManifest } from "./production-lifecycle";
 import { XxHash32 } from "./backup/XxHash32";
 import { canonicalCalendarDate } from "../common/calendar-date";
+import { assertProjectTimeRules, validTimeContext } from "../common/time-context";
 
 export const PROJECT_FILE = ".kocpyproject";
 const HISTORY = ".kocpyproject-history";
@@ -62,6 +63,8 @@ function validFile(file: any): boolean {
 }
 export function validatePortableProject(value: unknown): PortableProjectFile {
   const d = value as PortableProjectFile;
+  if (d?.project) assertProjectTimeRules(d.project);
+  if (Array.isArray(d?.rolls) && d.rolls.some(r => r.timeContext !== undefined && !validTimeContext(r.timeContext))) throw new Error("随盘素材卷时间上下文无效");
   if (
     !plain(d) ||
     d.application !== "Kocpy portable project" ||
@@ -563,11 +566,15 @@ export async function preparePortableProject(
         plannedStart: project.shootingDateStart || project.shootingDate,
         plannedEnd: project.shootingDateEnd,
         devices: [...project.devices],
+        ...(project.projectTimeZone ? { projectTimeZone: project.projectTimeZone } : {}),
+        ...(project.shootingDayTimeZones ? { shootingDayTimeZones: structuredClone(project.shootingDayTimeZones) } : {}),
+        ...(project.shootingDayBoundaryHour !== undefined ? { shootingDayBoundaryHour: project.shootingDayBoundaryHour } : {}),
       }
     : current!.document.project;
   const rolls = new Map((current?.document.rolls || []).map((r) => [r.id, r]));
   for (const t of relevant)
     rolls.set(t.id, {
+      ...(t.timeContext ? { timeContext: structuredClone(t.timeContext) } : {}),
       id: t.id,
       name: t.name,
       dates: [
