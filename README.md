@@ -6,9 +6,9 @@
 
 <p align="center"><a href="#中文">中文</a> · <a href="#english">English</a> · <a href="#日本語">日本語</a></p>
 
-当前正式版：**0.1.50** · [下载](https://github.com/sexyfeifan/Kocpy/releases/tag/v0.1.50) · [使用手册](docs/USER_GUIDE.md) · [文档导航](docs/README.md) · [0.1.50 更新](docs/RELEASE_NOTES_0.1.50.md)。准确安装包与验证边界见同版 Release 和[验证记录](docs/VERIFICATION.md)。
+当前正式版：**0.1.52** · [下载](https://github.com/sexyfeifan/Kocpy/releases/tag/v0.1.52) · [使用手册](docs/USER_GUIDE.md) · [文档导航](docs/README.md) · [0.1.52 更新](docs/RELEASE_NOTES_0.1.52.md)。准确安装包与验证边界见同版 Release 和[验证记录](docs/VERIFICATION.md)。
 
-**0.1.50 更新**：随盘项目文件与历史补生成、携盘到另一台 Mac 继承项目并转存 NAS、有意移除的逐项范围修订，以及大夜日期、临时设备、实时反馈、界面与数据安全修正。见[完整改动](docs/RELEASE_NOTES_0.1.50.md)、[随盘项目使用流程](docs/USER_GUIDE.md#16-随盘项目文件与携盘到另一台-mac)和[流程审阅](docs/PROJECT_WORKFLOW_REVIEW.md)。继承历史不伪造本机整卡或独立副本；新的范围修订不改写原 MHL 和原任务。
+**0.1.52 更新**：项目与逐拍摄日时区、大夜参考提示、冻结任务时间上下文、统一报告时区标注，以及跨 Mac 项目文件的时区兼容；作者与平台链接移至设置页底栏。继续保留随盘项目、历史补生成、范围修订和 NAS 转存。见[完整改动](docs/RELEASE_NOTES_0.1.52.md)、[随盘项目使用流程](docs/USER_GUIDE.md#16-随盘项目文件与携盘到另一台-mac)和[流程审阅](docs/PROJECT_WORKFLOW_REVIEW.md)。继承历史不伪造本机整卡或独立副本；新的范围修订不改写原 MHL 和原任务。
 
 ![Kocpy 工作台](docs/screenshots/dashboard.png)
 
@@ -18,12 +18,12 @@
 
 ### 下载与安装
 
-| 你的 Mac | 0.1.50 安装包 |
+| 你的 Mac | 0.1.52 安装包 |
 | --- | --- |
-| Apple Silicon（M 系列） | [下载 arm64 DMG](https://github.com/sexyfeifan/Kocpy/releases/download/v0.1.50/Kocpy-0.1.50-arm64.dmg) |
-| Intel | [下载 x64 DMG](https://github.com/sexyfeifan/Kocpy/releases/download/v0.1.50/Kocpy-0.1.50-x64.dmg) |
+| Apple Silicon（M 系列） | [下载 arm64 DMG](https://github.com/sexyfeifan/Kocpy/releases/download/v0.1.52/Kocpy-0.1.52-arm64.dmg) |
+| Intel | [下载 x64 DMG](https://github.com/sexyfeifan/Kocpy/releases/download/v0.1.52/Kocpy-0.1.52-x64.dmg) |
 
-下载后先核对同一 Release 的 [SHA256SUMS.txt](https://github.com/sexyfeifan/Kocpy/releases/download/v0.1.50/SHA256SUMS.txt)，正常退出旧版，再打开 DMG，将 Kocpy 拖入“应用程序”。不要在传输／校验进行中替换应用。
+下载后先核对同一 Release 的 [SHA256SUMS.txt](https://github.com/sexyfeifan/Kocpy/releases/download/v0.1.52/SHA256SUMS.txt)，正常退出旧版，再打开 DMG，将 Kocpy 拖入“应用程序”。不要在传输／校验进行中替换应用。
 
 软件内“检查更新”打开与你的 Mac 架构匹配的官方 DMG 下载链接；下载并核对摘要后，正常退出 Kocpy，手动替换“应用程序”中的旧 App，再启动确认版本。
 
@@ -87,19 +87,19 @@
 
 普通备份按只读原则处理素材源。修复副本、修订 MHL 等维护写入必须经过明确确认；MHL 修订保留原始清单与审计，不删除素材，也不允许豁免大小或哈希异常。删除项目只清理 Kocpy 内部记录，不删除磁盘素材、报告或清单。
 
-### 0.1.50 更新重点
+### 0.1.52 更新重点
 
-1. **随盘项目与跨 Mac 归档**：项目备份根生成 `.kocpyproject`；历史项目可完整核对后补生成。另一台 Mac 核对后继承参考历史，再独立转存与回读 NAS，并记录 PDF／PNG。
-2. **有意缺失的明确范围修订**：逐项选择、原因、操作人、项目名和重要确认；保留旧证据，不修改源素材、原 MHL 或原任务完整性结论，内容／大小异常不能豁免。
-3. **大夜与临时设备**：临时设备可加入明确的历史／未来拍摄日，不扩散到其他日期，不预建空目录；跨零点不自动切换拍摄归属日。
-4. **范围反馈与下游安全**：筛选任务先登记再启动，复核进度独立显示；收工、推出、报告与归档使用冻结范围和规则，不把子目录成功冒充整卡成功。
-5. **界面与报告一致性**：详情统计统一留白，后台卡片分隔、长路径完整换行；按日报告跟随人工确认归属，归档清单使用完整身份并独占发布。
+1. **项目与逐日时区**：确认项目拍摄时区；异地拍摄可逐拍摄日覆盖，旧项目保留未记录，不自动补成北京时间。
+2. **大夜归属保持明确**：0–12 时参考分界只作提示；跨午夜不自动切日，不自动取消日期或跳过文件。
+3. **时间证据冻结**：新任务保存拍摄日、拍摄时区、登记电脑时区及当时偏移；改规则后重新确认筛选，不移动旧目录或修改源时间。
+4. **报告与跨 Mac 一致**：报告明确时区与 UTC 偏移；未知历史以 UTC 标注，不推测原拍摄地；随盘文件与工作站包保留时间上下文。
+5. **简洁侧栏与设置底栏**：作者账号、GitHub 和小红书统一置于设置底部，使用标准平台标识和清晰文字。
 
-[完整更新说明](docs/RELEASE_NOTES_0.1.50.md) · [历史正式发布](https://github.com/sexyfeifan/Kocpy/releases)
+[完整更新说明](docs/RELEASE_NOTES_0.1.52.md) · [历史正式发布](https://github.com/sexyfeifan/Kocpy/releases)
 
 ### 验证范围与已知限制
 
-0.1.50 双原生架构流水线各925项通过、4项条件跳过，准确附件与本机实际界面已验收；具体范围以[验证记录](docs/VERIFICATION.md)和同版公开 Release 为准。历史或开发版本通过的检查不会自动计作本版硬件认证；未执行项目保持明确标注。
+0.1.52 原生 Apple Silicon 与原生 Intel 各945项回归通过、4项条件跳过；同一流水线的准确附件已回下载核对，最终 arm64 安装包完成隔离桌面检查。具体范围以[验证记录](docs/VERIFICATION.md)和同版公开 Release 为准。历史或开发版本通过的检查不会自动计作本版硬件认证；未执行项目保持明确标注。
 
 - 没有 Developer ID／Apple 公证，不宣称通过 App Store 审核。
 - 原生 Apple Silicon、Rosetta 与原生 Intel 分开记录；候选成功不等同于正式附件通过，准确附件摘要与回下载核验见[验证记录](docs/VERIFICATION.md)。
@@ -161,7 +161,7 @@ Current features also include recovery, media relinking, evidence-backed H.264/P
 
 [Download](https://github.com/sexyfeifan/Kocpy/releases/latest) · [Installation](docs/INSTALLATION.md) · [Guide (Chinese)](docs/USER_GUIDE.md) · [Verification scope](docs/VERIFICATION.md)
 
-Version **0.1.50** adds portable project evidence, historical backfill, explicitly audited intentional omissions and verified archive transfer on another Mac. Imported history never invents local card-copy or physical-independence evidence; original tasks and manifests stay unchanged. Use the published 0.1.50 Release's separate arm64 or x64 installer and matching `SHA256SUMS.txt`. Quit Kocpy before replacing the installed App manually. Packages use ad-hoc signing, **not Developer ID signing or Apple notarization**. Automated tests and same-volume workstation simulations are not real NAS/SMB, second-Mac or physical two-disk certification.
+Version **0.1.52** adds explicit project/day time zones, advisory overnight boundaries, frozen clock context and zone-labeled reports; it also preserves portable project evidence and verified archive transfer on another Mac. Legacy zones stay unknown, unzoned camera clocks are not guessed, and UTC zero offsets survive JSON roundtrips. Imported history never invents local card-copy or physical-independence evidence; original tasks and manifests stay unchanged. Use the published 0.1.52 Release's separate arm64 or x64 installer and matching `SHA256SUMS.txt`. Quit Kocpy before replacing the installed App manually. Packages use ad-hoc signing, **not Developer ID signing or Apple notarization**. Automated tests and same-volume workstation simulations are not real NAS/SMB, second-Mac or physical two-disk certification.
 
 ## 日本語
 
@@ -173,7 +173,7 @@ Kocpy は macOS 向けのローカル優先メディアバックアップ／プ�
 
 [ダウンロード](https://github.com/sexyfeifan/Kocpy/releases/latest) · [インストール（中国語）](docs/INSTALLATION.md) · [使用手冊（中国語）](docs/USER_GUIDE.md) · [検証範囲](docs/VERIFICATION.md)
 
-**0.1.50** は随盤プロジェクト記録、過去プロジェクトへの補完、意図的な欠落の監査付き範囲改訂、別 Mac での検証付きアーカイブ転送を追加します。取り込んだ履歴でローカルのカードコピーや独立性を捏造せず、元タスクと MHL を変更しません。公開済み0.1.50のApple Silicon／Intel用インストーラと同版 `SHA256SUMS.txt` を使用し、終了後にAppを手動で置き換えてください。現在は ad-hoc 署名のみで、**Developer ID 署名・Apple 公証はありません**。同一ディスク上の模擬検証を実NAS／別Mac／独立した二台の検証とみなさないでください。
+**0.1.52** はプロジェクト／撮影日別タイムゾーン、深夜撮影の参考境界、固定された時刻コンテキスト、タイムゾーンを明示したレポートを追加します。過去の不明なゾーンやカメラ時計を推測せず、UTCゼロ偏差のJSON往復も修正します。随盤履歴と別Macへのアーカイブも継続します。取り込んだ履歴でローカルのカードコピーや独立性を捏造せず、元タスクと MHL を変更しません。公開済み0.1.52のApple Silicon／Intel用インストーラと同版 `SHA256SUMS.txt` を使用し、終了後にAppを手動で置き換えてください。現在は ad-hoc 署名のみで、**Developer ID 署名・Apple 公証はありません**。同一ディスク上の模擬検証を実NAS／別Mac／独立した二台の検証とみなさないでください。
 
 ## License
 
