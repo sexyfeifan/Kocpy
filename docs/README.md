@@ -1,12 +1,12 @@
 # Kocpy 文档导航
 
-新增 [0.1.52 时区与大夜说明](RELEASE_NOTES_0.1.52.md)；双架构安装包及摘要已公开，具体验证范围见[验证记录](VERIFICATION.md)。
+新增 [0.1.53 说明与布局优化](RELEASE_NOTES_0.1.53.md)；双架构安装包及摘要已公开，具体验证范围见[验证记录](VERIFICATION.md)。
 
-当前正式版：**0.1.52**。本目录说明已经实现的功能、操作方法和验证边界；正式安装包与公开状态以 GitHub Release 为准。[返回项目首页](../README.md) · [下载正式版](https://github.com/sexyfeifan/Kocpy/releases/latest)
+当前正式版：**0.1.53**。本目录说明已经实现的功能、操作方法和验证边界；正式安装包与公开状态以 GitHub Release 为准。[返回项目首页](../README.md) · [下载正式版](https://github.com/sexyfeifan/Kocpy/releases/latest)
 
-本次改动摘要见[发布状态与改动](CHANGES_UNRELEASED.md)，具体功能见[0.1.52 更新说明](RELEASE_NOTES_0.1.52.md)。准确安装包及各架构、模拟／实机边界见[验证记录](VERIFICATION.md)。
+本次改动摘要见[发布状态与改动](CHANGES_UNRELEASED.md)，具体功能见[0.1.53 更新说明](RELEASE_NOTES_0.1.53.md)。准确安装包及各架构、模拟／实机边界见[验证记录](VERIFICATION.md)。
 
-本版增加项目／逐日时区、大夜参考提示和统一报告时间标注，继续保留随盘项目文件、历史补生成、范围修订与跨 Mac 归档；作者平台入口移至设置底栏。逐环节结论见[项目备份流程审阅](PROJECT_WORKFLOW_REVIEW.md)。不凭一次回归声明所有真实硬件或现场流程通过。
+本版内置帮助仅显示当前更新，功能章节去除产生版本号；恢复／诊断卡片增加留白，设置宽屏居中双列／窄屏单列，只读恢复检查关闭不再误报。项目／逐日时区、大夜参考提示、统一报告时间、随盘项目与跨 Mac 归档继续保留；作者平台在设置底栏。逐环节结论见[项目备份流程审阅](PROJECT_WORKFLOW_REVIEW.md)。不凭一次回归声明所有真实硬件或现场流程通过。
 
 ## 使用 Kocpy
 

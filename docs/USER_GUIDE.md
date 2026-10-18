@@ -1,6 +1,6 @@
 # Kocpy 使用手册
 
-本页包含 **0.1.52** 的时区与大夜流程说明；当前正式安装包仍以 [GitHub 正式 Release](https://github.com/sexyfeifan/Kocpy/releases/latest) 的附件与 `SHA256SUMS.txt` 为准，源码和文档不表示新安装包已公开或验收完成。[返回文档导航](README.md) · [0.1.52 更新与状态](RELEASE_NOTES_0.1.52.md) · [安装与升级](INSTALLATION.md)
+当前正式版为 **0.1.53**，包含时区与大夜流程、精简帮助和自适应布局。请使用 [GitHub 正式 Release](https://github.com/sexyfeifan/Kocpy/releases/tag/v0.1.53) 的同版附件与 `SHA256SUMS.txt`，验证范围另行标注，不将文档或源码等同于所有硬件验收。[返回文档导航](README.md) · [本次更新与状态](RELEASE_NOTES_0.1.53.md) · [安装与升级](INSTALLATION.md)
 
 本手册按当前操作流程组织；历史变化详见 GitHub 各版发布说明，不需要先阅读全部更新记录才能开始。软件内仅显示当前安装版本的更新摘要，不展示历史版本列表；功能章节不标注功能产生时的版本号，说明标题不带版本号。模块默认折叠；点击侧栏“使用说明”或顶栏问号才展开帮助，不自动占用工作区。设置页宽屏居中双列、窄窗口单列，保存操作和作者底栏保持可达。GitHub 文档的整理不会替换已经安装的软件包。
 
