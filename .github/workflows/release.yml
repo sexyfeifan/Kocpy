@@ -62,10 +62,7 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: npm run build && npx electron-builder --mac --${{ matrix.arch }} --publish never
       - name: Verify complete application signature structure
-        run: |
-          codesign --verify --deep --strict --verbose=2 "release/${{ matrix.appdir }}/Kocpy.app"
-          codesign -d --entitlements - "release/${{ matrix.appdir }}/Kocpy.app" | grep -q "com.apple.security.cs.allow-jit"
-          codesign -d --entitlements - "release/${{ matrix.appdir }}/Kocpy.app" | grep -q "com.apple.security.cs.disable-library-validation"
+        run: node scripts/verify-app-entitlements.cjs "release/${{ matrix.appdir }}/Kocpy.app"
       - name: Verify final signed media provenance
         run: node scripts/verify-media-runtime.mjs "release/${{ matrix.appdir }}/Kocpy.app/Contents/Resources/ffmpeg"
       - name: Verify actual Developer ID team and notarization ticket

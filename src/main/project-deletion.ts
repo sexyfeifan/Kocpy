@@ -17,6 +17,7 @@ export function buildProjectDeletionPreview(
   archiveChanges: ArchiveChangeRecord[],
   archiveReminders: ArchiveReminder[],
   archiveRuns: ArchiveVerificationRun[] = [],
+  archiveTransfers: Array<{ projectId?: string }> = [],
 ): ProjectDeletionPreview {
   const relatedTasks = tasks.filter((task) => task.projectId === project.id),
     taskIds = new Set(relatedTasks.map((task) => task.id)),
@@ -35,6 +36,9 @@ export function buildProjectDeletionPreview(
     status: project.status === "archived" ? "archived" : "active",
     taskCount: relatedTasks.length,
     proxyJobCount: relatedProxyJobs.length,
+    unfinishedDailyDeliveryCount: relatedTasks.flatMap(task => task.dailyDeliveryRuns || [])
+      .filter(run => run.status !== "completed" || run.reportStatus !== "completed").length,
+    retainedArchiveTransferCount: archiveTransfers.filter(item => item.projectId === project.id).length,
     healthRecordCount: healthRecords.filter(
       (item) => item.projectId === project.id,
     ).length,

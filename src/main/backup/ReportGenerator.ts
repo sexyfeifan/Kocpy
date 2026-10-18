@@ -11,6 +11,7 @@ import { copyEvidenceSummary } from "../../common/copy-evidence";
 import { taskDateContribution } from "../../common/date-allocation";
 import { taskTrustState, savedDestinationBytes, taskHasPartialSelection } from "../../common/task-trust";
 import { backupSelectionSummary } from "../../common/backup-selection";
+import { projectFileDateRecords } from "../../common/shooting-day-records";
 import {
   projectCellStatus,
   projectCloseoutSummary,
@@ -573,9 +574,9 @@ export async function generateProjectReport(
     .join("");
   const fileRows = tasks
     .flatMap((task) =>
-      task.fileRecords.map(
-        (file) =>
-          `<tr><td>${esc(task.shootingDate || "-")}</td><td>${esc((task.devices || []).join(" / ") || "-")}</td><td>${esc(task.name)}</td><td>${esc(file.relativePath)}</td><td>${formatBytes(file.size)}</td><td class="${file.destinations.every((destination) => destination.verified) ? "ok" : "warn"}">${file.destinations.filter((destination) => destination.verified).length} / ${file.destinations.length} 通过</td></tr>`,
+      projectFileDateRecords(task).map(
+        ({ file, shootingDate, dateStatus }) =>
+          `<tr><td>${esc(shootingDate || "待确认归属")}${dateStatus === "confirmed-assignment" ? "<br>已确认归属" : dateStatus === "task-date" ? "<br>任务拍摄日" : ""}</td><td>${esc((task.devices || []).join(" / ") || "-")}</td><td>${esc(task.name)}</td><td>${esc(file.relativePath)}</td><td>${formatBytes(file.size)}</td><td class="${file.destinations.every((destination) => destination.verified) ? "ok" : "warn"}">${file.destinations.filter((destination) => destination.verified).length} / ${file.destinations.length} 通过</td></tr>`,
       ),
     )
     .join("");

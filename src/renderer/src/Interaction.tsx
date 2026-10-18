@@ -79,6 +79,7 @@ export function useModalStack() {
       if (
         button &&
         dialog &&
+        dialog.dataset.dirtyTracking !== "inputs" &&
         !button.hasAttribute("disabled") &&
         !isDialogCloseControl(button)
       )

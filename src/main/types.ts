@@ -88,6 +88,7 @@ export interface SavedProxyPreset {
   updatedAt: number;
 }
 export interface ProxyJob {
+  sourceRelinks?: Array<{ from: string; to: string; operator: string; at: number; checksum: string; hashAlgorithm: HashAlgorithm }>;
   priority?: 0 | 1 | 2;
   queueOrder?: number;
   preflight?: import("./proxy-preflight").ProxyPreflight;
@@ -542,6 +543,11 @@ export interface BackupTask {
   copyMode?: CopyMode;
   mirrorLayout?: import("../common/backup-layout").MirrorLayout;
   transferPhase?: "scanning" | "hashing" | "copying" | "publishing";
+  /** Live read-only scope checks, not copied bytes or verification evidence. */
+  selectionValidation?: import("../common/backup-selection").BackupSelectionProgress & {
+    stage: "before-copy" | "after-copy";
+    speedBps: number;
+  };
   status: TaskStatus;
   totalFiles: number;
   completedFiles: number;
@@ -1017,6 +1023,8 @@ export interface ProjectTemplate {
   revision?: number;
 }
 export interface ProjectDeletionPreview {
+  unfinishedDailyDeliveryCount?: number;
+  retainedArchiveTransferCount?: number;
   projectId: string;
   projectName: string;
   status: "active" | "archived";

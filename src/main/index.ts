@@ -65,6 +65,9 @@ import {
 } from "./backup/ReportGenerator";
 import { generateMhl, generateAscMhl } from "./backup/ManifestGenerator";
 import { completedBackupCoversAttempt } from "../common/source-scan";
+import { ejectCopyRequirement, qualifiedForEjection } from "./source-eject-policy";
+import { projectReportCsv, projectManifestNames, publishProjectArchive } from "./project-report-artifacts";
+import { relinkProxySources } from "./proxy-source-relink";
 import { analyzeBackupSelection, applyBackupSelectionInventory, finalizeBackupSelection, inspectBackupDates, validateBackupSelectionPlan } from "./backup-selection";
 import { selectionRuntimeDependencies } from "./backup-selection-runtime";
 import { assertBackupSourceScope } from "./backup-source-scope";
@@ -108,7 +111,6 @@ import {
 } from "./mixed-day-delivery";
 import {
   beginCompletionAction,
-  createExclusiveArtifactDirectory,
   ensureCompletionActionPlan,
   failCompletionAction,
   finishCompletionAction,
@@ -867,6 +869,7 @@ const maintenanceNames: Record<string, string> = {
   "mixed-day:deliver": "生成当日素材交付",
   "mixed-day:retry-report": "重试当日交付报告",
   "volumes:eject-completed": "安全推出设备",
+  "library:relink": "完整核对并重新关联副本与代理源",
   "projects:cleanup-empty-directories": "整理项目空目录",
 };
 const guardedCommands = new Set([
@@ -1037,8 +1040,9 @@ async function writeProjectJsonStream(
   file: string,
   project: ProjectConfig,
   tasks: BackupTask[],
+  exclusive = false,
 ) {
-  const handle = await fs.open(file, "w");
+  const handle = await fs.open(file, exclusive ? "wx" : "w");
   try {
     await handle.write(
       `{"generatedAt":${JSON.stringify(new Date().toISOString())},"project":${JSON.stringify(project)},"tasks":[`,
@@ -1443,19 +1447,10 @@ async function executeCompletionAction(
       });
       void processProxyQueue();
     } else {
-      const frozenRules = project?.ruleSnapshots?.find(
-          (snapshot) => snapshot.id === task.projectRuleSnapshotId,
-        )?.rules,
-        requiredCopies =
-          frozenRules?.requiredCopies || project?.requiredCopies || 2;
-      if (
-        !task.destinations.length ||
-        !task.destinations.every((item) => item.verified) ||
-        !manifestRequirementMet(task) ||
-        !taskMeetsCopyRequirement(task, requiredCopies)
-      )
+      const requiredCopies = ejectCopyRequirement(task, project);
+      if (!qualifiedForEjection(task, project))
         throw new Error(
-          `任务尚未满足清单、全部目标校验或 ${requiredCopies} 份物理独立副本要求，不能推出源盘`,
+          `任务尚未满足清单、全部目标校验或冻结副本要求（${requiredCopies ?? "规则证据缺失"}），不能推出源盘`,
         );
       const volume = (await listVolumes()).find(
         (item) => item.canEject && inside(task.sourcePath, item.path),
@@ -2828,6 +2823,8 @@ app.whenReady().then(async () => {
   handle(
     "volumes:eject-completed",
     async (previewOnly = false, selectedPaths?: string[]) => {
+      const projects = await readProjects();
+      const projectFor = (task: BackupTask) => projects.find(project => project.id === task.projectId);
       const volumes = await listVolumes(),
         results: Array<{ path: string; ok: boolean; error?: string }> = [];
       for (const volume of volumes.filter(
@@ -2892,18 +2889,11 @@ app.whenReady().then(async () => {
                 inside(destination.path, volume.path),
               ),
           );
-        const complete = related.filter(
-          (task) =>
-            task.status === "completed" &&
-            task.destinations.every((destination) => destination.verified) &&
-            manifestRequirementMet(task) &&
-            !task.inventoryScope?.exclusions.some(
-              (item) => item.reason === "permission-denied",
-            ),
-        );
+        const complete = related.filter(task => qualifiedForEjection(task, projectFor(task)));
         const uncovered = related
           .filter((task) =>
-            ["failed", "cancelled"].includes(task.status) ||
+            ["failed", "cancelled", "unverified"].includes(task.status) ||
+            task.status === "completed" && !qualifiedForEjection(task, projectFor(task)) ||
             task.inventoryScope?.exclusions.some(
               (item) => item.reason === "permission-denied",
             ),
@@ -2912,6 +2902,8 @@ app.whenReady().then(async () => {
             (task) =>
               !complete.some(
                 (candidate) =>
+                  ejectCopyRequirement(task, projectFor(task)) !== undefined &&
+                  qualifiedForEjection(candidate, projectFor(candidate), ejectCopyRequirement(task, projectFor(task))) &&
                   completedBackupCoversAttempt(candidate, task),
               ),
           );
@@ -2920,8 +2912,8 @@ app.whenReady().then(async () => {
             path: volume.path,
             ok: false,
             error: uncovered
-              ? "存在尚未被后续完整备份覆盖的失败或权限排除任务"
-              : "没有完整且通过校验的备份记录",
+              ? "存在未被同范围且满足副本规则的备份覆盖的风险记录；请查看失败、筛选或权限记录。普通卸载不代表可格式化源卡"
+              : "没有满足完整校验及项目副本要求的备份记录",
           });
           continue;
         }
@@ -2929,10 +2921,11 @@ app.whenReady().then(async () => {
           inside(task.sourcePath, volume.path),
         );
         if (sourceTasks.length) {
-          const latest = sourceTasks.sort(
-            (left, right) => (right.completedAt || 0) - (left.completedAt || 0),
-          )[0];
-          if (!(await sourceInventoryMatches(latest).catch(() => false))) {
+          // Validate every recorded source root, never only the latest subset.
+          let matching = true;
+          for (const task of sourceTasks)
+            if (!(await sourceInventoryMatches(task).catch(() => false))) { matching = false; break; }
+          if (!matching) {
             results.push({
               path: volume.path,
               ok: false,
@@ -5148,7 +5141,7 @@ app.whenReady().then(async () => {
         : "已完整核对全部文件，是否更新这份离线副本的位置？",
       detail: associatingCopy
         ? `新位置：${root}\n文件：${task.totalFiles} 个\n确认后会再次完整读取哈希；若位于同一物理磁盘，仍只计一份独立副本。`
-        : `旧位置：${previousRoot}\n新位置：${root}\n文件：${task.totalFiles} 个\n确认后会再次完整读取哈希，并保留旧路径审计。`,
+        : `旧位置：${previousRoot}\n新位置：${root}\n文件：${task.totalFiles} 个\n确认后会再次完整读取哈希，并保留旧路径审计。具有一致冻结源证据的待处理代理也会更新输入路径；已完成代理不改变。`,
       buttons: ["取消", associatingCopy ? "确认关联" : "确认更新位置"],
       defaultId: 0,
       cancelId: 0,
@@ -5178,6 +5171,8 @@ app.whenReady().then(async () => {
       throw new Error("原副本文件映射不完整，未更新任何位置记录");
     const identity = await volumeIdentity(root),
       operator = await existingOperator();
+    const nextProxyJobs = associatingCopy ? proxyJobs
+      : await relinkProxySources(proxyJobs, task, previousRoot, root, operator);
     for (const [index, item] of task.fileRecords.entries()) {
       const nextPath = await safeChild(root, item.relativePath);
       if (associatingCopy)
@@ -5276,6 +5271,16 @@ app.whenReady().then(async () => {
     } catch (error) {
       engine.loadTask(taskBefore);
       throw error;
+    }
+    if (nextProxyJobs !== proxyJobs) {
+      // The copy-location commit is independently valid. A proxy persistence
+      // failure must not claim rollback of that committed audit, or run encoders.
+      try { await store.write("proxy-jobs.json", nextProxyJobs); }
+      catch (error) {
+        proxyRuns.failPersistence(error); emitProxyJobs();
+        throw new Error("副本位置及审计已保存，但代理队列保存失败，已停止代理调度。请重启后在素材库重新加入受影响代理", { cause: error });
+      }
+      proxyJobs = nextProxyJobs; emitProxyJobs();
     }
     void enqueueAutomaticReport(task).catch(() => undefined);
     return matched;
@@ -6554,6 +6559,7 @@ app.whenReady().then(async () => {
       archiveChanges,
       archiveReminders,
       archiveRuns,
+      archiveTransferManager.summaries(),
     );
   });
   handle(
@@ -6578,6 +6584,7 @@ app.whenReady().then(async () => {
         archiveChanges,
         archiveReminders,
         archiveRuns,
+        archiveTransferManager.summaries(),
       );
       if (deletionPreview.blockingTasks)
         throw new Error("项目仍有未结束的任务，不能删除项目记录");
@@ -6723,33 +6730,7 @@ app.whenReady().then(async () => {
         .getAllTasks()
         .filter((task) => task.projectId === projectId);
       if (!tasks.length) throw new Error("当前项目还没有可导出的备份记录");
-      const csv = () => {
-        const cell = (value: unknown) =>
-          `"${String(value ?? "").replace(/"/g, '""')}"`;
-        return (
-          "\ufeff" +
-          [
-            "拍摄日期,设备,机位,素材卷,文件数,素材大小,可信状态,有校验记录目标,可计数副本,项目要求副本",
-            ...tasks.map((task) =>
-              [
-                task.shootingDate,
-                task.devices.join("/"),
-                task.cameraPosition,
-                task.name,
-                task.totalFiles,
-                task.totalBytes,
-                taskTrustState(task).label,
-                task.destinations.filter((destination) => destination.verified)
-                  .length,
-                taskTrustState(task).countableCopies,
-                project.requiredCopies || 2,
-              ]
-                .map(cell)
-                .join(","),
-            ),
-          ].join("\n")
-        );
-      };
+      const csv = () => projectReportCsv(project, tasks);
       if (format === "bundle") {
         const unsafe = tasks.filter(
           (task) =>
@@ -6764,50 +6745,15 @@ app.whenReady().then(async () => {
           properties: ["openDirectory", "createDirectory"],
         });
         if (chosen.canceled) return null;
-        const folder = await createExclusiveArtifactDirectory(
-          chosen.filePaths[0],
-          `Kocpy_${segment(project.name)}_项目归档包_${Date.now()}`,
-        );
-        const archiveFiles = [
-          "项目完整报告.pdf",
-          "项目完整数据.json",
-          "项目素材统计.csv",
-          ...tasks.map(
-            (task) => `${segment(task.name)}_${task.id.slice(0, 6)}.mhl`,
-          ),
-        ];
-        await Promise.all([
-          fs.writeFile(
-            path.join(folder, "项目完整报告.pdf"),
-            await htmlToPdf(await generateProjectReport(project, tasks)),
-          ),
-          fs.writeFile(path.join(folder, "项目素材统计.csv"), csv()),
-          ...tasks.map((task) =>
-            fs.writeFile(
-              path.join(
-                folder,
-                `${segment(task.name)}_${task.id.slice(0, 6)}.mhl`,
-              ),
-              generateMhl(task, manifestDestinationIndex(task)),
-            ),
-          ),
+        const manifestNames = projectManifestNames(tasks);
+        return publishProjectArchive(chosen.filePaths[0], `Kocpy_${segment(project.name)}_项目归档包_${Date.now()}`, [
+          { name: "项目完整报告.pdf", write: async file => { await fs.writeFile(file,
+            await htmlToPdf(await generateProjectReport(project, tasks)), { flag: "wx" }); } },
+          { name: "项目完整数据.json", write: file => writeProjectJsonStream(file, project, tasks, true) },
+          { name: "项目素材统计.csv", write: file => fs.writeFile(file, csv(), { flag: "wx" }) },
+          ...tasks.map((task, index) => ({ name: manifestNames[index], write: (file: string) =>
+            fs.writeFile(file, generateMhl(task, manifestDestinationIndex(task)), { flag: "wx" }) })),
         ]);
-        await writeProjectJsonStream(
-          path.join(folder, "项目完整数据.json"),
-          project,
-          tasks,
-        );
-        const checksums = await Promise.all(
-          archiveFiles.map(
-            async (name) =>
-              `${await hashFile(path.join(folder, name), "sha256")}  ${name}`,
-          ),
-        );
-        await fs.writeFile(
-          path.join(folder, "SHA256SUMS.txt"),
-          checksums.join("\n") + "\n",
-        );
-        return folder;
       }
       const extension = format;
       const result = await dialog.showSaveDialog({

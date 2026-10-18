@@ -53,10 +53,16 @@ export function recordsForShootingDay(
 ): ShootingDayRecord[] {
   const day = requireShootingDay(shootingDate);
   if (!taskBelongsToShootingDay(task, day, true)) return [];
+  return projectFileDateRecords(task, true).filter(record => !record.shootingDate || record.shootingDate === day)
+    .map(record => ({ ...record, reportDate: day }));
+}
+
+/** One row per copied file, with an explicit unresolved state, never an inferred task day. */
+export function projectFileDateRecords(task: BackupTask, allowLegacyTimestamp = false): Omit<ShootingDayRecord, "reportDate">[] {
   const selection = task.selection,
     plan = task.dateAllocation,
     originalDay = canonicalDay(task.shootingDate),
-    legacyDay = legacyTaskDay(task);
+    legacyDay = allowLegacyTimestamp ? legacyTaskDay(task) : "";
   const excluded = new Set(selection?.excludedFiles.map((entry) => entry.relativePath));
   const included = selection
     ? new Set(selection.includedPaths.filter((relative) => !excluded.has(relative)))
@@ -86,16 +92,15 @@ export function recordsForShootingDay(
     });
   }
   const hasAllocation = Boolean(selection || plan);
-  return task.fileRecords.flatMap((file): ShootingDayRecord[] => {
+  return task.fileRecords.flatMap((file): Omit<ShootingDayRecord, "reportDate">[] => {
     if (included && !included.has(file.relativePath)) return [];
     if (!hasAllocation) {
       return [{ file, shootingDate: originalDay || legacyDay || undefined,
-        dateStatus: originalDay ? "task-date" : "legacy-completion-date", reportDate: day }];
+        dateStatus: originalDay ? "task-date" : legacyDay ? "legacy-completion-date" : "pending-allocation" }];
     }
     const assigned = assignments.get(file.relativePath);
-    if (assigned && assigned !== day) return [];
     return [{ file, shootingDate: assigned || undefined,
-      dateStatus: assigned ? "confirmed-assignment" : "pending-allocation", reportDate: day }];
+      dateStatus: assigned ? "confirmed-assignment" : "pending-allocation" }];
   });
 }
 

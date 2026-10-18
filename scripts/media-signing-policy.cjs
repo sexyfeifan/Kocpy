@@ -3,6 +3,7 @@ const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { Arch } = require('builder-util');
 const { signingMode } = require('./release-signing.cjs');
+const { verifyAppEntitlements } = require('./verify-app-entitlements.cjs');
 
 // The already signed media bytes are immutable. This exception is exact and
 // usable only by the explicitly supported ad-hoc candidate signing branch.
@@ -43,7 +44,7 @@ async function verifySignedMediaApp(context, dependencies, environment = process
   assert.equal(runtimes[0].arch, arch, 'Signed media architecture differs from application target');
   const run = dependencies.execFileSync || execFileSync;
   run('/usr/bin/codesign', ['--verify', '--strict', path.join(resources, `ffmpeg-darwin-${arch}`)], { stdio: 'pipe' });
-  run('/usr/bin/codesign', ['--verify', '--deep', '--strict', '--verbose=2', app], { stdio: 'pipe' });
+  verifyAppEntitlements(app, { execFileSync: run });
   return runtimes;
 }
 

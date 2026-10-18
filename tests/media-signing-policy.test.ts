@@ -50,12 +50,16 @@ describe("frozen media signing gate", () => {
   it("verifies final bytes before the helper and complete application signatures", async () => {
     const order: string[] = [];
     const verifyMediaRuntime = vi.fn(async () => { order.push("media-digests"); return [{ arch: "arm64" }]; });
-    const execFileSync = vi.fn((_command: string, args: string[]) => { order.push(args.includes("--deep") ? "application-signature" : "helper-signature"); });
+    const execFileSync = vi.fn((_command: string, args: string[]) => {
+      order.push(args.includes("--entitlements") ? "application-entitlements" : args.includes("--deep") ? "application-signature" : "helper-signature");
+      return args.includes("--entitlements") ? '<plist version="1.0"><dict><key>com.apple.security.cs.allow-jit</key><true/><key>com.apple.security.cs.disable-library-validation</key><true/></dict></plist>' : "";
+    });
     await verifySignedMediaApp(context(), { verifyMediaRuntime, execFileSync }, {});
-    expect(order).toEqual(["media-digests", "helper-signature", "application-signature"]);
+    expect(order).toEqual(["media-digests", "helper-signature", "application-signature", "application-entitlements"]);
     expect(verifyMediaRuntime).toHaveBeenCalledWith("/synthetic-package/Kocpy.app/Contents/Resources/ffmpeg");
     expect(execFileSync).toHaveBeenNthCalledWith(1, "/usr/bin/codesign", ["--verify", "--strict", "/synthetic-package/Kocpy.app/Contents/Resources/ffmpeg/ffmpeg-darwin-arm64"], { stdio: "pipe" });
-    expect(execFileSync).toHaveBeenNthCalledWith(2, "/usr/bin/codesign", ["--verify", "--deep", "--strict", "--verbose=2", "/synthetic-package/Kocpy.app"], { stdio: "pipe" });
+    expect(execFileSync).toHaveBeenNthCalledWith(2, "/usr/bin/codesign", ["--verify", "--deep", "--strict", "--verbose=2", "/synthetic-package/Kocpy.app"], expect.objectContaining({ stdio: "pipe", encoding: "utf8" }));
+    expect(execFileSync).toHaveBeenNthCalledWith(3, "/usr/bin/codesign", ["-d", "--entitlements", "-", "--xml", "/synthetic-package/Kocpy.app"], expect.objectContaining({ encoding: "utf8" }));
   });
 
   it("blocks post-sign hash changes and does not attempt to repair metadata", async () => {

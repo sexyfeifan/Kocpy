@@ -1154,6 +1154,7 @@ export class BackupEngine extends EventEmitter {
       }
     } finally {
       clearInterval(telemetry);
+      task.selectionValidation = undefined;
       this.telemetryResets.delete(task.id);
       task.verifySpeedBps = 0;
       task.verifyEta = 0;
@@ -1260,6 +1261,7 @@ export class BackupEngine extends EventEmitter {
       sourceHashHistory: [],
       sourceCopyReadHistory: [],
       volumeWarnings: [],
+      selectionValidation: undefined,
     });
     this.record(task, "preflight", "info", "开始扫描素材源并检查目的地");
     for (const d of task.destinations) {
@@ -1430,11 +1432,26 @@ export class BackupEngine extends EventEmitter {
       task.sourceVolumeId = sourceIdentity.id;
       task.sourceVolumeUuid = sourceIdentity.uuid;
       task.sourceVolumeName = sourceIdentity.name;
+      let validationStage: "before-copy" | "after-copy" = "before-copy";
+      let validationPhase = "", validationBytes = 0;
+      const validationMeter = new SpeedMeter();
       const selectionDeps = selectionRuntimeDependencies({ signal,
-        beforeRead: () => this.waitIfPaused(id, signal),
+        beforeRead: async () => {
+          const paused = this.paused.has(id);
+          await this.waitIfPaused(id, signal);
+          if (paused) validationMeter.reset();
+        },
         progress: (progress) => {
+          const key = `${validationStage}:${progress.phase}`;
+          const phaseChanged = key !== validationPhase;
+          if (key !== validationPhase || progress.completedBytes < validationBytes) {
+            validationPhase = key; validationBytes = 0; validationMeter.reset();
+          }
+          validationMeter.add(Math.max(0, progress.completedBytes - validationBytes));
+          validationBytes = progress.completedBytes;
+          task.selectionValidation = { ...progress, stage: validationStage, speedBps: validationMeter.sample() };
           task.currentFile = progress.currentFile || "正在重新确认筛选范围";
-          this.emitProgress(task);
+          this.emitProgress(task, phaseChanged || progress.completedFiles === progress.totalFiles);
         },
       });
       const fullInventory = task.selection
@@ -1443,6 +1460,7 @@ export class BackupEngine extends EventEmitter {
       await assertBackupSourceScope(src, fullInventory.directories, signal);
       const inventory = task.selection
         ? applyBackupSelectionInventory(fullInventory, task.selection) : fullInventory;
+      task.selectionValidation = undefined;
       // complete-v2 inventories include directory structure as first-class
       // scope, so an empty root (or a tree made only of empty directories) is
       // still a valid, verifiable backup. Historical tasks keep their original
@@ -1834,6 +1852,7 @@ export class BackupEngine extends EventEmitter {
       await this.waitIfPaused(id, signal);
       task.transferPhase = "publishing";
       this.emitProgress(task, true);
+      validationStage = "after-copy";
       const finalFullInventory = task.selection
         ? await validateBackupSelectionPlan(task.selection, selectionDeps)
         : await scan(src, task.inventoryPolicy || task.includeHidden, signal);
@@ -1854,6 +1873,7 @@ export class BackupEngine extends EventEmitter {
         ),
         initialDirectories = new Set(inventory.directories),
         finalDirectories = new Set(finalInventory.directories);
+      task.selectionValidation = undefined;
       if (
         (task.inventoryPolicy &&
           task.inventoryScope?.fingerprint !==
@@ -1943,6 +1963,7 @@ export class BackupEngine extends EventEmitter {
       task.lastVerifiedAt = Date.now();
       task.completedAt = Date.now();
       task.currentFile = "";
+      task.selectionValidation = undefined;
       this.record(
         task,
         "completed",

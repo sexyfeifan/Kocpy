@@ -7775,6 +7775,19 @@ small {
   background: color-mix(in srgb, var(--amber) 4%, transparent);
   border-color: color-mix(in srgb, var(--amber) 16%, var(--border));
 }
+.selection-validation-progress {
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px;
+  margin: 12px 0;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  min-width: 0;
+}
+.selection-validation-progress .row { flex-wrap: wrap; gap: 8px; }
+.selection-validation-progress progress { width: 100%; accent-color: var(--accent); }
+.selection-validation-progress small { color: var(--muted); line-height: 1.6; }
+.selection-validation-file { overflow-wrap: anywhere; min-width: 0; }
 .transfer-evidence-scope-warning {
   display: flex;
   align-items: flex-start;

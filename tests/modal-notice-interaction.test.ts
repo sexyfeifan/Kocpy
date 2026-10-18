@@ -35,13 +35,25 @@ function install() {
   vi.stubGlobal("requestAnimationFrame", (callback: () => void) => callback());
   useModalStack();
   const click = (target: any) => { const event = { target, preventDefault: vi.fn(), stopImmediatePropagation: vi.fn() }; handlers.get("click")!(event); return event; };
-  return { confirm, closeNotice, viewNotice, closeDialog, click,
+  return { confirm, closeNotice, viewNotice, closeDialog, click, dialog, button,
     dirty: () => handlers.get("input")!({ target: { closest: () => dialog } }),
     escape: () => keys.get("keydown")!({ key: "Escape", preventDefault: vi.fn(), stopImmediatePropagation: vi.fn() }),
   };
 }
 
 describe("notice actions inside dirty dialogs", () => {
+  it("does not mark read-only detail actions dirty but still protects actual typed input", () => {
+    const state = install(); state.dialog.dataset.dirtyTracking = "inputs";
+    state.click(state.button("重新校验", false));
+    state.click(state.closeDialog);
+    expect(state.confirm).not.toHaveBeenCalled();
+    state.dirty(); state.click(state.closeDialog);
+    expect(state.confirm).toHaveBeenCalledTimes(1);
+  });
+  it("still protects button-driven wizard draft choices by default", () => {
+    const state = install(); state.click(state.button("选择拍摄日", false));
+    state.click(state.closeDialog); expect(state.confirm).toHaveBeenCalledTimes(1);
+  });
   it("dismisses a notice without asking to discard form edits, while preserving true close protection", () => {
     const state = install(); state.dirty();
     const notice = state.click(state.closeNotice);

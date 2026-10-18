@@ -85,6 +85,7 @@ export function Composer({
   settings,
   onClose,
   onCreated,
+  onTaskCreated,
   onCreateProject,
   onProjectsChanged,
 }: {
@@ -95,6 +96,7 @@ export function Composer({
   settings: Settings;
   onClose: () => void;
   onCreated: () => Promise<void>;
+  onTaskCreated?: (task: BackupTask) => void;
   onCreateProject: () => void;
   onProjectsChanged?: (projects: ProjectConfig[]) => void;
 }) {
@@ -439,7 +441,11 @@ export function Composer({
             automaticPdf,
             priority,
           };
-          return await api.createTask(config);
+          const task = await api.createTask(config);
+          // Register the complete frozen scope before start/progress events.
+          // Do not rely on the delayed workspace-list refresh to create its row.
+          onTaskCreated?.(task);
+          return task;
         },
         (id) => api.startTask(id),
         () => setBatchRevision((value) => value + 1),

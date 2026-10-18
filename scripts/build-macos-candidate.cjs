@@ -2,6 +2,7 @@ const { cpSync, existsSync, mkdtempSync, mkdirSync, readdirSync, rmSync, symlink
 const { homedir, tmpdir } = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
+const { verifyAppEntitlements } = require('./verify-app-entitlements.cjs');
 
 if (process.platform !== 'darwin') throw new Error('macOS candidate packages must be built on macOS.');
 
@@ -54,12 +55,12 @@ for (const entry of readdirSync(temporaryOutput, { withFileTypes: true })) {
 }
 
 for (const app of copiedAppBundles) {
-  const verification = spawnSync('/usr/bin/codesign', ['--verify', '--deep', '--strict', '--verbose=2', app], {
-    stdio: 'inherit'
-  });
-  if (verification.status !== 0) {
+  try {
+    verifyAppEntitlements(app);
+  } catch (error) {
     console.error(`Copied candidate signature verification failed. Temporary output retained: ${temporaryOutput}`);
-    process.exit(verification.status ?? 1);
+    console.error(error.message);
+    process.exit(1);
   }
 }
 

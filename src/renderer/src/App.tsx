@@ -8,6 +8,7 @@ import { readableOperationError, didComplete } from "../../common/interaction";
 import { useState, useEffect, useCallback, useRef } from "react";
 import {
   selectLiveTask,
+  reconcileTaskList,
   transferPhaseText,
   transferTiming,
   transferProgressLabel,
@@ -798,13 +799,14 @@ export function App() {
     [notify],
   );
   const refresh = useCallback(async () => {
+    const requestedAt = Date.now();
     const [t, p, j, background] = await Promise.all([
       api.getTasks(),
       api.getProjects(),
       api.getProxyJobs(),
       api.getBackgroundActivities(),
     ]);
-    setTasks(t);
+    setTasks(current => reconcileTaskList(current, t, requestedAt));
     setProjects(p);
     setProxyJobs(j);
     setBackgroundActivities(background);
@@ -1466,7 +1468,7 @@ export function App() {
         return;
       }
       setConfirm({
-        text: `将永久删除「${project.name}」在 Kocpy 内的项目配置、${preview.taskCount} 个任务、${preview.proxyJobCount} 个代理记录、${preview.healthRecordCount} 条健康记录、${preview.archiveRunCount} 次复校验运行、${preview.archiveChangeCount} 条归档变化和 ${preview.reminderCount} 条提醒。不会删除素材文件、备份目录、报告、MHL 或已导出的归档包。`,
+        text: `将永久删除「${project.name}」在 Kocpy 内的项目配置、${preview.taskCount} 个任务、${preview.proxyJobCount} 个代理记录、${preview.healthRecordCount} 条健康记录、${preview.archiveRunCount} 次复校验运行、${preview.archiveChangeCount} 条归档变化和 ${preview.reminderCount} 条提醒。${preview.unfinishedDailyDeliveryCount ? `其中含 ${preview.unfinishedDailyDeliveryCount} 条未完成当日交付的恢复记录，删除后无法继续恢复；建议先完成交付及报告。` : ""}另有 ${preview.retainedArchiveTransferCount || 0} 条独立归档转存记录会保留在“归档维护/后台任务”，继续显示原项目名称，不随项目删除。不会删除素材文件、备份目录、报告、MHL 或已导出的归档包。`,
         actionLabel: "删除项目记录",
         danger: true,
         requiredText: project.name,
@@ -3391,6 +3393,8 @@ export function App() {
           projects={projects}
           tasks={tasks}
           settings={settings}
+          onTaskCreated={task => setTasks(current => current.some(item => item.id === task.id)
+            ? current : [task, ...current])}
           onClose={() => setComposer(null)}
           onCreated={async () => {
             await refresh();
@@ -3419,6 +3423,7 @@ export function App() {
         >
           <section
             className="detail-modal"
+            data-dirty-tracking="inputs"
             role="dialog"
             aria-modal="true"
             aria-label="任务详情"
@@ -5855,6 +5860,7 @@ function HelpPage({
         "展开素材组，核对日期依据和关联路径；跨午夜、相机时钟不准时可手动指定拍摄日。勾选需要的日期并填写范围确认人，点击确认同时确认显示的日期归属。",
         "同名关联文件按组处理，未知文件、共享索引、不可安全拆分的摄影机包及不能判定关联的独立音频保留。只有同项目、在线、内容一致且满足物理独立副本要求的历史内容，才可作为已保护的跳过依据。",
         "未能证明已有足够备份的未选素材，必须单独确认风险。开始前和完成时再次核对冻结范围；源文件或历史依据变化会停止任务。",
+        "开始后，复制前／复制后范围复核会单独显示读取文件数、字节、速度及当前路径；这段会读取未选素材，不是没有执行，也不是复制进度。复制和各目标回读仍分别显示，暂停／继续以后台实际反馈为准。",
         "完成后在任务详情的“读取范围”查看纳入及未复制数量，展开确认记录可核对操作人、拍摄日、未复制路径、关联组和历史依据。扫描策略排除与主动日期筛选分别列出。",
       ],
       tips: [
@@ -5875,6 +5881,7 @@ function HelpPage({
         "接管范围改变后等待新预览，滚动核对全部候选卷；仅导入结构不会建立基线。",
         "复校验必须明确项目、日期、素材卷或文件；缺少参数不会扩大范围。",
         "批次失败后只重试未提交项；已创建任务留在传输列表，参数不再变更。",
+        "批量合格推出与普通卸载不同：必须满足冻结项目副本要求，并且失败记录只能由同一已记录源范围的后续完整备份覆盖。缺少历史范围或权限证据时保留风险；成功卸载不代表可以格式化原卡。",
         "在维护中选择拍摄日、检查阶段和实际签署人，逐项勾选；未处理的收工风险仍会阻止签署。",
         "后台操作可在切页后查看；修复/提交阶段不支持强制取消，结束前勿强制退出。",
         "报告选择日期和项目，批量推出确认设备清单；NAS 预设可编辑并直接选为目的地。",

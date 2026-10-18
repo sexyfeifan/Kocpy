@@ -1,10 +1,20 @@
 import { describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { normalBackupFolder, previewBackupPath, sourceFolderName, capacityReadiness } from "../src/common/backup-layout";
-import { selectLiveTask, transferPhaseText, transferTiming, transferProgressLabel, matchesTransferFilter } from "../src/renderer/src/task-state";
+import { selectLiveTask, reconcileTaskList, transferPhaseText, transferTiming, transferProgressLabel, matchesTransferFilter } from "../src/renderer/src/task-state";
 import type { BackupTask } from "../src/main/types";
+import { BackupEngine } from "../src/main/backup/BackupEngine";
 
 describe("backup layout and live detail", () => {
+  it("does not rewind live progress or lose a task created during a slow list request", () => {
+    const stale = { ...new BackupEngine().createTask({ name: "synthetic", namingTemplate: "synthetic", sourcePath: "/synthetic/source", destinationPaths: ["/synthetic/target"], hashAlgorithm: "sha256", devices: [], shootingDate: "" }),
+      id: "one", status: "running" as const, lastCheckpointAt: 1, createdAt: 1, fileRecords: [], copyProgress: 0 };
+    const live = { ...stale, lastCheckpointAt: 3, copyProgress: 60 };
+    const created = { ...stale, id: "new", createdAt: 20 };
+    expect(reconcileTaskList([live, created], [stale], 10).map(task => [task.id, task.copyProgress])).toEqual([["one", 60], ["new", 0]]);
+    expect(reconcileTaskList([stale], [], 10)).toEqual([]);
+    expect(reconcileTaskList([live], [{ ...stale, lastCheckpointAt: 4, status: "completed" }], 10)[0].status).toBe("completed");
+  });
   it("keeps permission omissions and missing evidence in attention after copying finishes", () => {
     const complete = { status: "completed", destinations: [{ id: "synthetic-target", verified: true }], totalFiles: 1 } as BackupTask;
     const partial = { ...complete, inventoryScope: { exclusions: [{ relativePath: "restricted/", reason: "permission-denied", kind: "directory", bytes: 0, bytesUnknown: true, permissionCode: "EACCES", modifiedAt: 0 }] } } as BackupTask;

@@ -1,6 +1,19 @@
 import type { BackupTask } from "./api";
 import { taskTrustState } from "../../common/task-trust";
 
+/** A slow list response must not rewind telemetry received while it was in flight. */
+export function reconcileTaskList(current: BackupTask[], incoming: BackupTask[], requestedAt: number): BackupTask[] {
+  const previous = new Map(current.map(task => [task.id, task]));
+  const result = incoming.map(task => {
+    const live = previous.get(task.id);
+    return live && (live.lastCheckpointAt || 0) > (task.lastCheckpointAt || 0)
+      ? { ...task, ...live, selection: task.selection ?? live.selection } : task;
+  });
+  const ids = new Set(incoming.map(task => task.id));
+  // Include only tasks created after this request began, not deleted old records.
+  return [...result, ...current.filter(task => !ids.has(task.id) && (task.createdAt || 0) >= requestedAt)];
+}
+
 /** A finished copy with an unresolved scope still belongs in the attention filter. */
 export function matchesTransferFilter(task: BackupTask, filter: string): boolean {
   if (filter === "all") return true;
@@ -43,6 +56,8 @@ export function transferPhaseText(task: BackupTask): string {
   if (task.status === "pending") return "等待队列开始";
   if (task.status === "paused") return "已暂停 · 继续后从安全检查点恢复";
   if (task.status === "verifying") return "正在独立回读校验目的地";
+  if (task.status === "running" && task.selectionValidation)
+    return task.selectionValidation.stage === "before-copy" ? "复制前只读复核筛选范围" : "复制后只读复核源范围";
   return (
     {
       scanning: "正在扫描与预检",

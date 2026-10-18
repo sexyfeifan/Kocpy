@@ -135,7 +135,7 @@ export async function verifyProxySource(job: ProxyJob, signal?: AbortSignal) {
   if (evidence.path !== job.input)
     throw new Error("代理源路径已改变，请从素材库重新加入队列");
   const stat = await fs.stat(job.input).catch(() => undefined);
-  if (!stat?.isFile()) throw new Error("代理源文件已离线或不存在");
+  if (!stat?.isFile()) throw new Error("代理源文件已离线或不存在。请连接原磁盘；若目录已移动，先在素材库重新关联副本，再从素材库重新加入代理队列，不要反复重试旧路径");
   if (stat.size !== evidence.bytes)
     throw new Error("代理源文件大小已变化，请先重新校验素材副本");
   const checksum = await hashFile(job.input, evidence.hashAlgorithm, signal);

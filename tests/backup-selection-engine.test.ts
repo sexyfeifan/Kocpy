@@ -61,6 +61,12 @@ describe("selected scopes use the real copy and independent-readback executor", 
     expect(taskTrustState(completed).countableCopies).toBe(0);
     expect(await snapshot()).toEqual(before);
     expect(progressPayloads.length).toBeGreaterThan(0);
+    for (const stage of ["before-copy", "after-copy"])
+      expect(progressPayloads.some(payload => (payload as BackupTask).selectionValidation?.stage === stage &&
+        (payload as BackupTask).selectionValidation?.completedFiles === 6)).toBe(true);
+    expect(progressPayloads.some(payload => (payload as BackupTask).selectionValidation?.stage === "before-copy" &&
+      (payload as BackupTask).transferredBytes === 0)).toBe(true);
+    expect(completed.selectionValidation).toBeUndefined();
     expect(progressPayloads.every((payload) => !Object.hasOwn(payload as object, "selection"))).toBe(true);
     expect(task.selection).toBeDefined();
     const loaded = new BackupEngine(); loaded.loadTask(structuredClone(completed));

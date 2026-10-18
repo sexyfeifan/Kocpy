@@ -13,10 +13,10 @@ describe("macOS candidate packaging safety", () => {
       expect(packageJson.scripts[name]).toContain("build-macos-candidate.cjs");
     }
     expect(candidateBuilder).toContain("'-c.mac.identity=-'");
-    expect(candidateBuilder).toContain("codesign', ['--verify', '--deep', '--strict'");
+    expect(candidateBuilder).toContain("verifyAppEntitlements(app)");
     expect(workflow).toContain("-c.mac.identity=-");
     expect(workflow).toContain("Build ad-hoc signed candidate DMG");
-    expect(workflow).toContain("codesign --verify --deep --strict");
+    expect(workflow).toContain("node scripts/verify-app-entitlements.cjs");
   });
 
   it("builds local candidates outside synced project storage before copying verified results", () => {

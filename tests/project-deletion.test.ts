@@ -39,6 +39,16 @@ const task = (id: string, status: BackupTask["status"]): BackupTask =>
   }) as BackupTask;
 
 describe("0.1.16 protected project deletion", () => {
+  it("discloses unfinished daily-delivery recovery records and retained independent transfers", () => {
+    const value = task("complete", "completed");
+    value.dailyDeliveryRuns = [{ status: "interrupted", reportStatus: "pending" },
+      { status: "completed", reportStatus: "completed" }] as BackupTask["dailyDeliveryRuns"];
+    const preview = buildProjectDeletionPreview(project, [value], [], [], [], [], [],
+      [{ projectId: project.id }, { projectId: "unrelated" }]);
+    expect(preview.unfinishedDailyDeliveryCount).toBe(1);
+    expect(preview.retainedArchiveTransferCount).toBe(1);
+    expect(value.dailyDeliveryRuns).toHaveLength(2);
+  });
   it("allows an active test project when all related work is terminal", () => {
     const preview = buildProjectDeletionPreview(
       project,

@@ -38,10 +38,10 @@ describe("completed-volume ejection source coverage", () => {
   it("does not erase whole-card permission omissions with a later same-volume subfolder backup", () => {
     expect(completedBackupCoversAttempt(fixture("/synthetic/card/DCIM", 2), omittedSource())).toBe(false);
   });
-  it("accepts a later readable scan of the same frozen canonical source scope", () => {
+  it("does not turn an unreadable historical scope into proven coverage retrospectively", () => {
     const attempt = omittedSource(), completed = fixture("/synthetic/card-alias", 2);
     completed.inventoryScope!.sourcePath = attempt.inventoryScope!.sourcePath;
-    expect(completedBackupCoversAttempt(completed, attempt)).toBe(true);
+    expect(completedBackupCoversAttempt(completed, attempt)).toBe(false);
   });
   it("does not erase a newer omission with an older successful scan or another partial scan", () => {
     const attempt = omittedSource();
@@ -51,11 +51,22 @@ describe("completed-volume ejection source coverage", () => {
     partial.createdAt = 4;
     expect(completedBackupCoversAttempt(partial, attempt)).toBe(false);
   });
-  it("preserves historical same-volume failed-attempt coverage", () => {
+  it("does not erase a legacy unscoped whole-card failure with a same-volume subfolder", () => {
     const attempt = fixture();
     attempt.status = "failed";
     delete attempt.inventoryScope;
-    expect(completedBackupCoversAttempt(fixture("/synthetic/card/DCIM", 2), attempt)).toBe(true);
+    expect(completedBackupCoversAttempt(fixture("/synthetic/card/DCIM", 2), attempt)).toBe(false);
+  });
+  it("requires matching frozen roots, fingerprints, identities and known file hashes", () => {
+    const attempt = fixture(), completed = fixture("/synthetic/card", 2);
+    attempt.status = "failed";
+    expect(completedBackupCoversAttempt(completed, attempt)).toBe(true);
+    expect(completedBackupCoversAttempt(fixture("/synthetic/card/DCIM", 2), attempt)).toBe(false);
+    completed.inventoryScope!.fingerprint = "b".repeat(64);
+    expect(completedBackupCoversAttempt(completed, attempt)).toBe(false);
+    completed.inventoryScope!.fingerprint = attempt.inventoryScope!.fingerprint;
+    completed.sourceVolumeUuid = "replaced-card";
+    expect(completedBackupCoversAttempt(completed, attempt)).toBe(false);
   });
   it("does not clear permission risk through a later filtered or unscoped scan", () => {
     const attempt = omittedSource(), completed = fixture("/synthetic/card", 2);

@@ -1,7 +1,24 @@
 import { ArrowRight, Check, ClipboardCheck, Copy, FolderSearch, HardDrive, ShieldCheck, Unplug, TriangleAlert } from "lucide-react";
 import type { BackupTask } from "./api";
-import { transferEvidenceModel } from "./transfer-evidence-state";
+import { transferEvidenceModel, evidenceBytes } from "./transfer-evidence-state";
 import { taskHasPartialSelection } from "../../common/task-trust";
+
+export function SelectionValidationProgress({ task }: { task: BackupTask }) {
+  const value = task.selectionValidation;
+  if (!value || !["running", "paused"].includes(task.status)) return null;
+  const label = value.stage === "before-copy" ? "复制前范围复核" : "复制后源范围复核";
+  const phase = { scanning: "扫描源目录", hashing: "读取源文件", validating: "读取源文件", history: "核对历史副本" }[value.phase];
+  const progress = value.totalBytes > 0 ? Math.min(100, value.completedBytes / value.totalBytes * 100)
+    : value.totalFiles > 0 ? Math.min(100, value.completedFiles / value.totalFiles * 100) : undefined;
+  return <div className="selection-validation-progress" role="status" aria-label={label}>
+    <div className="row between"><strong>{label} · {task.status === "paused" ? "已暂停" : phase}</strong>
+      <span>{task.status === "running" && value.speedBps > 0 ? `${evidenceBytes(value.speedBps)}/s` : "—"}</span></div>
+    {value.phase !== "scanning" && <progress max={100} value={progress} aria-label={`${label}读取进度`} />}
+    <span>{value.completedFiles} / {value.totalFiles} 个文件 · {evidenceBytes(value.completedBytes)} / {evidenceBytes(value.totalBytes)}</span>
+    {value.currentFile && <span className="mono selection-validation-file">{value.currentFile}</span>}
+    <small>只读核对完整源及所需历史依据，不是复制进度。未选素材也须检查，源素材不会被修改；完成后仍需逐目标回读校验。</small>
+  </div>;
+}
 
 /** Read-only view of recorded transfer evidence. It never starts or changes a task. */
 export function TransferEvidence({ task, compact = false }: { task: BackupTask; compact?: boolean }) {
@@ -14,6 +31,7 @@ export function TransferEvidence({ task, compact = false }: { task: BackupTask; 
         <span className="transfer-evidence-caption">{model.caption}</span>
       </div>
       {taskHasPartialSelection(task) && <p className="transfer-evidence-scope-warning"><TriangleAlert size={16} aria-hidden="true" /><span>选定范围备份 · 本次未复制 {task.selection!.excludedFiles.length} 个文件。仅校验已纳入内容，不计整卡达标副本，不得据此格式化源素材卡。</span></p>}
+      <SelectionValidationProgress task={task} />
       <ol className="transfer-evidence-phases" aria-label="任务阶段">
         {model.phases.map((phase) => {
           const Icon = phaseIcons[phase.key as keyof typeof phaseIcons];

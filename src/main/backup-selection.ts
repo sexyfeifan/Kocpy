@@ -323,6 +323,8 @@ export async function analyzeBackupSelection(input: BackupSelectionInput, deps: 
 
 async function validateSource(preview: BackupSelectionPreview, deps: BackupSelectionDependencies) {
   assertPreviewStructure(preview);
+  deps.progress?.({ phase: "scanning", completedFiles: 0, totalFiles: preview.sourceFiles.length,
+    completedBytes: 0, totalBytes: preview.sourceScope.includedBytes });
   await assertSourceIdentity(preview, deps);
   const inventory = await scan(preview.sourcePath, preview.sourceScope.policy, deps.signal);
   if (inventory.scope?.fingerprint !== preview.sourceScope.fingerprint || inventory.files.length !== preview.sourceFiles.length)
@@ -354,6 +356,12 @@ async function revalidateHistory(plan: BackupSelectionPlan, deps: BackupSelectio
   if (!physicalEvidence(source, plan.sourceVolumeIdentity)) throw new Error("源磁盘物理身份不可确认，请重新预检");
   const expectedFiles = new Map(plan.sourceFiles.map((file) => [file.relativePath, file]));
   const checked = new Map<string, BackupSelectionHistoryEvidence>();
+  const unique = new Map(excluded.flatMap(file => file.historyEvidence).map(item => [`${item.path}\0${item.sha256}`, item]));
+  const totalBytes = [...unique.values()].reduce((sum, item) => sum + item.size, 0);
+  let completedBytes = 0;
+  const report = (currentFile?: string) => deps.progress?.({ phase: "history", currentFile,
+    completedFiles: checked.size, totalFiles: unique.size, completedBytes, totalBytes });
+  report();
   for (const file of excluded) {
     const sourceFile = expectedFiles.get(file.relativePath), verified: BackupSelectionHistoryEvidence[] = [];
     for (const evidence of file.historyEvidence) {
@@ -364,11 +372,14 @@ async function revalidateHistory(plan: BackupSelectionPlan, deps: BackupSelectio
         const currentVolume = await deps.identifyVolume(evidence.root), topology = storage[roots.indexOf(evidence.root) + 1];
         if (!sameVolume(evidence.volumeIdentity, currentVolume) || !physicalEvidence(topology, currentVolume) || !separateFromSource(source, topology))
           throw new Error("历史副本离线或物理身份已改变，请重新预检或纳入备份");
-        const current = await readHash(evidence.root, evidence.relativePath, deps);
+        const current = await readHash(evidence.root, evidence.relativePath, deps, undefined, bytes => {
+          completedBytes += bytes; report(evidence.relativePath);
+        });
         if (current.sha256 !== evidence.sha256 || current.size !== evidence.size || !sameVolume(currentVolume, await deps.identifyVolume(evidence.root)))
           throw new Error("历史副本内容已经改变，不能跳过该素材");
         value = { ...evidence, storageEvidence: topology, checkedAt: now(deps) };
         checked.set(cacheKey, value);
+        report(evidence.relativePath);
       }
       verified.push(value);
     }

@@ -549,6 +549,22 @@ async function main() {
         throw new Error(`${filename} 缺少设备或机位信息`);
       results.push(await saveArtifact(directory, filename, "pdf", label, await renderPdf(html)));
     }
+    const crossDay = structuredClone(task);
+    crossDay.dateAllocation = { schemaVersion: 1, sourceTaskId: crossDay.id,
+      sourceEvidenceDigest: syntheticChecksum("cross-day-layout"), generatedAt: 1, updatedAt: 2,
+      groups: crossDay.fileRecords.map((file, index) => ({
+        id: syntheticChecksum(file.relativePath), label: file.name, relativePaths: [file.relativePath],
+        files: 1, bytes: file.size, suggestionBasis: "embedded-media", suggestionConfidence: "review", evidence: [],
+        assignedDate: index === 2 ? undefined : index === 1 ? "2026-09-20" : "2026-09-19",
+        confirmedAt: index === 2 ? undefined : 2, confirmedBy: index === 2 ? undefined : "合成归属确认人",
+      })) };
+    const crossDayHtml = await generateProjectReport({ id: crossDay.projectId!, name: "合成跨午夜项目 · 文件归属复核",
+      devices: crossDay.devices, volumePrefix: "QA_", requiredCopies: 2,
+      shootingDateStart: "2026-09-19", shootingDateEnd: "2026-09-20" }, [crossDay]);
+    if (!crossDayHtml.toString().includes("2026-09-20<br>已确认归属") || !crossDayHtml.toString().includes("待确认归属"))
+      throw new Error("跨日报告未保留逐文件归属或待确认状态");
+    results.push(await saveArtifact(directory, "08-跨午夜-逐文件归属与待确认.pdf", "pdf",
+      "跨午夜逐文件归属与待确认（合成版式）", await renderPdf(crossDayHtml)));
     const manifest = Buffer.from(
       `${JSON.stringify(
         {
