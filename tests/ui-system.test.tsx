@@ -116,14 +116,12 @@ describe("0.1.25 shared UI contract", () => {
       .source;
     expect(appSource).toContain("KOCPY · QUICK START");
     expect(appSource).toContain("<h2>软件使用说明</h2>");
-    expect(appSource).toContain('version: "0.1.39"');
-    expect(appSource).toContain('title: "界面边界与折叠更新记录"');
-    expect(appSource).toContain('version: "0.1.38"');
-    expect(appSource).toContain('version: "0.1.31"');
-    expect(appSource).toContain('<details className="help-release-item"');
-    expect(appSource).not.toMatch(
-      /<details className="help-release-item"[^>]*\bopen\b/,
-    );
+    expect(appSource).toContain("<LatestReleaseNote />");
+    const helpSource = appSource.slice(appSource.indexOf("function HelpPage("), appSource.indexOf("function ", appSource.indexOf("function HelpPage(") + 1));
+    expect(helpSource).not.toMatch(/0\.\d+\.\d+/);
+    expect(helpSource).not.toContain("releaseNotes.map");
+    expect(helpSource).toContain('title: "处理外部清单差异"');
+    expect(helpSource).toContain("缺少完整输出证据的历史代理");
     expect(appSource).not.toContain("KOCPY {APP_VERSION} · QUICK START");
   });
 

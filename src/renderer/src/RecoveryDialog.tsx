@@ -72,6 +72,7 @@ export function RecoveryDialog({
         aria-modal="true"
         aria-label="检查并恢复备份"
         aria-busy={busy}
+        data-dirty-tracking="inputs"
       >
         <div className="modal-header">
           <div>

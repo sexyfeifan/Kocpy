@@ -1,5 +1,9 @@
 # Kocpy architecture
 
+## Help and bounded utility-page layout
+
+The built-in guide renders one installed-version summary from `LatestReleaseNote` and the shared application version; historical release records remain on GitHub. Functional guidance is version-neutral and preserves evidence requirements. Settings uses a centered single-column layout with a bounded two-column wide-screen mode; recovery and diagnostics inset nested cards. These presentation changes do not alter IPC authorization, persistent schemas, source scope, verification, recovery or reporting semantics.
+
 ## Time context and overnight attribution (0.1.52)
 
 `common/time-context.ts` separates explicit calendar attribution from instants. Optional project IANA zone, per-day overrides and advisory boundary are append-only rule-version inputs; omitted legacy fields stay omitted. New tasks freeze a time context with project/shooting zone, explicit day, workstation zone, capture instant and offset. Changes never migrate historical paths, assignment decisions or hashes.
